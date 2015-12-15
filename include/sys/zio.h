@@ -138,6 +138,15 @@ enum zio_compress {
 	(compress) == ZIO_COMPRESS_ON ||		\
 	(compress) == ZIO_COMPRESS_OFF)
 
+enum zio_crypto {
+	ZIO_CRYPTO_INHERIT = 0,
+	ZIO_CRYPTO_ON,
+	ZIO_CRYPTO_OFF,
+	ZIO_CRYPTO_METHODS
+};
+
+#define ZIO_CRYPTO_DEFAULT ZIO_CRYPTO_OFF
+	
 /*
  * Default Linux timeout for a sd device.
  */

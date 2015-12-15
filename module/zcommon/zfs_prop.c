@@ -101,6 +101,12 @@ zfs_prop_init(void)
 		{ NULL }
 	};
 
+	static zprop_index_t crypto_table[] = {
+		{ "on",		ZIO_CRYPTO_ON },
+		{ "off",	ZIO_CRYPTO_OFF },
+		{ NULL }
+	};
+	
 	static zprop_index_t snapdir_table[] = {
 		{ "hidden",	ZFS_SNAPDIR_HIDDEN },
 		{ "visible",	ZFS_SNAPDIR_VISIBLE },
@@ -240,6 +246,10 @@ zfs_prop_init(void)
 	    ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME,
 	    "on | off | lzjb | gzip | gzip-[1-9] | zle | lz4", "COMPRESS",
 	    compress_table);
+	zprop_register_index(ZFS_PROP_CRYPTO, "encryption",
+	    ZIO_CRYPTO_DEFAULT, PROP_ONETIME,
+	    ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME, "on | off", "ENCRYPTION",
+		crypto_table);
 	zprop_register_index(ZFS_PROP_SNAPDIR, "snapdir", ZFS_SNAPDIR_HIDDEN,
 	    PROP_INHERIT, ZFS_TYPE_FILESYSTEM,
 	    "hidden | visible", "SNAPDIR", snapdir_table);
