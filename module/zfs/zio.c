@@ -33,6 +33,7 @@
 #include <sys/vdev_impl.h>
 #include <sys/zio_impl.h>
 #include <sys/zio_compress.h>
+#include <sys/zio_crypto.h>
 #include <sys/zio_checksum.h>
 #include <sys/dmu_objset.h>
 #include <sys/arc.h>
@@ -332,6 +333,14 @@ zio_decompress(zio_t *zio, void *data, uint64_t size)
 	if (zio->io_error == 0 &&
 	    zio_decompress_data(BP_GET_COMPRESS(zio->io_bp),
 	    zio->io_data, data, zio->io_size, size) != 0)
+		zio->io_error = SET_ERROR(EIO);
+}
+
+static void
+zio_decrypt(zio_t *zio, void *data, uint64_t size)
+{
+	if (zio->io_error == 0 && 
+		zio_decrypt_data(zio->io_data, data, size) != 0)
 		zio->io_error = SET_ERROR(EIO);
 }
 
@@ -1059,14 +1068,12 @@ static int
 zio_read_bp_init(zio_t *zio)
 {
 	blkptr_t *bp = zio->io_bp;
+	uint64_t psize = BP_IS_EMBEDDED(bp) ? BPE_GET_PSIZE(bp) : BP_GET_PSIZE(bp);
 
 	if (BP_GET_COMPRESS(bp) != ZIO_COMPRESS_OFF &&
 	    zio->io_child_type == ZIO_CHILD_LOGICAL &&
 	    !(zio->io_flags & ZIO_FLAG_RAW)) {
-		uint64_t psize =
-		    BP_IS_EMBEDDED(bp) ? BPE_GET_PSIZE(bp) : BP_GET_PSIZE(bp);
 		void *cbuf = zio_buf_alloc(psize);
-
 		zio_push_transform(zio, cbuf, psize, psize, zio_decompress);
 	}
 
@@ -1075,6 +1082,11 @@ zio_read_bp_init(zio_t *zio)
 		decode_embedded_bp_compressed(bp, zio->io_data);
 	} else {
 		ASSERT(!BP_IS_EMBEDDED(bp));
+	}
+
+	if (BP_IS_ENCRYPTED(bp)) {
+		void *cbuf = zio_buf_alloc(psize);
+		zio_push_transform(zio, cbuf, psize, psize, zio_decrypt);
 	}
 
 	if (!DMU_OT_IS_METADATA(BP_GET_TYPE(bp)) && BP_GET_LEVEL(bp) == 0)
@@ -1095,6 +1107,7 @@ zio_write_bp_init(zio_t *zio)
 	spa_t *spa = zio->io_spa;
 	zio_prop_t *zp = &zio->io_prop;
 	enum zio_compress compress = zp->zp_compress;
+	enum zio_crypto crypto = zp->zp_crypto;
 	blkptr_t *bp = zio->io_bp;
 	uint64_t lsize = zio->io_size;
 	uint64_t psize = lsize;
@@ -1221,6 +1234,12 @@ zio_write_bp_init(zio_t *zio)
 		}
 	}
 
+	if(crypto != ZIO_CRYPTO_OFF){
+		void *cbuf = zio_buf_alloc(lsize);
+		zio_encrypt_data(crypto, zio->io_data, cbuf, psize);
+		zio_push_transform(zio, cbuf, psize, lsize, NULL);
+	}
+
 	/*
 	 * The final pass of spa_sync() must be all rewrites, but the first
 	 * few passes offer a trade-off: allocating blocks defers convergence,
@@ -1257,6 +1276,7 @@ zio_write_bp_init(zio_t *zio)
 		BP_SET_LEVEL(bp, zp->zp_level);
 		BP_SET_PSIZE(bp, psize);
 		BP_SET_COMPRESS(bp, compress);
+		BP_SET_ENCRYPTED(bp, (crypto != ZIO_CRYPTO_OFF) ? 1ULL : 0ULL);
 		BP_SET_CHECKSUM(bp, zp->zp_checksum);
 		BP_SET_DEDUP(bp, zp->zp_dedup);
 		BP_SET_BYTEORDER(bp, ZFS_HOST_BYTEORDER);

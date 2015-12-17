@@ -1944,6 +1944,7 @@ dmu_write_policy(objset_t *os, dnode_t *dn, int level, int wp, zio_prop_t *zp)
 
 	zp->zp_checksum = checksum;
 	zp->zp_compress = compress;
+	zp->zp_crypto = (type == DMU_OT_PLAIN_FILE_CONTENTS && level == 0) ? os->os_crypto : ZIO_CRYPTO_OFF;
 	zp->zp_type = (wp & WP_SPILL) ? dn->dn_bonustype : type;
 	zp->zp_level = level;
 	zp->zp_copies = MIN(copies, spa_max_replication(os->os_spa));
