@@ -90,7 +90,6 @@ struct objset {
 	/* can change, under dsl_dir's locks: */
 	enum zio_checksum os_checksum;
 	enum zio_compress os_compress;
-	enum zio_crypto os_crypto;
 	uint8_t os_copies;
 	enum zio_checksum os_dedup_checksum;
 	boolean_t os_dedup_verify;
