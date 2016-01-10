@@ -100,6 +100,18 @@ zfs_prop_init(void)
 		{ "lz4",	ZIO_COMPRESS_LZ4 },
 		{ NULL }
 	};
+	
+	static zprop_index_t crypto_table[] = {
+		{ "on",		ZIO_CRYPT_ON },
+		{ "off",	ZIO_CRYPT_OFF },
+		{ "aes-128-ccm",	ZIO_CRYPT_AES_128_CCM },
+		{ "aes-192-ccm",	ZIO_CRYPT_AES_192_CCM },
+		{ "aes-256-ccm",	ZIO_CRYPT_AES_256_CCM },
+		{ "aes-128-gcm",	ZIO_CRYPT_AES_128_GCM },
+		{ "aes-192-gcm",	ZIO_CRYPT_AES_192_GCM },
+		{ "aes-256-gcm",	ZIO_CRYPT_AES_256_GCM },
+		{ NULL }
+	};
 
 	static zprop_index_t snapdir_table[] = {
 		{ "hidden",	ZFS_SNAPDIR_HIDDEN },
@@ -240,6 +252,11 @@ zfs_prop_init(void)
 	    ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME,
 	    "on | off | lzjb | gzip | gzip-[1-9] | zle | lz4", "COMPRESS",
 	    compress_table);
+	zprop_register_index(ZFS_PROP_CRYPTO, "encryption",
+	    ZIO_CRYPT_DEFAULT, PROP_ONETIME, ZFS_TYPE_DATASET, 
+		"on | off | aes-128-ccm | aes-192-ccm | aes-256-ccm | "
+		"aes-128-gcm | aes-192-gcm | aes-256-gcm", "ENCRYPTION",
+		crypto_table);
 	zprop_register_index(ZFS_PROP_SNAPDIR, "snapdir", ZFS_SNAPDIR_HIDDEN,
 	    PROP_INHERIT, ZFS_TYPE_FILESYSTEM,
 	    "hidden | visible", "SNAPDIR", snapdir_table);
@@ -452,6 +469,8 @@ zfs_prop_init(void)
 	    PROP_READONLY, ZFS_TYPE_DATASET, "OBJSETID");
 	zprop_register_hidden(ZFS_PROP_INCONSISTENT, "inconsistent",
 	    PROP_TYPE_NUMBER, PROP_READONLY, ZFS_TYPE_DATASET, "INCONSISTENT");
+	zprop_register_hidden(ZFS_PROP_SALT, "salt",
+	    PROP_TYPE_NUMBER, PROP_READONLY, ZFS_TYPE_DATASET, "SALT");
 
 	/*
 	 * Property to be removed once libbe is integrated
