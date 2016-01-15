@@ -377,6 +377,9 @@ zfs_prop_init(void)
 	zprop_register_string(ZFS_PROP_SELINUX_ROOTCONTEXT, "rootcontext",
 	    "none", PROP_DEFAULT, ZFS_TYPE_DATASET, "<selinux rootcontext>",
 	    "ROOTCONTEXT");
+	zprop_register_string(ZFS_PROP_KEYSOURCE, "keysource",
+	    "none", PROP_DEFAULT, ZFS_TYPE_DATASET, "<prompt | file>,<passphrase | raw>",
+	    "KEYSOURCE");
 
 	/* readonly number properties */
 	zprop_register_number(ZFS_PROP_USED, "used", 0, PROP_READONLY,

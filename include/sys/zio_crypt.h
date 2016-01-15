@@ -23,7 +23,6 @@
  * Copyright (c) 2016, Datto, Inc. All rights reserved.
  */
 
-#include <sys/crypto/api.h>
 #include <sys/zio.h>
 #include <sys/refcount.h>
 

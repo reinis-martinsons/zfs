@@ -157,6 +157,7 @@ typedef enum {
 	ZFS_PROP_OVERLAY,
 	ZFS_PROP_CRYPTO,
 	ZFS_PROP_SALT,
+	ZFS_PROP_KEYSOURCE,
 	ZFS_NUM_PROPS
 } zfs_prop_t;
 
