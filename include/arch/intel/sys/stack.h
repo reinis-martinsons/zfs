@@ -27,8 +27,6 @@
 #ifndef _SYS_STACK_H
 #define	_SYS_STACK_H
 
-#pragma ident	"%Z%%M%	%I%	%E% SMI"
-
 #if defined(__i386) || defined(__amd64)
 
 #include <ia32/sys/stack.h>	/* XX64 x86/sys/stack.h */

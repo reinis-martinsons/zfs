@@ -33,9 +33,8 @@ extern "C" {
 /*
  * Consolidation Private Interface for elfsign/libpkcs11/kcfd
  */
-
-#include <sys/types.h>
-#include <sys/param.h>
+ 
+#include <sys/zfs_context.h>
 
 /*
  * Project Private structures and types used for communication between kcfd

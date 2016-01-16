@@ -36,7 +36,7 @@ extern "C" {
 
 #ifdef _KERNEL
 
-#include <sys/rwlock.h>
+#include <sys/zfs_context.h>
 #include <sys/modhash.h>
 
 struct mod_hash_entry {

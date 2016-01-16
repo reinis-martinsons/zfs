@@ -27,8 +27,6 @@
 #ifndef _IA32_SYS_ASM_LINKAGE_H
 #define	_IA32_SYS_ASM_LINKAGE_H
 
-#pragma ident	"%Z%%M%	%I%	%E% SMI"
-
 #include <sys/stack.h>
 #include <sys/trap.h>
 

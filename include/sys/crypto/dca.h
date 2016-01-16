@@ -27,15 +27,11 @@
 #ifndef	_SYS_CRYPTO_DCA_H
 #define	_SYS_CRYPTO_DCA_H
 
-#pragma ident	"%Z%%M%	%I%	%E% SMI"
-
 #ifdef	__cplusplus
 extern "C" {
 #endif
 
-#include <sys/types.h>
-#include <sys/varargs.h>
-
+#include <sys/zfs_context.h>
 #include <sys/crypto/spi.h>
 
 /*

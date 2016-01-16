@@ -29,18 +29,8 @@
 /*
  * loadable module support.
  */
- 
- /*
-#include <sys/ioccom.h>
-#include <sys/nexusdefs.h>
-#include <sys/dditypes.h>
-#include <sys/hwconf.h>
-*/
 
-#include <sys/types.h>
-#include <sys/thread.h>
-#include <sys/t_lock.h>
-
+#include <sys/zfs_context.h>
 
 #ifdef	__cplusplus
 extern "C" {

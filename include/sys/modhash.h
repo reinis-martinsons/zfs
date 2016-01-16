@@ -36,7 +36,7 @@ extern "C" {
 
 #ifdef _KERNEL
 
-#include <sys/types.h>
+#include <sys/zfs_context.h>
 
 /*
  * Opaque data types for storing keys and values

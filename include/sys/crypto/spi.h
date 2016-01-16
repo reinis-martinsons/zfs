@@ -30,10 +30,7 @@
  * CSPI: Cryptographic Service Provider Interface.
  */
 
-#include <sys/types.h>
-//#include <sys/dditypes.h>
-//#include <sys/ddi.h>
-#include <sys/kmem.h>
+#include <sys/zfs_context.h>
 #include <sys/crypto/common.h>
 
 #ifdef	__cplusplus

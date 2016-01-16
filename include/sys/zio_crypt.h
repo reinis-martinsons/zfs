@@ -25,6 +25,7 @@
 
 #include <sys/zio.h>
 #include <sys/refcount.h>
+#include <sys/crypto/api.h>
 
 /*
  * physical representation of a wrapped key in the DSL Keychain
@@ -41,8 +42,8 @@ typedef struct dsl_crypto_key_phys {
  */
 typedef struct zio_crypt_key {
 	enum zio_encrypt ke_crypt; //encryption algorithm
-	//crypto_key_t ke_key; //illumos crypto api key representation
-	//crypto_ctx_template_t ke_ctx_tmpl; //private data for illumos crypto api
+	crypto_key_t ke_key; //illumos crypto api key representation
+	crypto_ctx_template_t ke_ctx_tmpl; //private data for illumos crypto api
 	refcount_t ke_refcnt; //refcount 
 } zio_crypt_key_t;
 

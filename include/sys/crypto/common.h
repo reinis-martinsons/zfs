@@ -36,13 +36,7 @@
 extern "C" {
 #endif
 
-#include <sys/types.h>
-#include <sys/uio.h>
-#include <sys/mutex.h>
-#include <sys/condvar.h>
-
-//CURRENTLY UNSUPPORTED
-//#include <sys/stream.h>
+#include <sys/zfs_context.h>
 
 /* Cryptographic Mechanisms */
 

@@ -30,22 +30,12 @@
  * Kernel Cryptographic Framework private implementation definitions.
  */
 
-//#include <sys/tnf_probe.h>
-//#include <sys/project.h>
-//#include <sys/rctl.h>
-
-#include <sys/types.h>
-#include <sys/param.h>
-
 #ifdef _KERNEL
 #include <sys/crypto/common.h>
 #include <sys/crypto/api.h>
 #include <sys/crypto/spi.h>
 #include <sys/crypto/ioctl.h>
-#include <sys/atomic.h>
-#include <sys/taskq.h>
-#include <sys/kstat.h>
-#include <sys/condvar.h>
+#include <sys/zfs_context.h>
 #endif /* _KERNEL */
 
 #ifdef	__cplusplus

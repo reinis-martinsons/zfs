@@ -34,9 +34,7 @@
 extern "C" {
 #endif
 
-#include <sys/types.h>
-#include <sys/mutex.h>
-#include <sys/condvar.h>
+#include <sys/zfs_context.h>
 #include <sys/crypto/api.h>
 #include <sys/crypto/spi.h>
 #include <sys/crypto/impl.h>

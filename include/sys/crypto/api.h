@@ -30,7 +30,7 @@
 extern "C" {
 #endif
 
-#include <sys/types.h>
+#include <sys/zfs_context.h>
 #include <sys/crypto/common.h>
 
 typedef long crypto_req_id_t;

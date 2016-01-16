@@ -27,8 +27,6 @@
 #ifndef _SYS_TRAP_H
 #define	_SYS_TRAP_H
 
-#pragma ident	"%Z%%M%	%I%	%E% SMI"
-
 #if defined(__i386) || defined(__amd64)
 
 #include <ia32/sys/trap.h>	/* XX64	x86/sys/trap.h */

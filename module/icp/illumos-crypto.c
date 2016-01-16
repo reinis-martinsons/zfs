@@ -24,7 +24,7 @@
 
 static int rand_seed = 0;
 	
-int random_get_bytes(uint8_t *ptr, size_t len){
+int generate_random_data(uint8_t *ptr, size_t len){
 	int i;
 	
 	for(i = 0; i < len; i++){
@@ -97,7 +97,7 @@ static void __test_crypt(int encrypt, crypto_key_t *key, uint64_t guid, uint8_t 
 	ct_buf_len = CTBUF_LEN(sizeof(guid));
 	
 	if(encrypt){
-		random_get_bytes(ct_buf, ZIO_CRYPT_WRAPKEY_IVLEN);
+		generate_random_data(ct_buf, ZIO_CRYPT_WRAPKEY_IVLEN);
 		clear_check_len = sizeof(guid);
 		clear_check = kmem_alloc(clear_check_len, KM_SLEEP);
 		bcopy(&guid, clear_check, clear_check_len);
@@ -157,7 +157,7 @@ static void test_crypt(void){
 	key.ck_format = CRYPTO_KEY_RAW;
 	key.ck_length = keydatalen * 8;
 	key.ck_data = kmem_alloc(keydatalen, KM_SLEEP);
-	random_get_bytes(key.ck_data, keydatalen);
+	generate_random_data(key.ck_data, keydatalen);
 	
 	//test
 	__test_crypt(1, &key, guid, ct_buf);

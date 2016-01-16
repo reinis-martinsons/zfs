@@ -27,13 +27,11 @@
 #ifndef	_SYS_CRYPTO_IOCTLADMIN_H
 #define	_SYS_CRYPTO_IOCTLADMIN_H
 
-#pragma ident	"%Z%%M%	%I%	%E% SMI"
-
 #ifdef	__cplusplus
 extern "C" {
 #endif
 
-#include <sys/types.h>
+#include <sys/zfs_context.h>
 #include <sys/crypto/common.h>
 
 #define	ADMIN_IOCTL_DEVICE	"/dev/cryptoadm"

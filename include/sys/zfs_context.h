@@ -62,6 +62,7 @@
 #include <vm/seg_kmem.h>
 #include <sys/zone.h>
 #include <sys/sdt.h>
+#include <sys/kstat.h>
 #include <sys/zfs_debug.h>
 #include <sys/zfs_delay.h>
 #include <sys/fm/fs/zfs.h>
