@@ -81,7 +81,7 @@ enum zio_encrypt {
 	ZIO_CRYPT_FUNCTIONS
 };
 
-#define	ZIO_CRYPT_ON_VALUE	ZIO_CRYPT_AES_128_CCM
+#define	ZIO_CRYPT_ON_VALUE	ZIO_CRYPT_AES_256_CCM
 #define	ZIO_CRYPT_DEFAULT	ZIO_CRYPT_OFF
 
 enum zio_checksum {

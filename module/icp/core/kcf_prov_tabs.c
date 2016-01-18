@@ -111,7 +111,7 @@ kcf_prov_tab_add_provider(kcf_provider_desc_t *prov_desc)
 	mutex_enter(&prov_tab_mutex);
 
 	/* find free slot in providers table */
-	for (i = 0; i < KCF_MAX_PROVIDERS && prov_tab[i] != NULL; i++)
+	for (i = 1; i < KCF_MAX_PROVIDERS && prov_tab[i] != NULL; i++)
 		;
 	if (i == KCF_MAX_PROVIDERS) {
 		/* ran out of providers entries */

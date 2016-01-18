@@ -178,6 +178,7 @@
 #include <sys/dsl_scan.h>
 #include <sharefs/share.h>
 #include <sys/fm/util.h>
+#include <sys/zio_crypt.h>
 
 #include <sys/dmu_send.h>
 #include <sys/dsl_destroy.h>
@@ -3106,6 +3107,7 @@ zfs_ioc_create(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 	int32_t type32;
 	dmu_objset_type_t type;
 	boolean_t is_insensitive = B_FALSE;
+	zio_crypt_key_t *crypt_key = NULL;
 
 	if (nvlist_lookup_int32(innvl, "type", &type32) != 0)
 		return (SET_ERROR(EINVAL));
@@ -3174,6 +3176,13 @@ zfs_ioc_create(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 			nvlist_free(zct.zct_zplprops);
 			return (error);
 		}
+	}
+
+	/* Get key from encryption properties */
+	error = zio_crypt_key_from_props(nvprops, &crypt_key);
+	if (error != 0) {
+		nvlist_free(zct.zct_zplprops);
+		return (error);
 	}
 
 	error = dmu_objset_create(fsname, type,

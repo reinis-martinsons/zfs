@@ -142,6 +142,7 @@ typedef enum zfs_error {
 	EZFS_DIFF,		/* general failure of zfs diff */
 	EZFS_DIFFDATA,		/* bad zfs diff data */
 	EZFS_POOLREADONLY,	/* pool is in read-only mode */
+	EZFS_CRYPTOFAILED,	/* failed to setup encryption */
 	EZFS_UNKNOWN
 } zfs_error_t;
 
@@ -476,6 +477,11 @@ extern int zfs_prop_is_string(zfs_prop_t prop);
 extern nvlist_t *zfs_get_user_props(zfs_handle_t *);
 extern nvlist_t *zfs_get_recvd_props(zfs_handle_t *);
 extern nvlist_t *zfs_get_clones_nvl(zfs_handle_t *);
+
+/*
+ * zfs encryption management
+ */
+extern int zfs_crypto_create(libzfs_handle_t *, nvlist_t *, char *);
 
 typedef struct zprop_list {
 	int		pl_prop;

@@ -252,7 +252,7 @@ zfs_prop_init(void)
 	    ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME,
 	    "on | off | lzjb | gzip | gzip-[1-9] | zle | lz4", "COMPRESS",
 	    compress_table);
-	zprop_register_index(ZFS_PROP_CRYPTO, "encryption",
+	zprop_register_index(ZFS_PROP_ENCRYPTION, "encryption",
 	    ZIO_CRYPT_DEFAULT, PROP_ONETIME, ZFS_TYPE_DATASET, 
 		"on | off | aes-128-ccm | aes-192-ccm | aes-256-ccm | "
 		"aes-128-gcm | aes-192-gcm | aes-256-gcm", "ENCRYPTION",

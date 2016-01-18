@@ -64,6 +64,8 @@ static void __test_digest(uint8_t *buf, uint64_t size){
 	for(i = 0; i < 32; i++){
 		printk(KERN_INFO "%02x", (unsigned char)out[i]);
 	}
+	
+	printk(KERN_INFO "\n");
 }
 
 static void test_digest(void){

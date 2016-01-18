@@ -23,9 +23,28 @@
  * Copyright (c) 2016, Datto, Inc. All rights reserved.
  */
 
+#ifndef	_SYS_ZIO_CRYPT_H
+#define	_SYS_ZIO_CRYPT_H
+
 #include <sys/zio.h>
 #include <sys/refcount.h>
 #include <sys/crypto/api.h>
+
+#define CRYPT_KEY_MAX_LEN 32
+
+/*
+ * Table of supported crypto algorithms, modes and keylengths.
+ */
+typedef struct zio_crypt_info {
+	crypto_mech_name_t	ci_mechname;
+	size_t			ci_keylen;
+	size_t			ci_ivlen;
+	size_t			ci_maclen;
+	size_t			ci_zil_maclen;
+	char			*ci_name;
+} zio_crypt_info_t;
+
+extern zio_crypt_info_t zio_crypt_table[ZIO_CRYPT_FUNCTIONS];
 
 /*
  * physical representation of a wrapped key in the DSL Keychain
@@ -41,10 +60,10 @@ typedef struct dsl_crypto_key_phys {
  * in memory representation of an unwrapped key that is loaded into memory
  */
 typedef struct zio_crypt_key {
-	enum zio_encrypt ke_crypt; //encryption algorithm
-	crypto_key_t ke_key; //illumos crypto api key representation
-	crypto_ctx_template_t ke_ctx_tmpl; //private data for illumos crypto api
-	refcount_t ke_refcnt; //refcount 
+	enum zio_encrypt ck_crypt; //encryption algorithm
+	crypto_key_t ck_key; //illumos crypto api key representation
+	crypto_ctx_template_t ck_ctx_tmpl; //private data for illumos crypto api
+	refcount_t ck_refcnt; //refcount 
 } zio_crypt_key_t;
 
 /*
@@ -63,4 +82,9 @@ typedef struct dsl_dir_keychain {
 	krwlock_t kc_lock; //lock for protecting entry manipulations
 	list_node_t kc_entries; //list of keychain entries
 	zio_crypt_key_t kc_wkey; //wrapping key for all entries
+	refcount_t kc_refcnt; //refcount
 } dsl_dir_keychain_t;
+
+int zio_crypt_key_from_props(nvlist_t *, zio_crypt_key_t **);
+
+#endif

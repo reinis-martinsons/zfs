@@ -3126,6 +3126,7 @@ zfs_create(libzfs_handle_t *hdl, const char *path, zfs_type_t type,
 	char errbuf[1024];
 	uint64_t zoned;
 	dmu_objset_type_t ost;
+	char parent[ZFS_MAXNAMELEN];
 
 	(void) snprintf(errbuf, sizeof (errbuf), dgettext(TEXT_DOMAIN,
 	    "cannot create '%s'"), path);
@@ -3205,6 +3206,10 @@ zfs_create(libzfs_handle_t *hdl, const char *path, zfs_type_t type,
 			return (zfs_error(hdl, EZFS_BADPROP, errbuf));
 		}
 	}
+	
+	(void) parent_name(path, parent, sizeof (parent));
+	if (zfs_crypto_create(hdl, props, parent) != 0)
+		return (zfs_error(hdl, EZFS_CRYPTOFAILED, errbuf));
 
 	/* create the dataset */
 	ret = lzc_create(path, ost, props);
@@ -3212,10 +3217,7 @@ zfs_create(libzfs_handle_t *hdl, const char *path, zfs_type_t type,
 
 	/* check for failure */
 	if (ret != 0) {
-		char parent[ZFS_MAXNAMELEN];
 		char buf[64];
-
-		(void) parent_name(path, parent, sizeof (parent));
 
 		switch (errno) {
 		case ENOENT:
