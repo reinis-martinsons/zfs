@@ -379,7 +379,10 @@ int dsl_dir_keychain_add_key(dsl_dir_keychain_t *kc, dmu_tx_t *tx){
 	ret = dsl_dir_keychain_entry_generate(crypt, tx->tx_txg, &kce);
 	if(ret) goto error;
 	
+	//add the entry to the keychain
+	rw_enter(&kc->kc_lock, RW_WRITER);
 	list_insert_tail(&kc->kc_entries, kce);
+	rw_exit(&kc->kc_lock);
 	
 	//zero out the phsyical key struct
 	bzero(&key_phys, sizeof(dsl_crypto_key_phys_t));
@@ -415,6 +418,9 @@ int dsl_dir_keychain_rewrap(dsl_dir_keychain_t *kc, zio_crypt_key_t *wkey, dmu_t
 	//zero out the phsyical key struct
 	bzero(&key_phys, sizeof(dsl_crypto_key_phys_t));
 	
+	//most of this function only reads the keychain, but we do need to change the wkey under the same lock
+	rw_enter(&kc->kc_lock, RW_WRITER);
+	
 	//iterate through the list of encryption keys
 	for(kce = list_head(&kc->kc_entries); kce; kce = list_next(&kc->kc_entries, kce)){
 		//initialize the physical key struct with a crypt and iv
@@ -425,7 +431,7 @@ int dsl_dir_keychain_rewrap(dsl_dir_keychain_t *kc, zio_crypt_key_t *wkey, dmu_t
 		
 		//wrap the key
 		ret = zio_crypt_key_wrap(wkey, kce->ke_key->zk_key.ck_data, ivdata, &key_phys);
-		goto error;
+		if(ret) goto error;
 		
 		//add the wrapped key entry to the zap
 		VERIFY0(zap_update_uint64(tx->tx_pool->dp_meta_objset, kc->kc_obj, &tx->tx_txg, 1, 1, sizeof(dsl_crypto_key_phys_t), &key_phys, tx));
@@ -436,26 +442,34 @@ int dsl_dir_keychain_rewrap(dsl_dir_keychain_t *kc, zio_crypt_key_t *wkey, dmu_t
 	zio_crypt_key_hold(wkey, kc);
 	kc->kc_wkey = wkey;
 	
+	//unlock the keychain
+	rw_exit(&kc->kc_lock);
 	return 0;
 	
 error:
+	rw_exit(&kc->kc_lock);
 	return ret;
 }
 
 int dsl_dir_keychain_lookup_key(dsl_dir_keychain_t *kc, uint64_t txgid, zio_crypt_key_t **key_out){
 	dsl_dir_keychain_entry_t *kce;
 	
+	//lock the keychain for reading
+	rw_enter(&kc->kc_lock, RW_READER);
+	
 	//iterate backwards through the list of key entries
 	for(kce = list_tail(&kc->kc_entries); kce; kce = list_prev(&kc->kc_entries, kce)){
 		
 		//return the first key with a txgid lower than or equal to our target value
 		if(kce->ke_txgid <= txgid){
+			rw_exit(&kc->kc_lock);
 			*key_out = kce->ke_key;
 			return 0;
 		}
 	}
 	
 	//key not found
+	rw_exit(&kc->kc_lock);
 	*key_out = NULL;
 	return ENOENT;
 }
@@ -475,13 +489,16 @@ int dsl_dir_clone_sync(dsl_dir_keychain_t *kc, uint64_t new_kcobj, dmu_tx_t *tx,
 	ret = dsl_dir_keychain_create(kc->kc_wkey, new_kcobj, &new_kc);
 	if(ret) goto error;
 	
+	//lock the original keychain for reading
+	rw_enter(&kc->kc_lock, RW_READER);
+	
 	//iterate through the list of encryption keys
 	for(kce = list_head(&kc->kc_entries); kce; kce = list_next(&kc->kc_entries, kce)){
 		//allocate the keychain entry
 		new_kce = kmem_zalloc(sizeof(dsl_dir_keychain_entry_t), KM_SLEEP);
 		if(!new_kce){
 			ret = ENOMEM;
-			goto error;
+			goto error_unlock;
 		}
 		
 		//assign the txgid and key to the keychain entry
@@ -496,19 +513,23 @@ int dsl_dir_clone_sync(dsl_dir_keychain_t *kc, uint64_t new_kcobj, dmu_tx_t *tx,
 		key_phys.dk_crypt_alg = crypt;
 		
 		ret = random_get_bytes(ivdata, ZIO_CRYPT_WRAPKEY_IVLEN);
-		if(ret) goto error;
+		if(ret) goto error_unlock;
 		
 		//wrap the key
 		ret = zio_crypt_key_wrap(new_kc->kc_wkey, new_kce->ke_key->zk_key.ck_data, ivdata, &key_phys);
-		goto error;
+		goto error_unlock;
 		
 		//add the wrapped key entry to the zap
 		VERIFY0(zap_update_uint64(tx->tx_pool->dp_meta_objset, new_kc->kc_obj, &tx->tx_txg, 1, 1, sizeof(dsl_crypto_key_phys_t), &key_phys, tx));
 	}
 	
+	rw_exit(&kc->kc_lock);
+	
 	*kc_out = new_kc;
 	return 0;
 	
+error_unlock:
+	rw_exit(&kc->kc_lock);
 error:
 	if(new_kc) dsl_dir_keychain_free(new_kc);
 	
