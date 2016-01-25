@@ -106,7 +106,6 @@ KERNEL_C = \
 	zio.c \
 	zio_checksum.c \
 	zio_compress.c \
-	zio_crypt.c \
 	zio_inject.c \
 	zle.c \
 	zrlock.c

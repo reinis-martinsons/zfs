@@ -26,17 +26,40 @@
 #ifndef	_SYS_ZIO_CRYPT_H
 #define	_SYS_ZIO_CRYPT_H
 
-#include <sys/zio.h>
 #include <sys/refcount.h>
 #include <sys/crypto/api.h>
+#include <sys/nvpair.h>
 
 #define CRYPT_KEY_MAX_LEN 32
 
+typedef enum zio_encrypt {
+	ZIO_CRYPT_INHERIT = 0,
+	ZIO_CRYPT_ON,
+	ZIO_CRYPT_OFF,
+	ZIO_CRYPT_AES_128_CCM,
+	ZIO_CRYPT_AES_192_CCM,
+	ZIO_CRYPT_AES_256_CCM,
+	ZIO_CRYPT_AES_128_GCM,
+	ZIO_CRYPT_AES_192_GCM,
+	ZIO_CRYPT_AES_256_GCM,
+	ZIO_CRYPT_FUNCTIONS
+} zio_encrypt_t;
+
+#define	ZIO_CRYPT_ON_VALUE	ZIO_CRYPT_AES_256_CCM
+#define	ZIO_CRYPT_DEFAULT	ZIO_CRYPT_OFF
+
+typedef enum zio_crypt_type {
+	ZIO_CRYPT_TYPE_NONE = 0,
+	ZIO_CRYPT_TYPE_CCM,
+	ZIO_CRYPT_TYPE_GCM
+} zio_encrypt_type_t;
+
 /*
- * Table of supported crypto algorithms, modes and keylengths.
+ * table of supported crypto algorithms, modes and keylengths.
  */
 typedef struct zio_crypt_info {
 	crypto_mech_name_t	ci_mechname;
+	zio_encrypt_type_t	ci_crypt_type;
 	size_t			ci_keylen;
 	size_t			ci_ivlen;
 	size_t			ci_maclen;
@@ -60,10 +83,10 @@ typedef struct dsl_crypto_key_phys {
  * in memory representation of an unwrapped key that is loaded into memory
  */
 typedef struct zio_crypt_key {
-	enum zio_encrypt ck_crypt; //encryption algorithm
-	crypto_key_t ck_key; //illumos crypto api key representation
-	crypto_ctx_template_t ck_ctx_tmpl; //private data for illumos crypto api
-	refcount_t ck_refcnt; //refcount 
+	enum zio_encrypt zk_crypt; //encryption algorithm
+	crypto_key_t zk_key; //illumos crypto api key representation
+	crypto_ctx_template_t zk_ctx_tmpl; //private data for illumos crypto api
+	refcount_t zk_refcnt; //refcount
 } zio_crypt_key_t;
 
 /*
@@ -72,7 +95,7 @@ typedef struct zio_crypt_key {
 typedef struct dsl_dir_keychain_entry {
 	list_node_t ke_link; //link into the keychain
 	uint64_t ke_txgid; //first txg id that this key should be applied to
-	zio_crypt_key_t ke_key; //the actual key that this entry represents 
+	zio_crypt_key_t *ke_key; //the actual key that this entry represents 
 } dsl_dir_keychain_entry_t;
 
 /*
@@ -80,9 +103,9 @@ typedef struct dsl_dir_keychain_entry {
  */
 typedef struct dsl_dir_keychain {
 	krwlock_t kc_lock; //lock for protecting entry manipulations
-	list_node_t kc_entries; //list of keychain entries
-	zio_crypt_key_t kc_wkey; //wrapping key for all entries
-	refcount_t kc_refcnt; //refcount
+	list_t kc_entries; //list of keychain entries
+	zio_crypt_key_t *kc_wkey; //wrapping key for all entries
+	uint64_t kc_obj; //keychain object id
 } dsl_dir_keychain_t;
 
 int zio_crypt_key_from_props(nvlist_t *, zio_crypt_key_t **);

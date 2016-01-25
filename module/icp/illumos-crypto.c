@@ -36,45 +36,6 @@ int generate_random_data(uint8_t *ptr, size_t len){
 	return 0;
 }
 
-static void __test_digest(uint8_t *buf, uint64_t size){
-	int ret, i;
-	crypto_data_t ddata, digest;
-	crypto_mechanism_t mech;
-	uint8_t out[32] = { 0 };
-
-	mech.cm_type = crypto_mech2id(SUN_CKM_SHA256);
-	mech.cm_param = NULL;
-	mech.cm_param_len = 0;
-
-	ddata.cd_format = CRYPTO_DATA_RAW;
-	ddata.cd_offset = 0;
-	ddata.cd_length = size;
-	ddata.cd_raw.iov_base = (char *)buf;
-	ddata.cd_raw.iov_len = size;
-
-	digest.cd_format = CRYPTO_DATA_RAW;
-	digest.cd_offset = 0;
-	digest.cd_length = SHA_CKSUM_SIZE;
-	digest.cd_raw.iov_base = (char *)out;
-	digest.cd_raw.iov_len = SHA_CKSUM_SIZE;
-
-	ret = crypto_digest(&mech, &ddata, &digest, NULL);
-	printk(KERN_INFO "CRYPTO_DIGEST RETURNED: %d DIGEST = \n", ret);
-	
-	for(i = 0; i < 32; i++){
-		printk(KERN_INFO "%02x", (unsigned char)out[i]);
-	}
-	
-	printk(KERN_INFO "\n");
-}
-
-static void test_digest(void){
-	uint8_t *str = "Hello world";
-	
-	printk(KERN_DEBUG "--------------- ATTEMPTING DIGEST TEST--------------");
-	__test_digest(str, strlen(str));
-}
-
 static void __test_crypt(int encrypt, crypto_key_t *key, uint64_t guid, uint8_t *ct_buf){
 	int ret;
 	crypto_data_t pt, ct;
@@ -167,6 +128,45 @@ static void test_crypt(void){
 	
 	//cleanup
 	if(key.ck_data) kmem_free(key.ck_data, keydatalen);
+}
+
+static void __test_digest(uint8_t *buf, uint64_t size){
+	int ret, i;
+	crypto_data_t ddata, digest;
+	crypto_mechanism_t mech;
+	uint8_t out[32] = { 0 };
+
+	mech.cm_type = crypto_mech2id(SUN_CKM_SHA256);
+	mech.cm_param = NULL;
+	mech.cm_param_len = 0;
+
+	ddata.cd_format = CRYPTO_DATA_RAW;
+	ddata.cd_offset = 0;
+	ddata.cd_length = size;
+	ddata.cd_raw.iov_base = (char *)buf;
+	ddata.cd_raw.iov_len = size;
+
+	digest.cd_format = CRYPTO_DATA_RAW;
+	digest.cd_offset = 0;
+	digest.cd_length = SHA_CKSUM_SIZE;
+	digest.cd_raw.iov_base = (char *)out;
+	digest.cd_raw.iov_len = SHA_CKSUM_SIZE;
+
+	ret = crypto_digest(&mech, &ddata, &digest, NULL);
+	printk(KERN_INFO "CRYPTO_DIGEST RETURNED: %d DIGEST = \n", ret);
+	
+	for(i = 0; i < 32; i++){
+		printk(KERN_INFO "%02x", (unsigned char)out[i]);
+	}
+	
+	printk(KERN_INFO "\n");
+}
+
+static void test_digest(void){
+	uint8_t *str = "Hello world";
+	
+	printk(KERN_DEBUG "--------------- ATTEMPTING DIGEST TEST--------------");
+	__test_digest(str, strlen(str));
 }
 
 static void __exit illumos_crypto_exit(void){
