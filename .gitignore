@@ -32,6 +32,7 @@ Makefile.in
 .settings/
 .cproject
 .project
+.autotools
 
 #
 # Top level generated files specific to this top level dir
