@@ -39,28 +39,28 @@ typedef struct dsl_crypto_key_phys {
 } dsl_crypto_key_phys_t;
 
 //in memory representation of an entry in the DSL Keychain
-typedef struct dsl_dir_keychain_entry {
+typedef struct dsl_keychain_entry {
 	list_node_t ke_link; //link into the keychain
 	uint64_t ke_txgid; //first txg id that this key should be applied to
 	zio_crypt_key_t *ke_key; //the actual key that this entry represents 
-} dsl_dir_keychain_entry_t;
+} dsl_keychain_entry_t;
 
 //in memory representation of a DSL keychain
-typedef struct dsl_dir_keychain {
+typedef struct dsl_keychain {
 	krwlock_t kc_lock; //lock for protecting entry manipulations
 	list_t kc_entries; //list of keychain entries
 	zio_crypt_key_t *kc_wkey; //wrapping key for all entries
 	uint64_t kc_obj; //keychain object id
-} dsl_dir_keychain_t;
+} dsl_keychain_t;
 
 int zio_crypt_key_wrap(zio_crypt_key_t *wkey, uint8_t *keydata, uint8_t *ivdata, dsl_crypto_key_phys_t *dckp);
 int zio_crypt_key_unwrap(zio_crypt_key_t *wkey, dsl_crypto_key_phys_t *dckp, uint8_t *keydata);
-void dsl_dir_keychain_free(dsl_dir_keychain_t *kc);
-int dsl_dir_keychain_create(zio_crypt_key_t *wkey, uint64_t kcobj, dsl_dir_keychain_t **kc_out);
-int dsl_dir_keychain_entry_generate(uint64_t crypt, uint64_t txgid, dsl_dir_keychain_entry_t **kce_out);
-int dsl_dir_keychain_add_key(dsl_dir_keychain_t *kc, dmu_tx_t *tx);
-int dsl_dir_keychain_rewrap(dsl_dir_keychain_t *kc, zio_crypt_key_t *wkey, dmu_tx_t *tx);
-int dsl_dir_clone_sync(dsl_dir_keychain_t *kc, uint64_t new_kcobj, dmu_tx_t *tx, dsl_dir_keychain_t **kc_out);
-int dsl_dir_keychain_load(objset_t *mos, uint64_t kcobj, zio_crypt_key_t *wkey, dsl_dir_keychain_t **kc_out);
+void dsl_keychain_free(dsl_keychain_t *kc);
+int dsl_keychain_create(zio_crypt_key_t *wkey, uint64_t kcobj, dsl_keychain_t **kc_out);
+int dsl_keychain_entry_generate(uint64_t crypt, uint64_t txgid, dsl_keychain_entry_t **kce_out);
+int dsl_keychain_add_key(dsl_keychain_t *kc, dmu_tx_t *tx);
+int dsl_keychain_rewrap(dsl_keychain_t *kc, zio_crypt_key_t *wkey, dmu_tx_t *tx);
+int dsl_dir_clone_sync(dsl_keychain_t *kc, uint64_t new_kcobj, dmu_tx_t *tx, dsl_keychain_t **kc_out);
+int dsl_keychain_load(objset_t *mos, uint64_t kcobj, zio_crypt_key_t *wkey, dsl_keychain_t **kc_out);
 
 #endif

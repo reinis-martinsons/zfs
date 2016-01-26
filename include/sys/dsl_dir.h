@@ -94,7 +94,7 @@ struct dsl_dir {
 	dsl_pool_t *dd_pool;
 	
 	/* has internal locking */	
-	dsl_dir_keychain_entry_t *keychain;
+	dsl_keychain_entry_t *keychain;
 
 	/* Stable until user eviction; no lock needed: */
 	dmu_buf_t *dd_dbuf;

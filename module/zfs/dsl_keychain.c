@@ -69,13 +69,13 @@ error:
 	return ret;
 }
 
-void dsl_dir_keychain_free(dsl_dir_keychain_t *kc){
-	dsl_dir_keychain_entry_t *kce;
+void dsl_keychain_free(dsl_keychain_t *kc){
+	dsl_keychain_entry_t *kce;
 	
 	//release each encryption key from the keychain
 	while((kce = list_head(&kc->kc_entries)) != NULL){
 		zio_crypt_key_rele(kce->ke_key, kc);
-		kmem_free(kce, sizeof(dsl_dir_keychain_entry_t));
+		kmem_free(kce, sizeof(dsl_keychain_entry_t));
 	}
 	
 	//free the keychain entries list, wrapping key, and lock
@@ -84,15 +84,15 @@ void dsl_dir_keychain_free(dsl_dir_keychain_t *kc){
 	if(kc->kc_wkey) zio_crypt_key_rele(kc->kc_wkey, kc);
 	
 	//free the keychain
-	kmem_free(kc, sizeof(dsl_dir_keychain_t));
+	kmem_free(kc, sizeof(dsl_keychain_t));
 }
 
-int dsl_dir_keychain_create(zio_crypt_key_t *wkey, uint64_t kcobj, dsl_dir_keychain_t **kc_out){
+int dsl_keychain_create(zio_crypt_key_t *wkey, uint64_t kcobj, dsl_keychain_t **kc_out){
 	int ret;
-	dsl_dir_keychain_t *kc;
+	dsl_keychain_t *kc;
 	
 	//allocate the keychain struct
-	kc = kmem_alloc(sizeof(dsl_dir_keychain_t), KM_SLEEP);
+	kc = kmem_alloc(sizeof(dsl_keychain_t), KM_SLEEP);
 	if(!kc){
 		ret = ENOMEM;
 		goto error;
@@ -101,7 +101,7 @@ int dsl_dir_keychain_create(zio_crypt_key_t *wkey, uint64_t kcobj, dsl_dir_keych
 	//initialize members
 	kc->kc_obj = kcobj;
 	rw_init(&kc->kc_lock, NULL, RW_DEFAULT, NULL);
-	list_create(&kc->kc_entries, sizeof(dsl_dir_keychain_entry_t), offsetof(dsl_dir_keychain_t, kc_entries));
+	list_create(&kc->kc_entries, sizeof(dsl_keychain_entry_t), offsetof(dsl_keychain_t, kc_entries));
 	
 	//add the wrapping key to the keychain
 	zio_crypt_key_hold(wkey, kc);
@@ -115,21 +115,21 @@ error:
 	return ret;
 }
 
-void dsl_dir_keychain_entry_free(dsl_dir_keychain_entry_t *kce){
+void dsl_keychain_entry_free(dsl_keychain_entry_t *kce){
 	if(kce->ke_key) zio_crypt_key_rele(kce->ke_key, kce);
-	kmem_free(kce, sizeof(dsl_dir_keychain_entry_t));
+	kmem_free(kce, sizeof(dsl_keychain_entry_t));
 }	
 
-int dsl_dir_keychain_entry_generate(uint64_t crypt, uint64_t txgid, dsl_dir_keychain_entry_t **kce_out){
+int dsl_keychain_entry_generate(uint64_t crypt, uint64_t txgid, dsl_keychain_entry_t **kce_out){
 	int ret;
-	dsl_dir_keychain_entry_t *kce = NULL;
+	dsl_keychain_entry_t *kce = NULL;
 	uint64_t keydata_len = zio_crypt_table[crypt].ci_keylen;
 	uint8_t rnddata[keydata_len];
 	
 	*kce_out = NULL;
 	
 	//allocate the keychain entry
-	kce = kmem_zalloc(sizeof(dsl_dir_keychain_entry_t), KM_SLEEP);
+	kce = kmem_zalloc(sizeof(dsl_keychain_entry_t), KM_SLEEP);
 	if(!kce){
 		ret = ENOMEM;
 		goto error;
@@ -150,21 +150,21 @@ int dsl_dir_keychain_entry_generate(uint64_t crypt, uint64_t txgid, dsl_dir_keyc
 	return 0;
 	
 error:
-	if(kce) dsl_dir_keychain_entry_free(kce);
+	if(kce) dsl_keychain_entry_free(kce);
 
 	*kce_out = NULL;
 	return ret;
 }
 
-int dsl_dir_keychain_add_key(dsl_dir_keychain_t *kc, dmu_tx_t *tx){
+int dsl_keychain_add_key(dsl_keychain_t *kc, dmu_tx_t *tx){
 	int ret;
 	uint64_t crypt = kc->kc_wkey->zk_crypt;
-	dsl_dir_keychain_entry_t *kce = NULL;
+	dsl_keychain_entry_t *kce = NULL;
 	uint8_t ivdata[ZIO_CRYPT_WRAPKEY_IVLEN];
 	dsl_crypto_key_phys_t key_phys;
 	
 	//generate the keychain entry with the same encryption type as the wrapping key
-	ret = dsl_dir_keychain_entry_generate(crypt, tx->tx_txg, &kce);
+	ret = dsl_keychain_entry_generate(crypt, tx->tx_txg, &kce);
 	if(ret) goto error;
 	
 	//add the entry to the keychain
@@ -191,15 +191,15 @@ int dsl_dir_keychain_add_key(dsl_dir_keychain_t *kc, dmu_tx_t *tx){
 	return 0;
 	
 error:
-	if(kce) dsl_dir_keychain_entry_free(kce);
+	if(kce) dsl_keychain_entry_free(kce);
 
 	return ret;
 }
 
-int dsl_dir_keychain_rewrap(dsl_dir_keychain_t *kc, zio_crypt_key_t *wkey, dmu_tx_t *tx){
+int dsl_keychain_rewrap(dsl_keychain_t *kc, zio_crypt_key_t *wkey, dmu_tx_t *tx){
 	int ret;
 	uint64_t crypt = kc->kc_wkey->zk_crypt;
-	dsl_dir_keychain_entry_t *kce;
+	dsl_keychain_entry_t *kce;
 	uint8_t ivdata[ZIO_CRYPT_WRAPKEY_IVLEN];
 	dsl_crypto_key_phys_t key_phys;
 	
@@ -239,8 +239,8 @@ error:
 	return ret;
 }
 
-int dsl_dir_keychain_lookup_key(dsl_dir_keychain_t *kc, uint64_t txgid, zio_crypt_key_t **key_out){
-	dsl_dir_keychain_entry_t *kce;
+int dsl_keychain_lookup_key(dsl_keychain_t *kc, uint64_t txgid, zio_crypt_key_t **key_out){
+	dsl_keychain_entry_t *kce;
 	
 	//lock the keychain for reading
 	rw_enter(&kc->kc_lock, RW_READER);
@@ -262,11 +262,11 @@ int dsl_dir_keychain_lookup_key(dsl_dir_keychain_t *kc, uint64_t txgid, zio_cryp
 	return ENOENT;
 }
 
-int dsl_dir_clone_sync(dsl_dir_keychain_t *kc, uint64_t new_kcobj, dmu_tx_t *tx, dsl_dir_keychain_t **kc_out){
+int dsl_dir_clone_sync(dsl_keychain_t *kc, uint64_t new_kcobj, dmu_tx_t *tx, dsl_keychain_t **kc_out){
 	int ret;
 	uint64_t crypt = kc->kc_wkey->zk_crypt;
-	dsl_dir_keychain_t *new_kc = NULL;
-	dsl_dir_keychain_entry_t *kce, *new_kce;
+	dsl_keychain_t *new_kc = NULL;
+	dsl_keychain_entry_t *kce, *new_kce;
 	uint8_t ivdata[ZIO_CRYPT_WRAPKEY_IVLEN];
 	dsl_crypto_key_phys_t key_phys;
 	
@@ -274,7 +274,7 @@ int dsl_dir_clone_sync(dsl_dir_keychain_t *kc, uint64_t new_kcobj, dmu_tx_t *tx,
 	bzero(&key_phys, sizeof(dsl_crypto_key_phys_t));
 	
 	//create the new keychain for the clone
-	ret = dsl_dir_keychain_create(kc->kc_wkey, new_kcobj, &new_kc);
+	ret = dsl_keychain_create(kc->kc_wkey, new_kcobj, &new_kc);
 	if(ret) goto error;
 	
 	//lock the original keychain for reading
@@ -283,7 +283,7 @@ int dsl_dir_clone_sync(dsl_dir_keychain_t *kc, uint64_t new_kcobj, dmu_tx_t *tx,
 	//iterate through the list of encryption keys
 	for(kce = list_head(&kc->kc_entries); kce; kce = list_next(&kc->kc_entries, kce)){
 		//allocate the keychain entry
-		new_kce = kmem_zalloc(sizeof(dsl_dir_keychain_entry_t), KM_SLEEP);
+		new_kce = kmem_zalloc(sizeof(dsl_keychain_entry_t), KM_SLEEP);
 		if(!new_kce){
 			ret = ENOMEM;
 			goto error_unlock;
@@ -319,15 +319,15 @@ int dsl_dir_clone_sync(dsl_dir_keychain_t *kc, uint64_t new_kcobj, dmu_tx_t *tx,
 error_unlock:
 	rw_exit(&kc->kc_lock);
 error:
-	if(new_kc) dsl_dir_keychain_free(new_kc);
+	if(new_kc) dsl_keychain_free(new_kc);
 	
 	*kc_out = NULL;
 	return ret;
 }
 
-int dsl_dir_keychain_load(objset_t *mos, uint64_t kcobj, zio_crypt_key_t *wkey, dsl_dir_keychain_t **kc_out){
+int dsl_keychain_load(objset_t *mos, uint64_t kcobj, zio_crypt_key_t *wkey, dsl_keychain_t **kc_out){
 	int ret;
-	dsl_dir_keychain_t *kc;
+	dsl_keychain_t *kc;
 	zap_cursor_t zc;
 	zap_attribute_t za;
 	uint64_t txgid;
@@ -335,10 +335,10 @@ int dsl_dir_keychain_load(objset_t *mos, uint64_t kcobj, zio_crypt_key_t *wkey, 
 	uint64_t crypt = wkey->zk_crypt;
 	uint_t keylen = zio_crypt_table[crypt].ci_keylen;
 	uint8_t keydata[keylen + WRAPPING_MAC_LEN];
-	dsl_dir_keychain_entry_t *kce;
+	dsl_keychain_entry_t *kce;
 	
 	//allocate and initialize the keychain struct
-	ret = dsl_dir_keychain_create(wkey, kcobj, &kc);
+	ret = dsl_keychain_create(wkey, kcobj, &kc);
 	if(ret) goto error;
 	
 	//iterate all entries in the on-disk keychain
@@ -358,7 +358,7 @@ int dsl_dir_keychain_load(objset_t *mos, uint64_t kcobj, zio_crypt_key_t *wkey, 
 		if(ret) goto error;
 		
 		//allocate the keychain entry
-		kce = kmem_zalloc(sizeof(dsl_dir_keychain_entry_t), KM_SLEEP);
+		kce = kmem_zalloc(sizeof(dsl_keychain_entry_t), KM_SLEEP);
 		if(!kce){
 			ret = ENOMEM;
 			goto error;
@@ -383,7 +383,7 @@ int dsl_dir_keychain_load(objset_t *mos, uint64_t kcobj, zio_crypt_key_t *wkey, 
 	return 0;
 	
 error:
-	if(kc) dsl_dir_keychain_free(kc);
+	if(kc) dsl_keychain_free(kc);
 
 	*kc_out = NULL;
 	return ret;
