@@ -30,7 +30,9 @@
 #include <sys/crypto/api.h>
 #include <sys/nvpair.h>
 
-#define CRYPT_KEY_MAX_LEN 32
+//utility macros
+#define BITS_TO_BYTES(x) (((x) + 7) >> 3)
+#define BYTES_TO_BITS(x) (x << 3)
 
 typedef enum zio_encrypt {
 	ZIO_CRYPT_INHERIT = 0,
@@ -67,14 +69,6 @@ typedef struct zio_crypt_info {
 
 extern zio_crypt_info_t zio_crypt_table[ZIO_CRYPT_FUNCTIONS];
 
-//physical representation of a wrapped key in the DSL Keychain
-typedef struct dsl_crypto_key_phys {
-	uint64_t dk_crypt_alg; //encryption algorithm (see zio_encrypt enum)
-	uint8_t dk_iv[13]; //iv / nonce for unwrapping the key
-	uint8_t dk_padding[3];
-	uint8_t dk_keybuf[48]; //wrapped key data
-} dsl_crypto_key_phys_t;
-
 //in memory representation of an unwrapped key that is loaded into memory
 typedef struct zio_crypt_key {
 	enum zio_encrypt zk_crypt; //encryption algorithm
@@ -83,19 +77,13 @@ typedef struct zio_crypt_key {
 	refcount_t zk_refcnt; //refcount
 } zio_crypt_key_t;
 
-//in memory representation of an entry in the DSL Keychain
-typedef struct dsl_dir_keychain_entry {
-	list_node_t ke_link; //link into the keychain
-	uint64_t ke_txgid; //first txg id that this key should be applied to
-	zio_crypt_key_t *ke_key; //the actual key that this entry represents 
-} dsl_dir_keychain_entry_t;
+void zio_crypt_key_hold(zio_crypt_key_t *key, void *tag);
+void zio_crypt_key_rele(zio_crypt_key_t *key, void *tag);
+int zio_crypt_key_create(uint64_t crypt, uint8_t *keydata, void *tag, zio_crypt_key_t **key_out);
+int zio_crypt_wkey_create_nvlist(nvlist_t *props, void *tag, zio_crypt_key_t **key_out);
 
-//in memory representation of a DSL keychain
-typedef struct dsl_dir_keychain {
-	krwlock_t kc_lock; //lock for protecting entry manipulations
-	list_t kc_entries; //list of keychain entries
-	zio_crypt_key_t *kc_wkey; //wrapping key for all entries
-	uint64_t kc_obj; //keychain object id
-} dsl_dir_keychain_t;
+int zio_do_crypt(boolean_t encrypt, zio_crypt_key_t *key, uint8_t *ivbuf, uint_t ivlen, uint_t maclen, uint8_t *plainbuf, uint8_t *cipherbuf, uint_t datalen);
+#define zio_encrypt(wkey, iv, ivlen, maclen, plaindata, cipherdata, keylen) zio_do_crypt(B_TRUE, wkey, iv, ivlen, maclen, plaindata, cipherdata, keylen)
+#define zio_decrypt(wkey, iv, ivlen, maclen, plaindata, cipherdata, keylen) zio_do_crypt(B_FALSE, wkey, iv, ivlen, maclen, plaindata, cipherdata, keylen)
 
 #endif

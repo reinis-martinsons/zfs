@@ -857,7 +857,8 @@ dsl_dataset_zero_zil(dsl_dataset_t *ds, dmu_tx_t *tx)
 
 uint64_t
 dsl_dataset_create_sync(dsl_dir_t *pdd, const char *lastname,
-    dsl_dataset_t *origin, uint64_t flags, cred_t *cr, dmu_tx_t *tx)
+    dsl_dataset_t *origin, uint64_t flags, cred_t *cr, 
+	zio_crypt_key_t *crypto_key, dmu_tx_t *tx)
 {
 	dsl_pool_t *dp = pdd->dd_pool;
 	uint64_t dsobj, ddobj;
@@ -866,7 +867,7 @@ dsl_dataset_create_sync(dsl_dir_t *pdd, const char *lastname,
 	ASSERT(dmu_tx_is_syncing(tx));
 	ASSERT(lastname[0] != '@');
 
-	ddobj = dsl_dir_create_sync(dp, pdd, lastname, tx);
+	ddobj = dsl_dir_create_sync(dp, pdd, lastname, crypto_key, tx);
 	VERIFY0(dsl_dir_hold_obj(dp, ddobj, lastname, FTAG, &dd));
 
 	dsobj = dsl_dataset_create_sync_dd(dd, origin,
@@ -2114,7 +2115,7 @@ dsl_dataset_rollback_sync(void *arg, dmu_tx_t *tx)
 	fnvlist_add_string(ddra->ddra_result, "target", namebuf);
 
 	cloneobj = dsl_dataset_create_sync(ds->ds_dir, "%rollback",
-	    ds->ds_prev, DS_CREATE_FLAG_NODIRTY, kcred, tx);
+	    ds->ds_prev, DS_CREATE_FLAG_NODIRTY, kcred, NULL, tx);
 
 	VERIFY0(dsl_dataset_hold_obj(dp, cloneobj, FTAG, &clone));
 

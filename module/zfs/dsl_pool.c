@@ -362,19 +362,19 @@ dsl_pool_create(spa_t *spa, nvlist_t *zplprops, uint64_t txg)
 	VERIFY0(dsl_scan_init(dp, txg));
 
 	/* create and open the root dir */
-	dp->dp_root_dir_obj = dsl_dir_create_sync(dp, NULL, NULL, tx);
+	dp->dp_root_dir_obj = dsl_dir_create_sync(dp, NULL, NULL, NULL, tx);
 	VERIFY0(dsl_dir_hold_obj(dp, dp->dp_root_dir_obj,
 	    NULL, dp, &dp->dp_root_dir));
 
 	/* create and open the meta-objset dir */
-	(void) dsl_dir_create_sync(dp, dp->dp_root_dir, MOS_DIR_NAME, tx);
+	(void) dsl_dir_create_sync(dp, dp->dp_root_dir, MOS_DIR_NAME, NULL, tx);
 	VERIFY0(dsl_pool_open_special_dir(dp,
 	    MOS_DIR_NAME, &dp->dp_mos_dir));
 
 	if (spa_version(spa) >= SPA_VERSION_DEADLISTS) {
 		/* create and open the free dir */
 		(void) dsl_dir_create_sync(dp, dp->dp_root_dir,
-		    FREE_DIR_NAME, tx);
+		    FREE_DIR_NAME, NULL, tx);
 		VERIFY0(dsl_pool_open_special_dir(dp,
 		    FREE_DIR_NAME, &dp->dp_free_dir));
 
@@ -801,7 +801,7 @@ dsl_pool_upgrade_dir_clones(dsl_pool_t *dp, dmu_tx_t *tx)
 
 	ASSERT(dmu_tx_is_syncing(tx));
 
-	(void) dsl_dir_create_sync(dp, dp->dp_root_dir, FREE_DIR_NAME, tx);
+	(void) dsl_dir_create_sync(dp, dp->dp_root_dir, FREE_DIR_NAME, NULL, tx);
 	VERIFY0(dsl_pool_open_special_dir(dp,
 	    FREE_DIR_NAME, &dp->dp_free_dir));
 
@@ -832,7 +832,7 @@ dsl_pool_create_origin(dsl_pool_t *dp, dmu_tx_t *tx)
 
 	/* create the origin dir, ds, & snap-ds */
 	dsobj = dsl_dataset_create_sync(dp->dp_root_dir, ORIGIN_DIR_NAME,
-	    NULL, 0, kcred, tx);
+	    NULL, 0, kcred, NULL, tx);
 	VERIFY0(dsl_dataset_hold_obj(dp, dsobj, FTAG, &ds));
 	dsl_dataset_snapshot_sync_impl(ds, ORIGIN_DIR_NAME, tx);
 	VERIFY0(dsl_dataset_hold_obj(dp, dsl_dataset_phys(ds)->ds_prev_snap_obj,

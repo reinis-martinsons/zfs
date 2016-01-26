@@ -3107,6 +3107,7 @@ zfs_ioc_create(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 	int32_t type32;
 	dmu_objset_type_t type;
 	boolean_t is_insensitive = B_FALSE;
+	zio_crypt_key_t *crypto_key;
 
 	if (nvlist_lookup_int32(innvl, "type", &type32) != 0)
 		return (SET_ERROR(EINVAL));
@@ -3176,10 +3177,19 @@ zfs_ioc_create(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 			return (error);
 		}
 	}
+	
+	error = zio_crypt_wkey_create_nvlist(nvprops, FTAG, &crypto_key);
+	if(error != 0){
+		nvlist_free(zct.zct_zplprops);
+		return (error);
+	}
 
 	error = dmu_objset_create(fsname, type,
-	    is_insensitive ? DS_FLAG_CI_DATASET : 0, cbfunc, &zct);
+	    is_insensitive ? DS_FLAG_CI_DATASET : 0, crypto_key, cbfunc, &zct);
+	
 	nvlist_free(zct.zct_zplprops);
+	if(crypto_key)
+		zio_crypt_key_rele(crypto_key, FTAG);
 
 	/*
 	 * It would be nice to do this atomically.

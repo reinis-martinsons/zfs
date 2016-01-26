@@ -31,6 +31,7 @@ $(MODULE)-objs += dsl_deadlist.o
 $(MODULE)-objs += dsl_deleg.o
 $(MODULE)-objs += dsl_bookmark.o
 $(MODULE)-objs += dsl_dir.o
+$(MODULE)-objs += dsl_keychain.o
 $(MODULE)-objs += dsl_pool.o
 $(MODULE)-objs += dsl_prop.o
 $(MODULE)-objs += dsl_scan.o

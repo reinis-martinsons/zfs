@@ -33,7 +33,7 @@
 #include <sys/dsl_synctask.h>
 #include <sys/refcount.h>
 #include <sys/zfs_context.h>
-#include <sys/zio_crypt.h>
+#include <sys/dsl_keychain.h>
 
 #ifdef	__cplusplus
 extern "C" {
@@ -135,7 +135,7 @@ int dsl_dir_hold_obj(dsl_pool_t *dp, uint64_t ddobj,
 void dsl_dir_name(dsl_dir_t *dd, char *buf);
 int dsl_dir_namelen(dsl_dir_t *dd);
 uint64_t dsl_dir_create_sync(dsl_pool_t *dp, dsl_dir_t *pds,
-    const char *name, dmu_tx_t *tx);
+    const char *name, zio_crypt_key_t *crypto_key, dmu_tx_t *tx);
 void dsl_dir_stats(dsl_dir_t *dd, nvlist_t *nv);
 uint64_t dsl_dir_space_available(dsl_dir_t *dd,
     dsl_dir_t *ancestor, int64_t delta, int ondiskonly);

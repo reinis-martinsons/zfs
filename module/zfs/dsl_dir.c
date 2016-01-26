@@ -882,7 +882,7 @@ dsl_fs_ss_count_adjust(dsl_dir_t *dd, int64_t delta, const char *prop,
 
 uint64_t
 dsl_dir_create_sync(dsl_pool_t *dp, dsl_dir_t *pds, const char *name,
-    dmu_tx_t *tx)
+    zio_crypt_key_t *crypto_key, dmu_tx_t *tx)
 {
 	objset_t *mos = dp->dp_meta_objset;
 	uint64_t ddobj;
