@@ -53,14 +53,11 @@ typedef struct dsl_keychain {
 	uint64_t kc_obj; //keychain object id
 } dsl_keychain_t;
 
-int zio_crypt_key_wrap(zio_crypt_key_t *wkey, uint8_t *keydata, uint8_t *ivdata, dsl_crypto_key_phys_t *dckp);
-int zio_crypt_key_unwrap(zio_crypt_key_t *wkey, dsl_crypto_key_phys_t *dckp, uint8_t *keydata);
 void dsl_keychain_free(dsl_keychain_t *kc);
 int dsl_keychain_create(zio_crypt_key_t *wkey, uint64_t kcobj, dsl_keychain_t **kc_out);
-int dsl_keychain_entry_generate(uint64_t crypt, uint64_t txgid, dsl_keychain_entry_t **kce_out);
 int dsl_keychain_add_key(dsl_keychain_t *kc, dmu_tx_t *tx);
 int dsl_keychain_rewrap(dsl_keychain_t *kc, zio_crypt_key_t *wkey, dmu_tx_t *tx);
-int dsl_dir_clone_sync(dsl_keychain_t *kc, uint64_t new_kcobj, dmu_tx_t *tx, dsl_keychain_t **kc_out);
-int dsl_keychain_load(objset_t *mos, uint64_t kcobj, zio_crypt_key_t *wkey, dsl_keychain_t **kc_out);
+int dsl_keychain_clone_sync(dsl_keychain_t *kc, uint64_t new_kcobj, dmu_tx_t *tx, dsl_keychain_t **kc_out);
+int dsl_keychain_open(objset_t *mos, uint64_t kcobj, zio_crypt_key_t *wkey, dsl_keychain_t **kc_out);
 
 #endif

@@ -32,7 +32,7 @@
 #define WRAPPING_MAC_LEN 16
 #define WRAPPED_KEYDATA_LEN(keylen) ((keylen) + ZIO_CRYPT_WRAPKEY_IVLEN + WRAPPING_MAC_LEN)
 
-int zio_crypt_key_wrap(zio_crypt_key_t *wkey, uint8_t *keydata, uint8_t *ivdata, dsl_crypto_key_phys_t *dckp){
+static int zio_crypt_key_wrap(zio_crypt_key_t *wkey, uint8_t *keydata, uint8_t *ivdata, dsl_crypto_key_phys_t *dckp){
 	int ret;
 	uint64_t crypt = wkey->zk_crypt;
 	
@@ -53,7 +53,7 @@ error:
 	return ret;
 }
 
-int zio_crypt_key_unwrap(zio_crypt_key_t *wkey, dsl_crypto_key_phys_t *dckp, uint8_t *keydata){
+static int zio_crypt_key_unwrap(zio_crypt_key_t *wkey, dsl_crypto_key_phys_t *dckp, uint8_t *keydata){
 	int ret;
 	uint64_t crypt = wkey->zk_crypt;
 	
@@ -115,12 +115,12 @@ error:
 	return ret;
 }
 
-void dsl_keychain_entry_free(dsl_keychain_entry_t *kce){
+static void dsl_keychain_entry_free(dsl_keychain_entry_t *kce){
 	if(kce->ke_key) zio_crypt_key_rele(kce->ke_key, kce);
 	kmem_free(kce, sizeof(dsl_keychain_entry_t));
 }	
 
-int dsl_keychain_entry_generate(uint64_t crypt, uint64_t txgid, dsl_keychain_entry_t **kce_out){
+static int dsl_keychain_entry_generate(uint64_t crypt, uint64_t txgid, dsl_keychain_entry_t **kce_out){
 	int ret;
 	dsl_keychain_entry_t *kce = NULL;
 	uint64_t keydata_len = zio_crypt_table[crypt].ci_keylen;
@@ -262,7 +262,7 @@ int dsl_keychain_lookup_key(dsl_keychain_t *kc, uint64_t txgid, zio_crypt_key_t 
 	return ENOENT;
 }
 
-int dsl_dir_clone_sync(dsl_keychain_t *kc, uint64_t new_kcobj, dmu_tx_t *tx, dsl_keychain_t **kc_out){
+int dsl_keychain_clone_sync(dsl_keychain_t *kc, uint64_t new_kcobj, dmu_tx_t *tx, dsl_keychain_t **kc_out){
 	int ret;
 	uint64_t crypt = kc->kc_wkey->zk_crypt;
 	dsl_keychain_t *new_kc = NULL;
@@ -325,7 +325,7 @@ error:
 	return ret;
 }
 
-int dsl_keychain_load(objset_t *mos, uint64_t kcobj, zio_crypt_key_t *wkey, dsl_keychain_t **kc_out){
+int dsl_keychain_open(objset_t *mos, uint64_t kcobj, zio_crypt_key_t *wkey, dsl_keychain_t **kc_out){
 	int ret;
 	dsl_keychain_t *kc;
 	zap_cursor_t zc;
