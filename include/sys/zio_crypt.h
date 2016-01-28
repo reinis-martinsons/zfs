@@ -34,6 +34,11 @@
 #define BITS_TO_BYTES(x) (((x) + 7) >> 3)
 #define BYTES_TO_BITS(x) (x << 3)
 
+typedef enum zfs_ioc_crypto_cmd {
+	ZFS_IOC_CRYPTO_LOAD_KEY,
+	ZFS_IOC_CRYPTO_UNLOAD_KEY,
+} zfs_ioc_crypto_cmd_t;
+
 typedef enum zio_encrypt {
 	ZIO_CRYPT_INHERIT = 0,
 	ZIO_CRYPT_ON,

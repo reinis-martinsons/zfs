@@ -30,6 +30,7 @@
  * Copyright (c) 2013 by Saso Kiselkov. All rights reserved.
  * Copyright (c) 2013 Steven Hartland. All rights reserved.
  * Copyright (c) 2014, Nexenta Systems, Inc. All rights reserved.
+ * Copyright (c) 2016, Datto, Inc. All rights reserved.
  */
 
 /*
@@ -1263,6 +1264,12 @@ zfs_secpolicy_tmp_snapshot(zfs_cmd_t *zc, nvlist_t *innvl, cred_t *cr)
 	if (error == 0)
 		error = zfs_secpolicy_destroy(zc, innvl, cr);
 	return (error);
+}
+
+static int
+zfs_secpolicy_crypto(zfs_cmd_t *zc, nvlist_t *innvl, cred_t *cr)
+{
+	return 0;
 }
 
 /*
@@ -5274,6 +5281,47 @@ out:
 	return (error);
 }
 
+static int
+zfs_ioc_crypto(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl) {
+	int ret;
+	uint64_t crypto_cmd;
+	uint8_t *wkeydata;
+	uint_t wkeydata_len;
+	nvlist_t *args;
+	
+#ifdef _KERNEL
+	printk(KERN_INFO "got crypto ioctl\n");
+#endif
+	
+	ret = nvlist_lookup_uint64(innvl, "crypto_cmd", &crypto_cmd);
+	if (ret) 
+		return (EINVAL);
+	
+#ifdef _KERNEL
+	printk(KERN_INFO "crypto_cmd = %llu\n", (unsigned long long)crypto_cmd);
+#endif
+	
+	if (crypto_cmd == ZFS_IOC_CRYPTO_LOAD_KEY) {
+		ret = nvlist_lookup_nvlist(innvl, "args", &args);
+		if(ret)
+			return (EINVAL);
+
+#ifdef _KERNEL
+		printk(KERN_INFO "found args\n");
+#endif
+		
+		ret = nvlist_lookup_uint8_array(args, "wkeydata", &wkeydata, &wkeydata_len);
+		if(ret)
+			return (EINVAL);
+		
+#ifdef _KERNEL
+		printk(KERN_INFO "found wkeydata\n");
+#endif
+	}
+	
+	return 0;
+}
+
 static zfs_ioc_vec_t zfs_ioc_vec[ZFS_IOC_LAST - ZFS_IOC_FIRST];
 
 static void
@@ -5441,6 +5489,10 @@ zfs_ioctl_init(void)
 	    zfs_ioc_destroy_bookmarks, zfs_secpolicy_destroy_bookmarks,
 	    POOL_NAME,
 	    POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY, B_TRUE, B_TRUE);
+		
+	zfs_ioctl_register("cypto", ZFS_IOC_CRYPTO,
+	    zfs_ioc_crypto, zfs_secpolicy_crypto,
+	    DATASET_NAME, POOL_CHECK_SUSPENDED, B_TRUE, B_TRUE);
 
 	/* IOCTLS that use the legacy function signature */
 
@@ -5851,8 +5903,7 @@ zfsdev_ioctl(struct file *filp, unsigned cmd, unsigned long arg)
 	case NO_NAME:
 		break;
 	}
-
-
+	
 	if (error == 0 && !(flag & FKIOCTL))
 		error = vec->zvec_secpolicy(zc, innvl, CRED());
 

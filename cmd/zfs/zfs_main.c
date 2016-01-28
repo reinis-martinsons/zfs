@@ -102,6 +102,7 @@ static int zfs_do_holds(int argc, char **argv);
 static int zfs_do_release(int argc, char **argv);
 static int zfs_do_diff(int argc, char **argv);
 static int zfs_do_bookmark(int argc, char **argv);
+static int zfs_do_crypto(int argc, char **argv);
 
 /*
  * Enable a reasonable set of defaults for libumem debugging on DEBUG builds.
@@ -149,6 +150,7 @@ typedef enum {
 	HELP_RELEASE,
 	HELP_DIFF,
 	HELP_BOOKMARK,
+	HELP_CRYPTO,
 } zfs_help_t;
 
 typedef struct zfs_command {
@@ -202,6 +204,7 @@ static zfs_command_t command_table[] = {
 	{ "holds",	zfs_do_holds,		HELP_HOLDS		},
 	{ "release",	zfs_do_release,		HELP_RELEASE		},
 	{ "diff",	zfs_do_diff,		HELP_DIFF		},
+	{ "key",	zfs_do_crypto,		HELP_CRYPTO		},
 };
 
 #define	NCOMMAND	(sizeof (command_table) / sizeof (command_table[0]))
@@ -317,6 +320,9 @@ get_usage(zfs_help_t idx)
 		    "[snapshot|filesystem]\n"));
 	case HELP_BOOKMARK:
 		return (gettext("\tbookmark <snapshot> <bookmark>\n"));
+	case HELP_CRYPTO:
+		return (gettext("\tkey -l <filesystem|volume>\n"
+			"\tkey -u <filesystem|volume>\n"));
 	}
 
 	abort();
@@ -6649,6 +6655,69 @@ zfs_do_bookmark(int argc, char **argv)
 
 	return (ret != 0);
 
+usage:
+	usage(B_FALSE);
+	return (-1);
+}
+
+static int
+zfs_do_crypto(int argc, char **argv)
+{
+	int c, ret = 0, load = -1;
+	zfs_handle_t *zhp;
+
+	while ((c = getopt(argc, argv, "ul:")) != -1) {
+		switch (c) {
+		case 'u':
+			load = B_FALSE;
+			break;
+		case 'l':
+			load = B_TRUE;
+			break;
+		default:
+			(void) fprintf(stderr,
+			    gettext("invalid option '%c'\n"), optopt);
+			goto usage;
+		}
+	}
+	
+	if(load < 0){
+		(void) fprintf(stderr, gettext("No action specified\n"));
+		goto usage;
+	}
+	
+	if(argc < 3){
+		(void) fprintf(stderr, gettext("Too few arguments\n"));
+		goto usage;
+	}
+	
+	if(argc > 3){
+		(void) fprintf(stderr, gettext("Too many arguments\n"));
+		goto usage;
+	}
+	
+	zhp = zfs_open(g_zfs, argv[argc - 1], ZFS_TYPE_FILESYSTEM|ZFS_TYPE_VOLUME);
+	if (zhp == NULL)
+		goto usage;
+	
+	if (load) {
+		ret = zfs_crypto_load_key(zhp);
+		if (ret) {
+			(void) fprintf(stderr, gettext("Failed to load key\n"));
+			goto usage;
+		}
+	} else {
+		ret = zfs_crypto_unload_key(zhp);
+		if (ret) {
+			(void) fprintf(stderr, gettext("Failed to unload key\n"));
+			goto usage;
+		}
+	}
+	
+	zfs_close(zhp);
+	
+	return (ret);
+	
 usage:
 	usage(B_FALSE);
 	return (-1);
