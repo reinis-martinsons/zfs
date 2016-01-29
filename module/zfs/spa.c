@@ -1131,6 +1131,9 @@ spa_activate(spa_t *spa, int mode)
 	avl_create(&spa->spa_errlist_last,
 	    spa_error_entry_compare, sizeof (spa_error_entry_t),
 	    offsetof(spa_error_entry_t, se_avl));
+	avl_create(&spa->spa_loaded_keys,
+		spa_keychain_entry_compare, sizeof (dsl_keychain_t),
+		offsetof(dsl_keychain_t, kc_avl_link));
 }
 
 /*
@@ -1177,6 +1180,7 @@ spa_deactivate(spa_t *spa)
 
 	avl_destroy(&spa->spa_errlist_scrub);
 	avl_destroy(&spa->spa_errlist_last);
+	avl_destroy(&spa->spa_loaded_keys);
 
 	spa->spa_state = POOL_STATE_UNINITIALIZED;
 

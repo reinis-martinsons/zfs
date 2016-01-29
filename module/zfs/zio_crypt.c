@@ -91,6 +91,7 @@ int zio_crypt_key_create(uint64_t crypt, uint8_t *keydata, void *tag, zio_crypt_
 	return 0;
 	
 error:
+	LOG_ERROR(ret, "");
 	if(key->zk_key.ck_data) kmem_free(key->zk_key.ck_data, keydata_len);
 	if(key) kmem_free(key, sizeof(zio_crypt_key_t));
 	
@@ -145,6 +146,7 @@ int zio_crypt_wkey_create_nvlist(nvlist_t *props, void *tag, zio_crypt_key_t **k
 	return 0;
 	
 error:
+	LOG_ERROR(ret, "");
 	if(key) zio_crypt_key_rele(key, tag);
 
 	*key_out = NULL;
@@ -153,7 +155,7 @@ error:
 
 int zio_do_crypt(boolean_t encrypt, zio_crypt_key_t *key, uint8_t *ivbuf, uint_t ivlen, uint_t maclen, uint8_t *plainbuf, uint8_t *cipherbuf, uint_t datalen){
 	int ret;
-	uint64_t crypt;
+	uint64_t crypt = key->zk_crypt;
 	crypto_data_t plaindata, cipherdata;
 	CK_AES_CCM_PARAMS ccmp;
 	CK_AES_GCM_PARAMS gcmp;
@@ -161,11 +163,12 @@ int zio_do_crypt(boolean_t encrypt, zio_crypt_key_t *key, uint8_t *ivbuf, uint_t
 	zio_crypt_info_t crypt_info;
 	uint_t plain_full_len;
 	
+	LOG_DEBUG("zio_do_crypt() encrypt = %d, crypt = %lu, ivlen = %u, maclen = %u, datalen = %u", encrypt, crypt, ivlen, maclen, datalen);
+	
 	ASSERT(crypt < ZIO_CRYPT_FUNCTIONS);
 	ASSERT(wkey->zk_key->ck_format == CRYPTO_KEY_RAW);
 
 	//lookup the encryption info
-	crypt = key->zk_crypt;
 	crypt_info = zio_crypt_table[crypt];
 	
 	//setup encryption mechanism (same as crypt)
@@ -209,16 +212,17 @@ int zio_do_crypt(boolean_t encrypt, zio_crypt_key_t *key, uint8_t *ivbuf, uint_t
 	//setup cipherdata to be filled 
 	cipherdata.cd_format = CRYPTO_DATA_RAW;
 	cipherdata.cd_offset = 0;
-	cipherdata.cd_length = datalen;
+	cipherdata.cd_length = datalen + maclen;
 	cipherdata.cd_miscdata = NULL;
 	cipherdata.cd_raw.iov_base = (char *)cipherbuf;
-	cipherdata.cd_raw.iov_len = datalen;
+	cipherdata.cd_raw.iov_len = datalen + maclen;
 	
 	//perform the actual encryption
 	if(encrypt)	ret = crypto_encrypt(&mech, &plaindata, &key->zk_key, key->zk_ctx_tmpl, &cipherdata, NULL);
 	else ret = crypto_decrypt(&mech, &cipherdata, &key->zk_key, key->zk_ctx_tmpl, &plaindata, NULL);
 	
 	if(ret != CRYPTO_SUCCESS){
+		LOG_ERROR(ret, "");
 		ret = EIO;
 		goto error;
 	}
@@ -226,5 +230,6 @@ int zio_do_crypt(boolean_t encrypt, zio_crypt_key_t *key, uint8_t *ivbuf, uint_t
 	return 0;
 	
 error:
+	LOG_ERROR(ret, "");
 	return ret;
 }

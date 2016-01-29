@@ -30,6 +30,16 @@
 #include <sys/crypto/api.h>
 #include <sys/nvpair.h>
 
+#ifdef _KERNEL
+	#define LOG_DEBUG(fmt, args...) printk(KERN_DEBUG "debug: %s: %s %d: " fmt "\n", __FILE__, __FUNCTION__, __LINE__, ## args)
+	#define LOG_ERROR(error, fmt, args...) printk(KERN_ERR "error: %s: %s %d: " fmt ": %d\n",  __FILE__, __FUNCTION__, __LINE__, ## args, error)
+	#define PRINT_ZKEY(key, fmt, args...) printk(KERN_DEBUG "debug: " fmt ": crypt = %d, tmpl = %p, refcount = %d\n", ## args, (int)key->zk_crypt, key->zk_ctx_tmpl, (int)refcount_count(&key->zk_refcnt))
+#else
+	#define LOG_DEBUG(fmt, args...)
+	#define LOG_ERROR(error, fmt, args...)
+	#define PRINT_ZKEY(key, fmt, args...)
+#endif
+
 //utility macros
 #define BITS_TO_BYTES(x) (((x) + 7) >> 3)
 #define BYTES_TO_BITS(x) (x << 3)

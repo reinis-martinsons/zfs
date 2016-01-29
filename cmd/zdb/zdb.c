@@ -59,6 +59,7 @@
 #include <sys/arc.h>
 #include <sys/ddt.h>
 #include <sys/zfeature.h>
+#include <sys/dsl_keychain.h>
 #include <zfs_comutil.h>
 #undef ZFS_MAXNAMELEN
 #include <libzfs.h>
@@ -1351,6 +1352,8 @@ dump_dsl_dir(objset_t *os, uint64_t object, void *data, size_t size)
 	    (u_longlong_t)dd->dd_props_zapobj);
 	(void) printf("\t\tdeleg_zapobj = %llu\n",
 	    (u_longlong_t)dd->dd_deleg_zapobj);
+	(void) printf("\t\tkeychain_obj = %llu\n",
+	    (u_longlong_t)dd->dd_keychain_obj);
 	(void) printf("\t\tflags = %llx\n",
 	    (u_longlong_t)dd->dd_flags);
 
@@ -1811,6 +1814,31 @@ dump_dmu_objset(objset_t *os, uint64_t object, void *data, size_t size)
 {
 }
 
+/*ARGSUSED*/
+static void
+dump_keychain_zap(objset_t *os, uint64_t object, void *data, size_t size)
+{
+	zap_cursor_t zc;
+	zap_attribute_t attr;
+	dsl_crypto_key_phys_t dckp;
+	uint64_t txgid;
+	
+	dump_zap_stats(os, object);
+	(void) printf("\tKeychain entries by txg:\n");
+	
+	for (zap_cursor_init(&zc, os, object); 
+		zap_cursor_retrieve(&zc, &attr) == 0; zap_cursor_advance(&zc)) {
+		
+		txgid = ((uint64_t)*attr.za_name);
+		VERIFY0(zap_lookup_uint64(os, object, &txgid, 1, 1,
+			sizeof(dsl_crypto_key_phys_t), &dckp));
+		
+		(void) printf("\t\ttxg %llu : wkeylen = %u\n", (u_longlong_t)txgid,
+			(uint_t)zio_crypt_table[dckp.dk_crypt_alg].ci_keylen);
+	}
+	zap_cursor_fini(&zc);
+}
+
 static object_viewer_t *object_viewer[DMU_OT_NUMTYPES + 1] = {
 	dump_none,		/* unallocated			*/
 	dump_zap,		/* object directory		*/
@@ -1866,6 +1894,7 @@ static object_viewer_t *object_viewer[DMU_OT_NUMTYPES + 1] = {
 	dump_none,		/* deadlist hdr			*/
 	dump_zap,		/* dsl clones			*/
 	dump_bpobj_subobjs,	/* bpobj subobjs		*/
+	dump_keychain_zap,	/* DSL keychain		*/
 	dump_unknown,		/* Unknown type, must be last	*/
 };
 

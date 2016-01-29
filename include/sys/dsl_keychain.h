@@ -29,6 +29,8 @@
 #include <sys/dmu_tx.h>
 #include <sys/dmu.h>
 #include <sys/zio_crypt.h>
+#include <sys/spa_impl.h>
+#include <sys/spa.h>
 
 //physical representation of a wrapped key in the DSL Keychain
 typedef struct dsl_crypto_key_phys {
@@ -47,6 +49,8 @@ typedef struct dsl_keychain_entry {
 
 //in memory representation of a DSL keychain
 typedef struct dsl_keychain {
+	avl_node_t kc_avl_link; //avl node for linking into spa->spa_loaded_keys
+	refcount_t kc_refcnt; //refcount of dsl dirs holding this keychain
 	krwlock_t kc_lock; //lock for protecting entry manipulations
 	list_t kc_entries; //list of keychain entries
 	zio_crypt_key_t *kc_wkey; //wrapping key for all entries
@@ -54,10 +58,17 @@ typedef struct dsl_keychain {
 } dsl_keychain_t;
 
 void dsl_keychain_free(dsl_keychain_t *kc);
-int dsl_keychain_create(zio_crypt_key_t *wkey, uint64_t kcobj, dsl_keychain_t **kc_out);
+int dsl_keychain_alloc(dsl_keychain_t **kc_out);
+int dsl_keychain_create_sync(zio_crypt_key_t *wkey, dmu_tx_t *tx, dsl_keychain_t **kc_out);
 int dsl_keychain_add_key(dsl_keychain_t *kc, dmu_tx_t *tx);
 int dsl_keychain_rewrap(dsl_keychain_t *kc, zio_crypt_key_t *wkey, dmu_tx_t *tx);
-int dsl_keychain_clone_sync(dsl_keychain_t *kc, uint64_t new_kcobj, dmu_tx_t *tx, dsl_keychain_t **kc_out);
-int dsl_keychain_open(objset_t *mos, uint64_t kcobj, zio_crypt_key_t *wkey, dsl_keychain_t **kc_out);
+int dsl_keychain_clone_sync(dsl_keychain_t *kc, dmu_tx_t *tx, dsl_keychain_t **kc_out);
+int dsl_keychain_open(objset_t *mos, uint64_t kcobj, uint8_t *wkeydata, uint_t wkeydata_len, dsl_keychain_t **kc_out);
+
+int spa_keychain_entry_compare(const void *a, const void *b);
+int spa_keychain_insert(spa_t *spa, dsl_keychain_t *kc);
+int spa_keychain_lookup(spa_t *spa, uint64_t kcobj, dsl_keychain_t **kc_out);
+int spa_keychain_load(spa_t *spa, uint64_t kcobj, uint8_t *wkeydata, uint_t wkeydatalen);
+int spa_keychain_unload(spa_t *spa, uint64_t kcobj);
 
 #endif

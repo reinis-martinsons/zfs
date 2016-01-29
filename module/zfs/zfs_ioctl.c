@@ -5283,43 +5283,68 @@ out:
 
 static int
 zfs_ioc_crypto(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl) {
-	int ret;
+	int ret = 0;
 	uint64_t crypto_cmd;
 	uint8_t *wkeydata;
 	uint_t wkeydata_len;
 	nvlist_t *args;
+	spa_t *spa = NULL;
+	dsl_dir_t *dd = NULL;
 	
-#ifdef _KERNEL
-	printk(KERN_INFO "got crypto ioctl\n");
-#endif
+	ret = spa_open(dsname, &spa, FTAG);
+	if (ret)
+		return (ret);
+	
+	if (!spa_feature_is_enabled(spa, SPA_FEATURE_CRYPTO)) {
+		ret = SET_ERROR(EINVAL);
+		goto error;
+	}
+	
+	ret = dsl_dir_hold(spa_get_dsl(spa), dsname, FTAG, &dd, NULL);
+	if (ret)
+		goto error;
 	
 	ret = nvlist_lookup_uint64(innvl, "crypto_cmd", &crypto_cmd);
-	if (ret) 
-		return (EINVAL);
-	
-#ifdef _KERNEL
-	printk(KERN_INFO "crypto_cmd = %llu\n", (unsigned long long)crypto_cmd);
-#endif
+	if (ret) {
+		ret = SET_ERROR(EINVAL);
+		goto error;
+	}
 	
 	if (crypto_cmd == ZFS_IOC_CRYPTO_LOAD_KEY) {
 		ret = nvlist_lookup_nvlist(innvl, "args", &args);
-		if(ret)
-			return (EINVAL);
-
-#ifdef _KERNEL
-		printk(KERN_INFO "found args\n");
-#endif
+		if (ret) {
+			ret = SET_ERROR(EINVAL);
+			goto error;
+		}
 		
-		ret = nvlist_lookup_uint8_array(args, "wkeydata", &wkeydata, &wkeydata_len);
-		if(ret)
-			return (EINVAL);
+		ret = nvlist_lookup_uint8_array(args, "wkeydata", &wkeydata,
+			&wkeydata_len);
+		if (ret) {
+			ret = SET_ERROR(EINVAL);
+			goto error;
+		}
 		
-#ifdef _KERNEL
-		printk(KERN_INFO "found wkeydata\n");
-#endif
+		ret = spa_keychain_load(spa, dsl_dir_phys(dd)->dd_keychain_obj,
+			wkeydata, wkeydata_len);
+		if (ret)
+			goto error;
+	} else {
+		ret = spa_keychain_unload(spa, dsl_dir_phys(dd)->dd_keychain_obj);
+		if (ret)
+			goto error;
 	}
+
+	dsl_dir_rele(dd, FTAG);	
+	spa_close(spa, FTAG);
 	
-	return 0;
+	return (0);
+	
+error:
+	if (dd)
+		dsl_dir_rele(dd, FTAG);	
+	spa_close(spa, FTAG);
+	
+	return (ret);
 }
 
 static zfs_ioc_vec_t zfs_ioc_vec[ZFS_IOC_LAST - ZFS_IOC_FIRST];

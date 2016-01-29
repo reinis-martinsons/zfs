@@ -252,6 +252,8 @@ struct spa {
 	uint64_t	spa_deadman_synctime;	/* deadman expiration timer */
 	uint64_t	spa_errata;		/* errata issues detected */
 	spa_stats_t	spa_stats;		/* assorted spa statistics */
+	krwlock_t	spa_loaded_keys_lock;	/* protects spa_loaded_keys */
+	avl_tree_t	spa_loaded_keys;	/* keychains loaded into memory */
 
 	/*
 	 * spa_refcount & spa_config_lock must be the last elements

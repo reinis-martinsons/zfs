@@ -888,6 +888,7 @@ dsl_dir_create_sync(dsl_pool_t *dp, dsl_dir_t *pds, const char *name,
 	uint64_t ddobj;
 	dsl_dir_phys_t *ddphys;
 	dmu_buf_t *dbuf;
+	dsl_keychain_t *kc;
 
 	ddobj = dmu_object_alloc(mos, DMU_OT_DSL_DIR, 0,
 	    DMU_OT_DSL_DIR, sizeof (dsl_dir_phys_t), tx);
@@ -916,6 +917,17 @@ dsl_dir_create_sync(dsl_pool_t *dp, dsl_dir_t *pds, const char *name,
 	    DMU_OT_DSL_DIR_CHILD_MAP, DMU_OT_NONE, 0, tx);
 	if (spa_version(dp->dp_spa) >= SPA_VERSION_USED_BREAKDOWN)
 		ddphys->dd_flags |= DD_FLAG_USED_BREAKDOWN;
+	
+	if (spa_feature_is_enabled(dp->dp_spa, SPA_FEATURE_CRYPTO)) {
+		if (crypto_key) {
+			VERIFY(0 == dsl_keychain_create_sync(crypto_key, tx, &kc));
+			VERIFY(0 == spa_keychain_insert(dp->dp_spa, kc));
+			ddphys->dd_keychain_obj = kc->kc_obj;
+		} else {
+			ddphys->dd_keychain_obj = dsl_dir_phys(pds)->dd_keychain_obj;
+		}
+	}
+	
 	dmu_buf_rele(dbuf, FTAG);
 
 	return (ddobj);

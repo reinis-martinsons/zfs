@@ -92,9 +92,6 @@ struct dsl_dir {
 	/* These are immutable; no lock needed: */
 	uint64_t dd_object;
 	dsl_pool_t *dd_pool;
-	
-	/* has internal locking */	
-	dsl_keychain_entry_t *keychain;
 
 	/* Stable until user eviction; no lock needed: */
 	dmu_buf_t *dd_dbuf;
