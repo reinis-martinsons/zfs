@@ -169,6 +169,17 @@ error:
 	return ret;
 }
 
+//keychain will not be unloaded on refcount hitting zero, but it will become unloadable
+void dsl_keychain_hold(dsl_keychain_t *kc, void *tag){
+	(void)refcount_add(&kc->kc_refcnt, tag);
+	LOG_DEBUG("keychain hold : refcount = %d", (int)refcount_count(&kc->kc_refcnt));
+}
+
+void dsl_keychain_rele(dsl_keychain_t *kc, void *tag){
+	(void)refcount_remove(&kc->kc_refcnt, tag);
+	LOG_DEBUG("keychain rele : refcount = %d", (int)refcount_count(&kc->kc_refcnt));
+}
+
 int dsl_keychain_rewrap(dsl_keychain_t *kc, zio_crypt_key_t *wkey, dmu_tx_t *tx){
 	int ret;
 	dsl_keychain_entry_t *kce;
@@ -266,6 +277,14 @@ error:
 	return ret;
 }
 
+void dsl_keychain_destroy(uint64_t kcobj, dmu_tx_t *tx){
+	//destroy the keychain object
+	VERIFY0(zap_destroy(tx->tx_pool->dp_meta_objset, kcobj, tx));
+	
+	//decrement the feature count
+	spa_feature_decr(tx->tx_pool->dp_spa, SPA_FEATURE_ENCRYPTION, tx);
+}
+
 int dsl_keychain_create_sync(zio_crypt_key_t *wkey, dmu_tx_t *tx, dsl_keychain_t **kc_out){
 	int ret;
 	dsl_keychain_t *kc = NULL;
@@ -284,6 +303,9 @@ int dsl_keychain_create_sync(zio_crypt_key_t *wkey, dmu_tx_t *tx, dsl_keychain_t
 	//add a key to the keychain
 	ret = dsl_keychain_add_key(kc, tx);
 	if(ret) goto error;
+	
+	//increment the encryption feature count
+	spa_feature_incr(tx->tx_pool->dp_spa, SPA_FEATURE_ENCRYPTION, tx);
 	
 	*kc_out = kc;
 	return 0;
@@ -372,7 +394,8 @@ int dsl_keychain_open(objset_t *mos, uint64_t kcobj, uint8_t *wkeydata, uint_t w
 	uint8_t keydata[MAX_KEY_LEN + WRAPPING_MAC_LEN];
 	dsl_keychain_entry_t *kce = NULL;
 	dsl_keychain_t *kc = NULL;
-	zio_crypt_key_t *wkey = NULL;
+	
+	LOG_DEBUG("dsl_keychain_open()");
 	
 	//allocate and initialize the keychain struct
 	ret = dsl_keychain_alloc(&kc);
@@ -387,6 +410,8 @@ int dsl_keychain_open(objset_t *mos, uint64_t kcobj, uint8_t *wkeydata, uint_t w
 		ret = zap_lookup_uint64(mos, kcobj, &txgid, 1, 1, sizeof(dsl_crypto_key_phys_t), &dckp);
 		if(ret) goto error;
 		
+		LOG_DEBUG("found keychain dckp");
+		
 		if(need_crypt){
 			//if this is the first iteration, we need to get crypt from dckp so we can create the wrapping key
 			crypt = dckp.dk_crypt_alg;
@@ -396,6 +421,8 @@ int dsl_keychain_open(objset_t *mos, uint64_t kcobj, uint8_t *wkeydata, uint_t w
 			ret = zio_crypt_key_create(crypt, wkeydata, kc, &kc->kc_wkey);
 			if(ret) goto error;
 			
+			PRINT_ZKEY(kc->kc_wkey, "created wrapping key");
+			
 			need_crypt = 0;
 		}else if(dckp.dk_crypt_alg != crypt){
 			//all other entries' crypt should match the first
@@ -403,9 +430,13 @@ int dsl_keychain_open(objset_t *mos, uint64_t kcobj, uint8_t *wkeydata, uint_t w
 			goto error;
 		}
 		
+		LOG_DEBUG("attempting to unwrap the key");
+		
 		//unwrap the key, will return error if wkey is incorrect by checking the MAC
-		ret = zio_crypt_key_unwrap(wkey, &dckp, keydata);
+		ret = zio_crypt_key_unwrap(kc->kc_wkey, &dckp, keydata);
 		if(ret) goto error;
+		
+		LOG_DEBUG("unwraped the key");
 		
 		//allocate the keychain entry
 		kce = kmem_zalloc(sizeof(dsl_keychain_entry_t), KM_SLEEP);
@@ -419,15 +450,21 @@ int dsl_keychain_open(objset_t *mos, uint64_t kcobj, uint8_t *wkeydata, uint_t w
 		ret = zio_crypt_key_create(crypt, keydata, kce, &kce->ke_key);
 		if(ret) goto error;
 		
+		LOG_DEBUG("created keychain entry");
+		
 		//set the txgid and add the entry to the keychain
 		kce->ke_txgid = txgid;
 		list_insert_tail(&kc->kc_entries, kce);
+		
+		LOG_DEBUG("added keychain entry to keychain");
 		
 		//on error, this will be cleaned up by dsl_keychain_free(), make sure it isn't freed twice
 		kce = NULL;
 	}
 	//release the zap crusor
 	zap_cursor_fini(&zc);
+	
+	LOG_DEBUG("opened keychain successfully");
 	
 	*kc_out = kc;
 	return 0;
@@ -451,7 +488,8 @@ int spa_keychain_entry_compare(const void *a, const void *b){
 	return 0;
 }
 
-int spa_keychain_lookup(spa_t *spa, uint64_t kcobj, dsl_keychain_t **kc_out){
+int spa_keychain_lookup(spa_t *spa, uint64_t kcobj, void *tag, dsl_keychain_t **kc_out){
+	int ret;
 	dsl_keychain_t search_kc;
 	dsl_keychain_t *found_kc;
 	
@@ -460,11 +498,25 @@ int spa_keychain_lookup(spa_t *spa, uint64_t kcobj, dsl_keychain_t **kc_out){
 	
 	//lookup the keychain under the spa's keychain lock
 	rw_enter(&spa->spa_loaded_keys_lock, RW_READER);
+	
 	found_kc = avl_find(&spa->spa_loaded_keys, &search_kc, NULL);
+	if(!found_kc){
+		ret = SET_ERROR(ENOENT);
+		goto error;
+	}
+	
 	rw_exit(&spa->spa_loaded_keys_lock);
 	
+	//increment the reference count
+	dsl_keychain_hold(found_kc, tag);
+	
 	*kc_out = found_kc;
-	return (found_kc) ? 0 : SET_ERROR(ENOENT);
+	return 0;
+	
+error:
+	rw_exit(&spa->spa_loaded_keys_lock);
+	*kc_out = NULL;
+	return ret;
 }
 
 int spa_keychain_insert(spa_t *spa, dsl_keychain_t *kc){
@@ -497,6 +549,8 @@ int spa_keychain_load(spa_t *spa, uint64_t kcobj, uint8_t *wkeydata, uint_t wkey
 	ret = spa_keychain_insert(spa, kc);
 	if(ret) goto error;
 	
+	LOG_DEBUG("loaded key sucessfully");
+	
 	return 0;
 	
 error:
@@ -521,6 +575,7 @@ int spa_keychain_unload(spa_t *spa, uint64_t kcobj){
 		ret = SET_ERROR(ENOENT);
 		goto error;
 	}else if(!refcount_is_zero(&found_kc->kc_refcnt)){
+		LOG_DEBUG("keychain busy: %d", (int)refcount_count(&found_kc->kc_refcnt));
 		ret = SET_ERROR(EBUSY);
 		goto error;
 	}

@@ -918,7 +918,7 @@ dsl_dir_create_sync(dsl_pool_t *dp, dsl_dir_t *pds, const char *name,
 	if (spa_version(dp->dp_spa) >= SPA_VERSION_USED_BREAKDOWN)
 		ddphys->dd_flags |= DD_FLAG_USED_BREAKDOWN;
 	
-	if (spa_feature_is_enabled(dp->dp_spa, SPA_FEATURE_CRYPTO)) {
+	if (spa_feature_is_enabled(dp->dp_spa, SPA_FEATURE_ENCRYPTION)) {
 		if (crypto_key) {
 			VERIFY(0 == dsl_keychain_create_sync(crypto_key, tx, &kc));
 			VERIFY(0 == spa_keychain_insert(dp->dp_spa, kc));

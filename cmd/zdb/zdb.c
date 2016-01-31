@@ -1834,7 +1834,7 @@ dump_keychain_zap(objset_t *os, uint64_t object, void *data, size_t size)
 			sizeof(dsl_crypto_key_phys_t), &dckp));
 		
 		(void) printf("\t\ttxg %llu : wkeylen = %u\n", (u_longlong_t)txgid,
-			(uint_t)zio_crypt_table[dckp.dk_crypt_alg].ci_keylen);
+			(uint_t)BYTES_TO_BITS(zio_crypt_table[dckp.dk_crypt_alg].ci_keylen));
 	}
 	zap_cursor_fini(&zc);
 }

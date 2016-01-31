@@ -5288,19 +5288,21 @@ zfs_ioc_crypto(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl) {
 	uint8_t *wkeydata;
 	uint_t wkeydata_len;
 	nvlist_t *args;
-	spa_t *spa = NULL;
+	dsl_pool_t *dp = NULL;
 	dsl_dir_t *dd = NULL;
 	
-	ret = spa_open(dsname, &spa, FTAG);
+	LOG_DEBUG("zfs_ioc_crypto()");
+	
+	ret = dsl_pool_hold(dsname, FTAG, &dp);
 	if (ret)
 		return (ret);
 	
-	if (!spa_feature_is_enabled(spa, SPA_FEATURE_CRYPTO)) {
+	if (!spa_feature_is_enabled(dp->dp_spa, SPA_FEATURE_ENCRYPTION)) {
 		ret = SET_ERROR(EINVAL);
 		goto error;
 	}
 	
-	ret = dsl_dir_hold(spa_get_dsl(spa), dsname, FTAG, &dd, NULL);
+	ret = dsl_dir_hold(dp, dsname, FTAG, &dd, NULL);
 	if (ret)
 		goto error;
 	
@@ -5323,26 +5325,26 @@ zfs_ioc_crypto(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl) {
 			ret = SET_ERROR(EINVAL);
 			goto error;
 		}
-		
-		ret = spa_keychain_load(spa, dsl_dir_phys(dd)->dd_keychain_obj,
+				
+		ret = spa_keychain_load(dp->dp_spa, dsl_dir_phys(dd)->dd_keychain_obj,
 			wkeydata, wkeydata_len);
 		if (ret)
 			goto error;
 	} else {
-		ret = spa_keychain_unload(spa, dsl_dir_phys(dd)->dd_keychain_obj);
+		ret = spa_keychain_unload(dp->dp_spa, dsl_dir_phys(dd)->dd_keychain_obj);
 		if (ret)
 			goto error;
 	}
 
 	dsl_dir_rele(dd, FTAG);	
-	spa_close(spa, FTAG);
+	dsl_pool_rele(dp, FTAG);
 	
 	return (0);
 	
 error:
 	if (dd)
 		dsl_dir_rele(dd, FTAG);	
-	spa_close(spa, FTAG);
+	dsl_pool_rele(dp, FTAG);
 	
 	return (ret);
 }
@@ -5517,7 +5519,7 @@ zfs_ioctl_init(void)
 		
 	zfs_ioctl_register("cypto", ZFS_IOC_CRYPTO,
 	    zfs_ioc_crypto, zfs_secpolicy_crypto,
-	    DATASET_NAME, POOL_CHECK_SUSPENDED, B_TRUE, B_TRUE);
+	    DATASET_NAME, POOL_CHECK_SUSPENDED, B_TRUE, B_FALSE);
 
 	/* IOCTLS that use the legacy function signature */
 
@@ -5874,6 +5876,8 @@ zfsdev_ioctl(struct file *filp, unsigned cmd, unsigned long arg)
 	char *saved_poolname = NULL;
 	nvlist_t *innvl = NULL;
 	fstrans_cookie_t cookie;
+	
+	if(cmd == ZFS_IOC_CRYPTO) LOG_DEBUG("crypto ioctl receieved");
 
 	vecnum = cmd - ZFS_IOC_FIRST;
 	if (vecnum >= sizeof (zfs_ioc_vec) / sizeof (zfs_ioc_vec[0]))

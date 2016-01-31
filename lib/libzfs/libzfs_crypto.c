@@ -192,7 +192,23 @@ error:
 	return (ret);
 }
 
-int zfs_crypto_create(libzfs_handle_t *hdl, nvlist_t *props, char *parent_name){	
+static boolean_t encryption_feature_is_enabled(zpool_handle_t *zph) {
+	nvlist_t *features;
+	uint64_t feat_refcount;
+	
+	/* check that features can be enabled */
+	if (zpool_get_prop_int(zph, ZPOOL_PROP_VERSION, NULL) < SPA_VERSION_FEATURES)
+		return B_FALSE;
+	
+	/* check for crypto feature */
+	features = zpool_get_features(zph);
+	if (!features || nvlist_lookup_uint64(features, spa_feature_table[SPA_FEATURE_ENCRYPTION].fi_guid, &feat_refcount) != 0)
+		return B_FALSE;
+	
+	return B_TRUE;
+}
+
+int zfs_crypto_create(libzfs_handle_t *hdl, nvlist_t *props, char *parent_name) {	
 	char errbuf[1024];
 	uint64_t crypt = 0, pcrypt = 0;
 	char *keysource = NULL;
@@ -200,8 +216,7 @@ int zfs_crypto_create(libzfs_handle_t *hdl, nvlist_t *props, char *parent_name){
 	zfs_handle_t *pzhp = NULL;
 	boolean_t local_crypt = B_TRUE;
 	boolean_t local_keysource = B_TRUE;
-	nvlist_t *features = NULL;
-	uint64_t feat_refcount, salt = 0;
+	uint64_t salt = 0;
 	key_format_t keyformat;
 	key_locator_t keylocator;
 	uint8_t *key_material = NULL;
@@ -233,22 +248,12 @@ int zfs_crypto_create(libzfs_handle_t *hdl, nvlist_t *props, char *parent_name){
 	/* Lookup parent's crypt */
 	pcrypt = zfs_prop_get_int(pzhp, ZFS_PROP_ENCRYPTION);
 
-	/* Check for non-feature pool version */
-	if (zpool_get_prop_int(pzhp->zpool_hdl, ZPOOL_PROP_VERSION, NULL) < SPA_VERSION_FEATURES) {
-		if (!local_crypt && !local_keysource)
-			return (0);
-
-		zfs_error_aux(hdl, gettext("Feature flags unavailable so encryption cannot be used."));
-		return (EINVAL);
-	}
-	
 	/* Check for encryption feature */
-	features = zpool_get_features(pzhp->zpool_hdl);		
-	if (!features || nvlist_lookup_uint64(features, spa_feature_table[SPA_FEATURE_CRYPTO].fi_guid, &feat_refcount) != 0){
+	if (!encryption_feature_is_enabled(pzhp->zpool_hdl)) {
 		if (!local_crypt && !local_keysource)
 			return (0);
 
-		zfs_error_aux(hdl, gettext("Encyrypted datasets feature not enabled."));
+		zfs_error_aux(hdl, gettext("Encryption feature not enabled."));
 		return (EINVAL);
 	}
 	
@@ -347,7 +352,7 @@ error:
 	return (ret);
 }
 
-int zfs_crypto_load_key(zfs_handle_t *zhp){
+int zfs_crypto_load_key(zfs_handle_t *zhp) {
 	int ret;
 	uint64_t crypt, salt = 0;
 	char keysource[MAXNAMELEN];
@@ -358,10 +363,15 @@ int zfs_crypto_load_key(zfs_handle_t *zhp){
 	size_t key_material_len;
 	nvlist_t *nvl = NULL;
 	
+	if (!encryption_feature_is_enabled(zhp->zpool_hdl)) {
+		zfs_error_aux(zhp->zfs_hdl, gettext("Encryption feature not enabled."));
+		return (EINVAL);
+	}
+	
 	/* fetch relevent info from the dataset properties */
 	crypt = zfs_prop_get_int(zhp, ZFS_PROP_ENCRYPTION);
 	if (crypt == ZIO_CRYPT_OFF) {
-		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN, "Encryption not enabled."));
+		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN, "Encryption not enabled for this dataset."));
 		return (EINVAL);
 	}
 
@@ -418,8 +428,13 @@ error:
 	return (ret);
 }
 
-int zfs_crypto_unload_key(zfs_handle_t *zhp){
+int zfs_crypto_unload_key(zfs_handle_t *zhp) {
 	uint64_t crypt;
+	
+	if (!encryption_feature_is_enabled(zhp->zpool_hdl)) {
+		zfs_error_aux(zhp->zfs_hdl, gettext("Encryption feature not enabled."));
+		return (EINVAL);
+	}
 	
 	/* fetch relevent info from the dataset properties */
 	crypt = zfs_prop_get_int(zhp, ZFS_PROP_ENCRYPTION);

@@ -243,8 +243,8 @@ zpool_feature_init(void)
 	    ZFEATURE_FLAG_PER_DATASET, large_blocks_deps);
 	}
 	
-	zfeature_register(SPA_FEATURE_CRYPTO,
-	    "com.datto:crypto", "crypto",
+	zfeature_register(SPA_FEATURE_ENCRYPTION,
+	    "com.datto:encryption", "encryption",
 	    "Support for dataset level encryption",
-	    ZFEATURE_FLAG_PER_DATASET, NULL);
+	    0, NULL);
 }

@@ -34,10 +34,12 @@
 	#define LOG_DEBUG(fmt, args...) printk(KERN_DEBUG "debug: %s: %s %d: " fmt "\n", __FILE__, __FUNCTION__, __LINE__, ## args)
 	#define LOG_ERROR(error, fmt, args...) printk(KERN_ERR "error: %s: %s %d: " fmt ": %d\n",  __FILE__, __FUNCTION__, __LINE__, ## args, error)
 	#define PRINT_ZKEY(key, fmt, args...) printk(KERN_DEBUG "debug: " fmt ": crypt = %d, tmpl = %p, refcount = %d\n", ## args, (int)key->zk_crypt, key->zk_ctx_tmpl, (int)refcount_count(&key->zk_refcnt))
+	#define dump_stack() spl_dumpstack()
 #else
 	#define LOG_DEBUG(fmt, args...)
 	#define LOG_ERROR(error, fmt, args...)
 	#define PRINT_ZKEY(key, fmt, args...)
+	#define dump_stack()
 #endif
 
 //utility macros
