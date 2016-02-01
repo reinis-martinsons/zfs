@@ -47,8 +47,11 @@
 #define BYTES_TO_BITS(x) (x << 3)
 
 typedef enum zfs_ioc_crypto_cmd {
+	ZFS_IOC_CRYPTO_CMD_NONE = 0,
 	ZFS_IOC_CRYPTO_LOAD_KEY,
 	ZFS_IOC_CRYPTO_UNLOAD_KEY,
+	ZFS_IOC_CRYPTO_ADD_KEY,
+	ZFS_IOC_CRYPTO_REWRAP,
 } zfs_ioc_crypto_cmd_t;
 
 typedef enum zio_encrypt {

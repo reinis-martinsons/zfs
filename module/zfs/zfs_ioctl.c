@@ -5289,9 +5289,12 @@ zfs_ioc_crypto(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl) {
 	uint_t wkeydata_len;
 	nvlist_t *args;
 	dsl_pool_t *dp = NULL;
-	dsl_dir_t *dd = NULL;
+	dsl_dataset_t *ds = NULL;
+	boolean_t owned = B_FALSE;
 	
-	LOG_DEBUG("zfs_ioc_crypto()");
+	ret = nvlist_lookup_uint64(innvl, "crypto_cmd", &crypto_cmd);
+	if (ret)
+		return SET_ERROR(EINVAL);
 	
 	ret = dsl_pool_hold(dsname, FTAG, &dp);
 	if (ret)
@@ -5302,17 +5305,31 @@ zfs_ioc_crypto(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl) {
 		goto error;
 	}
 	
-	ret = dsl_dir_hold(dp, dsname, FTAG, &dd, NULL);
-	if (ret)
-		goto error;
+	if (crypto_cmd == ZFS_IOC_CRYPTO_LOAD_KEY || 
+		crypto_cmd == ZFS_IOC_CRYPTO_UNLOAD_KEY) {
+		/* 
+		 * if we are loading or unloading, nobody else should own the dataset.
+		 * own it ourselves to be sure.
+		 */
+		ret = dsl_dataset_own(dp, dsname, FTAG, &ds);
+		owned = B_TRUE;
+	} else {
+		/*
+		 * adding and rewrapping both use dsl_sync_task which holds the pool
+		 * so we must drop our hold here
+		 */
+		dsl_pool_rele(dp, FTAG);
+		owned = B_FALSE;
+	}
 	
-	ret = nvlist_lookup_uint64(innvl, "crypto_cmd", &crypto_cmd);
 	if (ret) {
-		ret = SET_ERROR(EINVAL);
+		LOG_ERROR(ret, "");
+		ds = NULL;
 		goto error;
 	}
 	
-	if (crypto_cmd == ZFS_IOC_CRYPTO_LOAD_KEY) {
+	switch(crypto_cmd){
+	case ZFS_IOC_CRYPTO_LOAD_KEY:
 		ret = nvlist_lookup_nvlist(innvl, "args", &args);
 		if (ret) {
 			ret = SET_ERROR(EINVAL);
@@ -5326,25 +5343,60 @@ zfs_ioc_crypto(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl) {
 			goto error;
 		}
 				
-		ret = spa_keychain_load(dp->dp_spa, dsl_dir_phys(dd)->dd_keychain_obj,
-			wkeydata, wkeydata_len);
+		ret = spa_keychain_load(dp->dp_spa,
+			dsl_dir_phys(ds->ds_dir)->dd_keychain_obj, wkeydata, wkeydata_len);
 		if (ret)
 			goto error;
-	} else {
-		ret = spa_keychain_unload(dp->dp_spa, dsl_dir_phys(dd)->dd_keychain_obj);
+		
+		break;
+	case ZFS_IOC_CRYPTO_UNLOAD_KEY:
+		ret = spa_keychain_unload(dp->dp_spa,
+			dsl_dir_phys(ds->ds_dir)->dd_keychain_obj);
 		if (ret)
 			goto error;
+		
+		break;
+	case ZFS_IOC_CRYPTO_ADD_KEY:
+		ret = dsl_keychain_add_key(dsname);
+		if (ret)
+			goto error;
+		
+		break;
+	case ZFS_IOC_CRYPTO_REWRAP:
+		ret = nvlist_lookup_nvlist(innvl, "args", &args);
+		if (ret) {
+			ret = SET_ERROR(EINVAL);
+			goto error;
+		}
+		
+		ret = dsl_keychain_rewrap_nvlist(dsname, args);
+		if (ret) {
+			ret = SET_ERROR(EINVAL);
+			goto error;
+		}
+		
+		/* this should probably be atomic */
+		VERIFY0(zfs_set_prop_nvlist(dsname, ZPROP_SRC_LOCAL, args, NULL));
+	
+		break;
+	default:
+		ret = SET_ERROR(EINVAL);
+		goto error;
 	}
 
-	dsl_dir_rele(dd, FTAG);	
-	dsl_pool_rele(dp, FTAG);
+	if (owned) {
+		dsl_dataset_disown(ds, FTAG);
+		dsl_pool_rele(dp, FTAG);
+	}
 	
 	return (0);
 	
 error:
-	if (dd)
-		dsl_dir_rele(dd, FTAG);	
-	dsl_pool_rele(dp, FTAG);
+	if (owned) {
+		if (ds) 
+			dsl_dataset_disown(ds, FTAG);
+		dsl_pool_rele(dp, FTAG);
+	}
 	
 	return (ret);
 }
@@ -5877,8 +5929,6 @@ zfsdev_ioctl(struct file *filp, unsigned cmd, unsigned long arg)
 	nvlist_t *innvl = NULL;
 	fstrans_cookie_t cookie;
 	
-	if(cmd == ZFS_IOC_CRYPTO) LOG_DEBUG("crypto ioctl receieved");
-
 	vecnum = cmd - ZFS_IOC_FIRST;
 	if (vecnum >= sizeof (zfs_ioc_vec) / sizeof (zfs_ioc_vec[0]))
 		return (-SET_ERROR(EINVAL));

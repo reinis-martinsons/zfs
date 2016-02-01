@@ -256,7 +256,7 @@ libzfs_error_description(libzfs_handle_t *hdl)
 	case EZFS_POOLREADONLY:
 		return (dgettext(TEXT_DOMAIN, "pool is read-only"));
 	case EZFS_CRYPTOFAILED:
-		return (dgettext(TEXT_DOMAIN, "failed to setup encryption"));
+		return (dgettext(TEXT_DOMAIN, "crypto key failure"));
 	case EZFS_UNKNOWN:
 		return (dgettext(TEXT_DOMAIN, "unknown error"));
 	default:

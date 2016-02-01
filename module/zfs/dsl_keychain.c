@@ -27,6 +27,7 @@
 #include <sys/dsl_pool.h>
 #include <sys/zap.h>
 #include <sys/dsl_dir.h>
+#include <sys/dsl_prop.h>
 
 //macros for defining encryption parameter lengths
 #define MAX_KEY_LEN 32
@@ -180,7 +181,45 @@ void dsl_keychain_rele(dsl_keychain_t *kc, void *tag){
 	LOG_DEBUG("keychain rele : refcount = %d", (int)refcount_count(&kc->kc_refcnt));
 }
 
-int dsl_keychain_rewrap(dsl_keychain_t *kc, zio_crypt_key_t *wkey, dmu_tx_t *tx){
+typedef struct dsl_keychain_rewrap_args {
+	const char *dkra_dsname;
+	zio_crypt_key_t *dkra_wkey;
+} dsl_keychain_rewrap_args_t;
+
+static int dsl_keychain_add_key_rewrap_check_impl(const char *dsname, dmu_tx_t *tx){
+	int ret;
+	dsl_dir_t *dd = NULL;
+	dsl_keychain_t *kc = NULL;
+	dsl_pool_t *dp = dmu_tx_pool(tx);
+	
+	//check that the keychain object exists and is loaded
+	ret = dsl_dir_hold(dp, dsname, FTAG, &dd, NULL);
+	if(ret) return ret;
+	
+	if(dsl_dir_phys(dd)->dd_keychain_obj == 0){
+		ret = SET_ERROR(EINVAL);
+		goto error;
+	}
+	
+	ret = spa_keychain_lookup(dp->dp_spa, dsl_dir_phys(dd)->dd_keychain_obj, FTAG, &kc);
+	if(ret) goto error;
+	
+	dsl_keychain_rele(kc, FTAG);
+	dsl_dir_rele(dd, FTAG);
+	
+	return 0;
+	
+error:
+	dsl_dir_rele(dd, FTAG);
+	return ret;
+}
+
+static int dsl_keychain_rewrap_check(void *arg, dmu_tx_t *tx){
+	dsl_keychain_rewrap_args_t *dkra = arg;
+	return dsl_keychain_add_key_rewrap_check_impl(dkra->dkra_dsname, tx);
+}
+
+static int dsl_keychain_rewrap_impl(dsl_keychain_t *kc, zio_crypt_key_t *wkey, dmu_tx_t *tx){
 	int ret;
 	dsl_keychain_entry_t *kce;
 	uint8_t ivdata[ZIO_CRYPT_WRAPKEY_IVLEN];
@@ -200,7 +239,9 @@ int dsl_keychain_rewrap(dsl_keychain_t *kc, zio_crypt_key_t *wkey, dmu_tx_t *tx)
 		if(ret) goto error;
 		
 		//add the wrapped key entry to the zap
-		VERIFY0(zap_update_uint64(tx->tx_pool->dp_meta_objset, kc->kc_obj, &tx->tx_txg, 1, 1, sizeof(dsl_crypto_key_phys_t), &key_phys, tx));
+		VERIFY0(zap_update_uint64(tx->tx_pool->dp_meta_objset, kc->kc_obj, &kce->ke_txgid, 1, 1, sizeof(dsl_crypto_key_phys_t), &key_phys, tx));
+		
+		LOG_DEBUG("rewrapped key %lu", (unsigned long)kce->ke_txgid);
 	}
 	
 	//release the old wrapping key and add the new one to the keychain
@@ -216,6 +257,208 @@ error:
 	LOG_ERROR(ret, "");
 	rw_exit(&kc->kc_lock);
 	return ret;
+}
+
+static void dsl_keychain_rewrap_sync(void *arg, dmu_tx_t *tx){
+	dsl_keychain_rewrap_args_t *dkra = arg;
+	zio_crypt_key_t *wkey = dkra->dkra_wkey;
+	const char *dsname = dkra->dkra_dsname;
+	dsl_pool_t *dp = dmu_tx_pool(tx);
+	dsl_dir_t *dd;
+	dsl_keychain_t *kc;
+	
+	//find the keychain
+	VERIFY0(dsl_dir_hold(dp, dsname, FTAG, &dd, NULL));
+	VERIFY0(spa_keychain_lookup(dp->dp_spa, dsl_dir_phys(dd)->dd_keychain_obj, FTAG, &kc));
+	
+	//rewrap the keychain
+	VERIFY0(dsl_keychain_rewrap_impl(kc, wkey, tx));
+	
+	LOG_DEBUG("rewrapped keychain sucessfully");
+	
+	dsl_keychain_rele(kc, FTAG);
+	dsl_dir_rele(dd, FTAG);
+}
+
+static int dsl_keychain_rewrap(const char *dsname, uint64_t crypt, uint8_t *wkeydata){
+	int ret;
+	uint64_t num_keys;
+	dsl_pool_t *dp = NULL;
+	dsl_dir_t *dd = NULL;
+	zio_crypt_key_t *wkey = NULL;
+	dsl_keychain_rewrap_args_t dkra;
+	
+	//create the key from the raw data
+	ret = zio_crypt_key_create(crypt, wkeydata, FTAG, &wkey);
+	if(ret) return ret;
+	
+	//get the number of entries we are going to change
+	ret = dsl_pool_hold(dsname, FTAG, &dp);
+	if(ret) goto error;
+	
+	ret = dsl_dir_hold(dp, dsname, FTAG, &dd, NULL);
+	if(ret) goto error;
+	
+	if(dsl_dir_phys(dd)->dd_keychain_obj == 0){
+		ret = SET_ERROR(EINVAL);
+		goto error;
+	}
+	
+	ret = zap_count(dp->dp_meta_objset, dsl_dir_phys(dd)->dd_keychain_obj, &num_keys);
+	if(ret) goto error;
+	
+	dsl_dir_rele(dd, FTAG);
+	dsl_pool_rele(dp, FTAG);
+	
+	//fill the arg struct
+	dkra.dkra_dsname = dsname;
+	dkra.dkra_wkey = wkey;
+	
+	//rewrap the key in syncing context
+	ret = dsl_sync_task(dsname, dsl_keychain_rewrap_check, dsl_keychain_rewrap_sync, &dkra, num_keys, ZFS_SPACE_CHECK_NORMAL);
+	
+	zio_crypt_key_rele(wkey, FTAG);
+	
+	return ret;
+	
+error:
+	if(dd) dsl_dir_rele(dd, FTAG);
+	if(dp) dsl_pool_rele(dp, FTAG);
+	if(wkey) zio_crypt_key_rele(wkey, FTAG);
+	
+	return ret;
+}
+
+int dsl_keychain_rewrap_nvlist(const char *dsname, nvlist_t *props){
+	int ret;
+	uint64_t crypt;
+	boolean_t have_salt = B_FALSE;
+	uint8_t *wkeydata = NULL;
+	uint_t wkeydata_len;
+	nvpair_t *elem = NULL;
+	char *propname;
+	zfs_prop_t prop;
+	
+	//get the crypt value from the dataset
+	ret = dsl_prop_get_integer(dsname, zfs_prop_to_name(ZFS_PROP_ENCRYPTION), &crypt, NULL);
+	if(ret) return SET_ERROR(EINVAL);
+	
+	//get all the required properties for rewrapping
+	while((elem = nvlist_next_nvpair(props, elem)) != NULL){
+		propname = nvpair_name(elem);
+		prop = zfs_name_to_prop(propname);
+		
+		if(prop == ZPROP_INVAL){
+			if(!strcmp(propname, "wkeydata")){
+				ret = nvpair_value_uint8_array(elem, &wkeydata, &wkeydata_len);
+				if(ret) goto error;
+			}else{
+				ret = SET_ERROR(EINVAL);
+				goto error;
+			}
+			continue;
+		}
+		
+		switch(prop){
+		case ZFS_PROP_SALT:
+			have_salt = B_TRUE;
+			break;
+		case ZFS_PROP_KEYSOURCE:
+			break;
+		default:
+			ret = SET_ERROR(EINVAL);
+			goto error;
+		}
+	}
+	
+	//must have wkeydata and salt to change keys
+	if(!wkeydata || !have_salt){
+		ret = SET_ERROR(EINVAL);
+		goto error;
+	}
+	
+	//rewrap the keychain
+	ret = dsl_keychain_rewrap(dsname, crypt, wkeydata);
+	if(ret) goto error;
+	
+	//delete the wkeydata from props
+	bzero(wkeydata, wkeydata_len);
+	VERIFY0(nvlist_remove_all(props, "wkeydata"));
+	
+	return 0;
+	
+error:
+	return ret;
+}
+
+static int dsl_keychain_add_key_check(void *arg, dmu_tx_t *tx){
+	char *dsname = arg;
+	return dsl_keychain_add_key_rewrap_check_impl(dsname, tx);
+}
+
+static int dsl_keychain_add_key_impl(dsl_keychain_t *kc, dmu_tx_t *tx){
+	int ret;
+	uint64_t crypt = kc->kc_wkey->zk_crypt;
+	dsl_keychain_entry_t *kce = NULL;
+	uint8_t ivdata[ZIO_CRYPT_WRAPKEY_IVLEN];
+	dsl_crypto_key_phys_t key_phys;
+	
+	//generate the keychain entry with the same encryption type as the wrapping key
+	ret = dsl_keychain_entry_generate(crypt, tx->tx_txg, &kce);
+	if(ret) goto error;
+	
+	//generate an iv
+	ret = random_get_bytes(ivdata, ZIO_CRYPT_WRAPKEY_IVLEN);
+	if(ret) goto error;
+	
+	//wrap the key and store the result in key_phys
+	ret = zio_crypt_key_wrap(kc->kc_wkey, kce->ke_key->zk_key.ck_data, ivdata, &key_phys);
+	if(ret) goto error;
+	
+	rw_enter(&kc->kc_lock, RW_WRITER);
+	
+	//add the wrapped key entry to the zap
+	VERIFY0(zap_add_uint64(tx->tx_pool->dp_meta_objset, kc->kc_obj, &tx->tx_txg, 1, 1, sizeof(dsl_crypto_key_phys_t), &key_phys, tx));
+	
+	//add the entry to the keychain
+	list_insert_tail(&kc->kc_entries, kce);
+	
+	rw_exit(&kc->kc_lock);
+	
+	return 0;
+	
+error:
+	LOG_ERROR(ret, "");
+	if(kce) dsl_keychain_entry_free(kce);
+
+	return ret;
+}
+
+static void dsl_keychain_add_key_sync(void *arg, dmu_tx_t *tx){
+	dsl_dir_t *dd;
+	dsl_keychain_t *kc;
+	dsl_pool_t *dp = dmu_tx_pool(tx);
+	char *dsname = arg;
+	dsl_keychain_entry_t *kce;
+	
+	//find the keychain
+	VERIFY0(dsl_dir_hold(dp, dsname, FTAG, &dd, NULL));
+	VERIFY0(spa_keychain_lookup(dp->dp_spa, dsl_dir_phys(dd)->dd_keychain_obj, FTAG, &kc));
+	
+	//generate and add a key
+	VERIFY0(dsl_keychain_add_key_impl(kc, tx));
+	
+	LOG_DEBUG("added keychain entry sucessfully");
+	for(kce = list_head(&kc->kc_entries); kce; kce = list_next(&kc->kc_entries, kce)){
+		LOG_DEBUG("kce %lu", (unsigned long)kce->ke_txgid);
+	}
+	
+	dsl_keychain_rele(kc, FTAG);
+	dsl_dir_rele(dd, FTAG);
+}
+
+int dsl_keychain_add_key(const char *dsname){
+	return (dsl_sync_task(dsname, dsl_keychain_add_key_check, dsl_keychain_add_key_sync, (void *)dsname, 1, ZFS_SPACE_CHECK_NORMAL));
 }
 
 int dsl_keychain_lookup_key(dsl_keychain_t *kc, uint64_t txgid, zio_crypt_key_t **key_out){
@@ -239,42 +482,6 @@ int dsl_keychain_lookup_key(dsl_keychain_t *kc, uint64_t txgid, zio_crypt_key_t 
 	rw_exit(&kc->kc_lock);
 	*key_out = NULL;
 	return SET_ERROR(ENOENT);
-}
-
-int dsl_keychain_add_key(dsl_keychain_t *kc, dmu_tx_t *tx){
-	int ret;
-	uint64_t crypt = kc->kc_wkey->zk_crypt;
-	dsl_keychain_entry_t *kce = NULL;
-	uint8_t ivdata[ZIO_CRYPT_WRAPKEY_IVLEN];
-	dsl_crypto_key_phys_t key_phys;
-	
-	//generate the keychain entry with the same encryption type as the wrapping key
-	ret = dsl_keychain_entry_generate(crypt, tx->tx_txg, &kce);
-	if(ret) goto error;
-	
-	//generate an iv
-	ret = random_get_bytes(ivdata, ZIO_CRYPT_WRAPKEY_IVLEN);
-	if(ret) goto error;
-	
-	//wrap the key and store the result in key_phys
-	ret = zio_crypt_key_wrap(kc->kc_wkey, kce->ke_key->zk_key.ck_data, ivdata, &key_phys);
-	if(ret) goto error;
-	
-	//add the wrapped key entry to the zap
-	VERIFY0(zap_add_uint64(tx->tx_pool->dp_meta_objset, kc->kc_obj, &tx->tx_txg, 1, 1, sizeof(dsl_crypto_key_phys_t), &key_phys, tx));
-	
-	//add the entry to the keychain
-	rw_enter(&kc->kc_lock, RW_WRITER);
-	list_insert_tail(&kc->kc_entries, kce);
-	rw_exit(&kc->kc_lock);
-	
-	return 0;
-	
-error:
-	LOG_ERROR(ret, "");
-	if(kce) dsl_keychain_entry_free(kce);
-
-	return ret;
 }
 
 void dsl_keychain_destroy(uint64_t kcobj, dmu_tx_t *tx){
@@ -301,7 +508,7 @@ int dsl_keychain_create_sync(zio_crypt_key_t *wkey, dmu_tx_t *tx, dsl_keychain_t
 	kc->kc_obj = zap_create_flags(tx->tx_pool->dp_meta_objset, 0, ZAP_FLAG_UINT64_KEY, DMU_OT_DSL_KEYCHAIN, 0, 0, DMU_OT_NONE, 0, tx);
 	
 	//add a key to the keychain
-	ret = dsl_keychain_add_key(kc, tx);
+	ret = dsl_keychain_add_key_impl(kc, tx);
 	if(ret) goto error;
 	
 	//increment the encryption feature count
@@ -392,7 +599,7 @@ int dsl_keychain_open(objset_t *mos, uint64_t kcobj, uint8_t *wkeydata, uint_t w
 	dsl_crypto_key_phys_t dckp;
 	uint64_t crypt;
 	uint8_t keydata[MAX_KEY_LEN + WRAPPING_MAC_LEN];
-	dsl_keychain_entry_t *kce = NULL;
+	dsl_keychain_entry_t *kce = NULL, *cur_kce = NULL;
 	dsl_keychain_t *kc = NULL;
 	
 	LOG_DEBUG("dsl_keychain_open()");
@@ -400,6 +607,8 @@ int dsl_keychain_open(objset_t *mos, uint64_t kcobj, uint8_t *wkeydata, uint_t w
 	//allocate and initialize the keychain struct
 	ret = dsl_keychain_alloc(&kc);
 	if(ret) return ret;
+	
+	kc->kc_obj = kcobj;
 	
 	//iterate all entries in the on-disk keychain
 	for(zap_cursor_init(&zc, mos, kcobj); zap_cursor_retrieve(&zc, &za) == 0; zap_cursor_advance(&zc)) {
@@ -434,7 +643,10 @@ int dsl_keychain_open(objset_t *mos, uint64_t kcobj, uint8_t *wkeydata, uint_t w
 		
 		//unwrap the key, will return error if wkey is incorrect by checking the MAC
 		ret = zio_crypt_key_unwrap(kc->kc_wkey, &dckp, keydata);
-		if(ret) goto error;
+		if(ret){
+			ret = SET_ERROR(EINVAL);
+			goto error;
+		}
 		
 		LOG_DEBUG("unwraped the key");
 		
@@ -452,9 +664,14 @@ int dsl_keychain_open(objset_t *mos, uint64_t kcobj, uint8_t *wkeydata, uint_t w
 		
 		LOG_DEBUG("created keychain entry");
 		
-		//set the txgid and add the entry to the keychain
+		//set the txgid
 		kce->ke_txgid = txgid;
-		list_insert_tail(&kc->kc_entries, kce);
+		
+		//the zap does not store keys in order, we must add them in order
+		for(cur_kce = list_head(&kc->kc_entries); cur_kce; cur_kce = list_next(&kc->kc_entries, cur_kce)){
+			if(cur_kce->ke_txgid > kce->ke_txgid) break;
+		}
+		list_insert_before(&kc->kc_entries, cur_kce, kce);
 		
 		LOG_DEBUG("added keychain entry to keychain");
 		
@@ -541,6 +758,8 @@ int spa_keychain_load(spa_t *spa, uint64_t kcobj, uint8_t *wkeydata, uint_t wkey
 	int ret;
 	dsl_keychain_t *kc;
 	
+	LOG_DEBUG("loading key %lu", (unsigned long)kcobj);
+	
 	//load the keychain from disk
 	ret = dsl_keychain_open(spa_get_dsl(spa)->dp_meta_objset, kcobj, wkeydata, wkeydata_len, &kc);
 	if(ret) return ret;
@@ -564,6 +783,8 @@ int spa_keychain_unload(spa_t *spa, uint64_t kcobj){
 	dsl_keychain_t search_kc;
 	dsl_keychain_t *found_kc;
 	
+	LOG_DEBUG("unloading key %lu", (unsigned long)kcobj);
+	
 	//init the search keychain
 	search_kc.kc_obj = kcobj;
 	
@@ -584,6 +805,8 @@ int spa_keychain_unload(spa_t *spa, uint64_t kcobj){
 	avl_remove(&spa->spa_loaded_keys, found_kc);
 	
 	rw_exit(&spa->spa_loaded_keys_lock);
+	
+	LOG_DEBUG("unloaded key sucessfully");
 	
 	return 0;
 	

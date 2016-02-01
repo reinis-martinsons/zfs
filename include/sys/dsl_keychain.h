@@ -61,17 +61,19 @@ void dsl_keychain_free(dsl_keychain_t *kc);
 int dsl_keychain_alloc(dsl_keychain_t **kc_out);
 void dsl_keychain_hold(dsl_keychain_t *kc, void *tag);
 void dsl_keychain_rele(dsl_keychain_t *kc, void *tag);
+
+int dsl_keychain_rewrap_nvlist(const char *dsname, nvlist_t *props);
+int dsl_keychain_add_key(const char *dsname);
+int dsl_keychain_lookup_key(dsl_keychain_t *kc, uint64_t txgid, zio_crypt_key_t **key_out);
 void dsl_keychain_destroy(uint64_t kcobj, dmu_tx_t *tx);
 int dsl_keychain_create_sync(zio_crypt_key_t *wkey, dmu_tx_t *tx, dsl_keychain_t **kc_out);
-int dsl_keychain_add_key(dsl_keychain_t *kc, dmu_tx_t *tx);
-int dsl_keychain_rewrap(dsl_keychain_t *kc, zio_crypt_key_t *wkey, dmu_tx_t *tx);
 int dsl_keychain_clone_sync(dsl_keychain_t *kc, dmu_tx_t *tx, dsl_keychain_t **kc_out);
 int dsl_keychain_open(objset_t *mos, uint64_t kcobj, uint8_t *wkeydata, uint_t wkeydata_len, dsl_keychain_t **kc_out);
 
 int spa_keychain_entry_compare(const void *a, const void *b);
-int spa_keychain_insert(spa_t *spa, dsl_keychain_t *kc);
 int spa_keychain_lookup(spa_t *spa, uint64_t kcobj, void *tag, dsl_keychain_t **kc_out);
-int spa_keychain_load(spa_t *spa, uint64_t kcobj, uint8_t *wkeydata, uint_t wkeydatalen);
+int spa_keychain_insert(spa_t *spa, dsl_keychain_t *kc);
+int spa_keychain_load(spa_t *spa, uint64_t kcobj, uint8_t *wkeydata, uint_t wkeydata_len);
 int spa_keychain_unload(spa_t *spa, uint64_t kcobj);
 
 #endif

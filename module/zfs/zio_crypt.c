@@ -127,8 +127,9 @@ int zio_crypt_wkey_create_nvlist(nvlist_t *props, void *tag, zio_crypt_key_t **k
 	//all 3 properties must be present or not
 	if(!(crypt_exists && keydata_exists && keysource_exists)) return EINVAL;
 	
-	//keysource should be of format passphrase for salt to exist
-	if(!strncmp(keysource, "passphrase", 10) && nvlist_lookup_uint64(props, zfs_prop_to_name(ZFS_PROP_SALT), &salt) != 0) return EINVAL;
+	//salt should be set each time
+	ret = nvlist_lookup_uint64(props, zfs_prop_to_name(ZFS_PROP_SALT), &salt);
+	if(ret) return EINVAL;
 	
 	//wkeydata len must match the desired encryption algorithm
 	if(zio_crypt_table[crypt].ci_keylen != wkeydata_len) return EINVAL;
@@ -162,8 +163,6 @@ int zio_do_crypt(boolean_t encrypt, zio_crypt_key_t *key, uint8_t *ivbuf, uint_t
 	crypto_mechanism_t mech;
 	zio_crypt_info_t crypt_info;
 	uint_t plain_full_len;
-	
-	LOG_DEBUG("zio_do_crypt() encrypt = %d, crypt = %lu, ivlen = %u, maclen = %u, datalen = %u", encrypt, crypt, ivlen, maclen, datalen);
 	
 	ASSERT(crypt < ZIO_CRYPT_FUNCTIONS);
 	ASSERT(wkey->zk_key->ck_format == CRYPTO_KEY_RAW);

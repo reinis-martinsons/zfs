@@ -482,8 +482,10 @@ extern nvlist_t *zfs_get_clones_nvl(zfs_handle_t *);
  * zfs encryption management
  */
 extern int zfs_crypto_create(libzfs_handle_t *, nvlist_t *, char *);
-extern int zfs_crypto_load_key(zfs_handle_t *zhp);
-extern int zfs_crypto_unload_key(zfs_handle_t *zhp);
+extern int zfs_crypto_load_key(zfs_handle_t *);
+extern int zfs_crypto_unload_key(zfs_handle_t *);
+extern int zfs_crypto_add_key(zfs_handle_t *);
+extern int zfs_crypto_rewrap(zfs_handle_t *, nvlist_t *);
 
 typedef struct zprop_list {
 	int		pl_prop;
