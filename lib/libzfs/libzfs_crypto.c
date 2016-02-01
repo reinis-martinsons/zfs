@@ -27,7 +27,7 @@
 
 #include <libintl.h>
 #include <libzfs.h>
-#include <sys/zio_crypt.h>
+#include <sys/dsl_keychain.h>
 
 #include "libzfs_impl.h"
 #include "zfeature_common.h"
@@ -355,7 +355,7 @@ error:
 int zfs_crypto_load_key(zfs_handle_t *zhp) {
 	int ret;
 	char errbuf[1024];
-	uint64_t crypt, salt = 0;
+	uint64_t crypt, keystatus, salt = 0;
 	char keysource[MAXNAMELEN];
 	key_format_t format;
 	key_locator_t locator;
@@ -382,6 +382,13 @@ int zfs_crypto_load_key(zfs_handle_t *zhp) {
 	if (ret) {
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN, "Failed to obtain keysource property."));
 		return (EIO);
+	}
+	
+	/* check that the key is unloaded */
+	keystatus = zfs_prop_get_int(zhp, ZFS_PROP_KEYSTATUS);
+	if (keystatus == ZFS_KEYSTATUS_AVAILABLE) {
+		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN, "Key already loaded."));
+		return (EINVAL);
 	}
 	
 	/* parse the keysource */
@@ -462,6 +469,13 @@ int zfs_crypto_unload_key(zfs_handle_t *zhp) {
 	crypt = zfs_prop_get_int(zhp, ZFS_PROP_ENCRYPTION);
 	if (crypt == ZIO_CRYPT_OFF) {
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN, "Encryption not enabled."));
+		return (EINVAL);
+	}
+	
+	/* check that the key is loaded */
+	keystatus = zfs_prop_get_int(zhp, ZFS_PROP_KEYSTATUS);
+	if (keystatus == ZFS_KEYSTATUS_UNAVAILABLE) {
+		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN, "Key already unloaded."));
 		return (EINVAL);
 	}
 	

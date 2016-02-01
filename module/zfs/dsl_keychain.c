@@ -696,6 +696,21 @@ error:
 	return ret;
 }
 
+zfs_keystatus_t dsl_keychain_keystatus(dsl_dataset_t *ds){
+	int ret;
+	uint64_t kcobj = dsl_dir_phys(ds->ds_dir)->dd_keychain_obj;
+	dsl_keychain_t *kc;
+	
+	if(kcobj == 0) return ZFS_KEYSTATUS_NONE;
+	
+	ret = spa_keychain_lookup(ds->ds_dir->dd_pool->dp_spa, kcobj, FTAG, &kc);
+	if(ret) return ZFS_KEYSTATUS_UNAVAILABLE;
+	
+	dsl_keychain_rele(kc, FTAG);
+	
+	return ZFS_KEYSTATUS_AVAILABLE;
+}
+
 int spa_keychain_entry_compare(const void *a, const void *b){
 	const dsl_keychain_t *kca = a;
 	const dsl_keychain_t *kcb = b;

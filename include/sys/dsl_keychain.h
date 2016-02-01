@@ -31,6 +31,13 @@
 #include <sys/zio_crypt.h>
 #include <sys/spa_impl.h>
 #include <sys/spa.h>
+#include <sys/dsl_dataset.h>
+
+typedef enum zfs_keystatus {
+	ZFS_KEYSTATUS_NONE = 0,
+	ZFS_KEYSTATUS_UNAVAILABLE,
+	ZFS_KEYSTATUS_AVAILABLE,
+} zfs_keystatus_t;
 
 //physical representation of a wrapped key in the DSL Keychain
 typedef struct dsl_crypto_key_phys {
@@ -69,6 +76,7 @@ void dsl_keychain_destroy(uint64_t kcobj, dmu_tx_t *tx);
 int dsl_keychain_create_sync(zio_crypt_key_t *wkey, dmu_tx_t *tx, dsl_keychain_t **kc_out);
 int dsl_keychain_clone_sync(dsl_keychain_t *kc, dmu_tx_t *tx, dsl_keychain_t **kc_out);
 int dsl_keychain_open(objset_t *mos, uint64_t kcobj, uint8_t *wkeydata, uint_t wkeydata_len, dsl_keychain_t **kc_out);
+zfs_keystatus_t dsl_keychain_keystatus(dsl_dataset_t *ds);
 
 int spa_keychain_entry_compare(const void *a, const void *b);
 int spa_keychain_lookup(spa_t *spa, uint64_t kcobj, void *tag, dsl_keychain_t **kc_out);

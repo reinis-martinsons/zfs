@@ -32,6 +32,7 @@
 #include <sys/zfs_acl.h>
 #include <sys/zfs_ioctl.h>
 #include <sys/zfs_znode.h>
+#include <sys/dsl_keychain.h>
 
 #include "zfs_prop.h"
 #include "zfs_deleg.h"
@@ -186,6 +187,13 @@ zfs_prop_init(void)
 		{ "on",		1 },
 		{ NULL }
 	};
+	
+	static zprop_index_t keystatus_table[] = {
+		{ "none",			ZFS_KEYSTATUS_NONE},
+		{ "unavailable",	ZFS_KEYSTATUS_UNAVAILABLE},
+		{ "available",		ZFS_KEYSTATUS_AVAILABLE},
+		{ NULL }
+	};
 
 	static zprop_index_t logbias_table[] = {
 		{ "latency",	ZFS_LOGBIAS_LATENCY },
@@ -323,12 +331,15 @@ zfs_prop_init(void)
 	    PROP_DEFAULT, ZFS_TYPE_FILESYSTEM, "on | off | noauto",
 	    "CANMOUNT", canmount_table);
 
-	/* readonly index (boolean) properties */
+	/* readonly index properties */
 	zprop_register_index(ZFS_PROP_MOUNTED, "mounted", 0, PROP_READONLY,
 	    ZFS_TYPE_FILESYSTEM, "yes | no", "MOUNTED", boolean_table);
 	zprop_register_index(ZFS_PROP_DEFER_DESTROY, "defer_destroy", 0,
 	    PROP_READONLY, ZFS_TYPE_SNAPSHOT, "yes | no", "DEFER_DESTROY",
 	    boolean_table);
+	zprop_register_index(ZFS_PROP_KEYSTATUS, "keystatus", ZFS_KEYSTATUS_NONE,
+	    PROP_READONLY, ZFS_TYPE_DATASET, "none | unavailable | available",
+		"KEYSTATUS", keystatus_table);
 
 	/* set once index properties */
 	zprop_register_index(ZFS_PROP_NORMALIZE, "normalization", 0,
