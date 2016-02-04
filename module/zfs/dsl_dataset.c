@@ -687,8 +687,10 @@ dsl_dataset_disown(dsl_dataset_t *ds, void *tag)
 {
 	ASSERT3P(ds->ds_owner, ==, tag);
 	ASSERT(ds->ds_dbuf != NULL);
-	VERIFY0(spa_keystore_remove_index(ds->ds_dir->dd_pool->dp_spa,
-		ds->ds_object));
+	
+	if (dsl_dir_phys(ds->ds_dir)->dd_keychain_obj)
+		VERIFY0(spa_keystore_remove_index(ds->ds_dir->dd_pool->dp_spa,
+			ds->ds_object));
 
 	mutex_enter(&ds->ds_lock);
 	ds->ds_owner = NULL;
