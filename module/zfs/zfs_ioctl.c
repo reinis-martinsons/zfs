@@ -5290,7 +5290,7 @@ zfs_ioc_crypto(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl) {
 	nvlist_t *args;
 	dsl_pool_t *dp = NULL;
 	dsl_dataset_t *ds = NULL;
-	boolean_t owned = B_FALSE;
+	boolean_t held = B_FALSE;
 	
 	ret = nvlist_lookup_uint64(innvl, "crypto_cmd", &crypto_cmd);
 	if (ret)
@@ -5307,19 +5307,15 @@ zfs_ioc_crypto(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl) {
 	
 	if (crypto_cmd == ZFS_IOC_CRYPTO_LOAD_KEY || 
 		crypto_cmd == ZFS_IOC_CRYPTO_UNLOAD_KEY) {
-		/* 
-		 * if we are loading or unloading, nobody else should own the dataset.
-		 * own it ourselves to be sure.
-		 */
-		ret = dsl_dataset_own(dp, dsname, FTAG, &ds);
-		owned = B_TRUE;
+		ret = dsl_dataset_hold(dp, dsname, FTAG, &ds);
+		held = B_TRUE;
 	} else {
 		/*
 		 * adding and rewrapping both use dsl_sync_task which holds the pool
 		 * so we must drop our hold here
 		 */
 		dsl_pool_rele(dp, FTAG);
-		owned = B_FALSE;
+		held = B_FALSE;
 	}
 	
 	if (ret) {
@@ -5343,14 +5339,14 @@ zfs_ioc_crypto(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl) {
 			goto error;
 		}
 				
-		ret = spa_keychain_load(dp->dp_spa,
+		ret = spa_keystore_load(dp->dp_spa,
 			dsl_dir_phys(ds->ds_dir)->dd_keychain_obj, wkeydata, wkeydata_len);
 		if (ret)
 			goto error;
 		
 		break;
 	case ZFS_IOC_CRYPTO_UNLOAD_KEY:
-		ret = spa_keychain_unload(dp->dp_spa,
+		ret = spa_keystore_unload(dp->dp_spa,
 			dsl_dir_phys(ds->ds_dir)->dd_keychain_obj);
 		if (ret)
 			goto error;
@@ -5384,17 +5380,17 @@ zfs_ioc_crypto(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl) {
 		goto error;
 	}
 
-	if (owned) {
-		dsl_dataset_disown(ds, FTAG);
+	if (held) {
+		dsl_dataset_rele(ds, FTAG);
 		dsl_pool_rele(dp, FTAG);
 	}
 	
 	return (0);
 	
 error:
-	if (owned) {
+	if (held) {
 		if (ds) 
-			dsl_dataset_disown(ds, FTAG);
+			dsl_dataset_rele(ds, FTAG);
 		dsl_pool_rele(dp, FTAG);
 	}
 	

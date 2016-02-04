@@ -596,10 +596,12 @@ dsl_dataset_own_obj(dsl_pool_t *dp, uint64_t dsobj,
 	int err = dsl_dataset_hold_obj(dp, dsobj, tag, dsp);
 	if (err != 0)
 		return (err);
-	if (!dsl_dataset_tryown(*dsp, tag)) {
+
+	err = dsl_dataset_tryown(*dsp, tag);
+	if (err != 0) {
 		dsl_dataset_rele(*dsp, tag);
 		*dsp = NULL;
-		return (SET_ERROR(EBUSY));
+		return (err);
 	}
 	return (0);
 }
@@ -611,9 +613,11 @@ dsl_dataset_own(dsl_pool_t *dp, const char *name,
 	int err = dsl_dataset_hold(dp, name, tag, dsp);
 	if (err != 0)
 		return (err);
-	if (!dsl_dataset_tryown(*dsp, tag)) {
+
+	err = dsl_dataset_tryown(*dsp, tag);
+	if (err != 0) {
 		dsl_dataset_rele(*dsp, tag);
-		return (SET_ERROR(EBUSY));
+		return (err);
 	}
 	return (0);
 }
@@ -683,6 +687,8 @@ dsl_dataset_disown(dsl_dataset_t *ds, void *tag)
 {
 	ASSERT3P(ds->ds_owner, ==, tag);
 	ASSERT(ds->ds_dbuf != NULL);
+	VERIFY0(spa_keystore_remove_index(ds->ds_dir->dd_pool->dp_spa,
+		ds->ds_object));
 
 	mutex_enter(&ds->ds_lock);
 	ds->ds_owner = NULL;
@@ -691,19 +697,34 @@ dsl_dataset_disown(dsl_dataset_t *ds, void *tag)
 	dsl_dataset_rele(ds, tag);
 }
 
-boolean_t
+int
 dsl_dataset_tryown(dsl_dataset_t *ds, void *tag)
 {
-	boolean_t gotit = FALSE;
+	int ret = 0;
+	spa_t *spa = ds->ds_dir->dd_pool->dp_spa;
+	uint64_t kcobj = dsl_dir_phys(ds->ds_dir)->dd_keychain_obj;
+	
+	/* if the dataset is encrypted, the owner will need the keychain indexed */
+	if (kcobj != 0) {
+		ret = spa_keystore_create_index(spa, ds->ds_object, kcobj);
+		if(ret)
+			return (SET_ERROR(EPERM));
+	}
 
 	mutex_enter(&ds->ds_lock);
 	if (ds->ds_owner == NULL && !DS_IS_INCONSISTENT(ds)) {
 		ds->ds_owner = tag;
 		dsl_dataset_long_hold(ds, tag);
-		gotit = TRUE;
+		ret = 0;
+	} else {
+		ret = SET_ERROR(EBUSY);
 	}
 	mutex_exit(&ds->ds_lock);
-	return (gotit);
+	
+	if (ret && kcobj != 0)
+		VERIFY0(spa_keystore_remove_index(spa, ds->ds_object));
+	
+	return (ret);
 }
 
 static void

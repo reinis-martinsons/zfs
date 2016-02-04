@@ -430,7 +430,7 @@ int zfs_crypto_load_key(zfs_handle_t *zhp) {
 			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN, "Keychain is already loaded."));
 			break;
 		case EBUSY:
-			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN, "Dataset it busy."));
+			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN, "Dataset is busy."));
 			break;
 		}
 		zfs_error(zhp->zfs_hdl, EZFS_CRYPTOFAILED, errbuf);
@@ -456,7 +456,7 @@ error:
 int zfs_crypto_unload_key(zfs_handle_t *zhp) {
 	int ret;
 	char errbuf[1024];
-	uint64_t crypt;
+	uint64_t crypt, keystatus;
 	
 	(void) snprintf(errbuf, sizeof (errbuf), dgettext(TEXT_DOMAIN, "Key unload error"));
 	

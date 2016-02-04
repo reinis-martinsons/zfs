@@ -28,6 +28,7 @@
 #include <sys/zap.h>
 #include <sys/dsl_dir.h>
 #include <sys/dsl_prop.h>
+#include <sys/spa_impl.h>
 
 //macros for defining encryption parameter lengths
 #define MAX_KEY_LEN 32
@@ -170,13 +171,18 @@ error:
 	return ret;
 }
 
-//keychain will not be unloaded on refcount hitting zero, but it will become unloadable
-void dsl_keychain_hold(dsl_keychain_t *kc, void *tag){
+/* 
+ * Keychain will not be unloaded on refcount hitting zero, but it will become unloadable.
+ * References given out via the spa_lookup_keychain_* functions should all be within the
+ * context of an owned dataset. When a dataset is disowned spa_keychain_remove_index()
+ * will be called, which will release a reference to the keychain
+ */
+static void dsl_keychain_hold(dsl_keychain_t *kc, void *tag){
 	(void)refcount_add(&kc->kc_refcnt, tag);
 	LOG_DEBUG("keychain hold : refcount = %d", (int)refcount_count(&kc->kc_refcnt));
 }
 
-void dsl_keychain_rele(dsl_keychain_t *kc, void *tag){
+static void dsl_keychain_rele(dsl_keychain_t *kc, void *tag){
 	(void)refcount_remove(&kc->kc_refcnt, tag);
 	LOG_DEBUG("keychain rele : refcount = %d", (int)refcount_count(&kc->kc_refcnt));
 }
@@ -201,10 +207,9 @@ static int dsl_keychain_add_key_rewrap_check_impl(const char *dsname, dmu_tx_t *
 		goto error;
 	}
 	
-	ret = spa_keychain_lookup(dp->dp_spa, dsl_dir_phys(dd)->dd_keychain_obj, FTAG, &kc);
+	ret = spa_keystore_lookup(dp->dp_spa, dsl_dir_phys(dd)->dd_keychain_obj, &kc);
 	if(ret) goto error;
 	
-	dsl_keychain_rele(kc, FTAG);
 	dsl_dir_rele(dd, FTAG);
 	
 	return 0;
@@ -269,14 +274,13 @@ static void dsl_keychain_rewrap_sync(void *arg, dmu_tx_t *tx){
 	
 	//find the keychain
 	VERIFY0(dsl_dir_hold(dp, dsname, FTAG, &dd, NULL));
-	VERIFY0(spa_keychain_lookup(dp->dp_spa, dsl_dir_phys(dd)->dd_keychain_obj, FTAG, &kc));
+	VERIFY0(spa_keystore_lookup(dp->dp_spa, dsl_dir_phys(dd)->dd_keychain_obj, &kc));
 	
 	//rewrap the keychain
 	VERIFY0(dsl_keychain_rewrap_impl(kc, wkey, tx));
 	
 	LOG_DEBUG("rewrapped keychain sucessfully");
 	
-	dsl_keychain_rele(kc, FTAG);
 	dsl_dir_rele(dd, FTAG);
 }
 
@@ -443,7 +447,7 @@ static void dsl_keychain_add_key_sync(void *arg, dmu_tx_t *tx){
 	
 	//find the keychain
 	VERIFY0(dsl_dir_hold(dp, dsname, FTAG, &dd, NULL));
-	VERIFY0(spa_keychain_lookup(dp->dp_spa, dsl_dir_phys(dd)->dd_keychain_obj, FTAG, &kc));
+	VERIFY0(spa_keystore_lookup(dp->dp_spa, dsl_dir_phys(dd)->dd_keychain_obj, &kc));
 	
 	//generate and add a key
 	VERIFY0(dsl_keychain_add_key_impl(kc, tx));
@@ -453,7 +457,6 @@ static void dsl_keychain_add_key_sync(void *arg, dmu_tx_t *tx){
 		LOG_DEBUG("kce %lu", (unsigned long)kce->ke_txgid);
 	}
 	
-	dsl_keychain_rele(kc, FTAG);
 	dsl_dir_rele(dd, FTAG);
 }
 
@@ -492,7 +495,7 @@ void dsl_keychain_destroy(uint64_t kcobj, dmu_tx_t *tx){
 	spa_feature_decr(tx->tx_pool->dp_spa, SPA_FEATURE_ENCRYPTION, tx);
 }
 
-int dsl_keychain_create_sync(zio_crypt_key_t *wkey, dmu_tx_t *tx, dsl_keychain_t **kc_out){
+int dsl_keychain_create_sync(zio_crypt_key_t *wkey, dmu_tx_t *tx, uint64_t *kcobj_out){
 	int ret;
 	dsl_keychain_t *kc = NULL;
 	
@@ -514,23 +517,31 @@ int dsl_keychain_create_sync(zio_crypt_key_t *wkey, dmu_tx_t *tx, dsl_keychain_t
 	//increment the encryption feature count
 	spa_feature_incr(tx->tx_pool->dp_spa, SPA_FEATURE_ENCRYPTION, tx);
 	
-	*kc_out = kc;
+	//add the keychain to the spa keystore so the user doesn't have to later
+	ret = spa_keystore_insert(tx->tx_pool->dp_spa, kc);
+	if(ret) goto error;
+	
+	*kcobj_out = kc->kc_obj;
 	return 0;
 	
 error:
 	LOG_ERROR(ret, "");
 	if(kc) dsl_keychain_free(kc);
 
-	*kc_out = NULL;
+	*kcobj_out = 0;
 	return ret;
 }
 
-int dsl_keychain_clone_sync(dsl_keychain_t *kc, dmu_tx_t *tx, dsl_keychain_t **kc_out){
+int dsl_keychain_clone_sync(uint64_t orig_kcobj, dmu_tx_t *tx, uint64_t *kcobj_out){
 	int ret;
-	dsl_keychain_t *new_kc = NULL;
+	dsl_keychain_t *kc = NULL, *new_kc = NULL;
 	dsl_keychain_entry_t *kce, *new_kce;
 	uint8_t ivdata[ZIO_CRYPT_WRAPKEY_IVLEN];
 	dsl_crypto_key_phys_t key_phys;
+	
+	//lookup the old keychain from the keystore
+	ret = spa_keystore_lookup(tx->tx_pool->dp_spa, orig_kcobj, &kc);
+	if(ret) return ret;
 	
 	//create the new keychain for the clone
 	ret = dsl_keychain_alloc(&new_kc);
@@ -578,7 +589,14 @@ int dsl_keychain_clone_sync(dsl_keychain_t *kc, dmu_tx_t *tx, dsl_keychain_t **k
 	
 	rw_exit(&kc->kc_lock);
 	
-	*kc_out = new_kc;
+	//increment the encryption feature count
+	spa_feature_incr(tx->tx_pool->dp_spa, SPA_FEATURE_ENCRYPTION, tx);
+	
+	//add the keychain to the spa keystore so the user doesn't have to later
+	ret = spa_keystore_insert(tx->tx_pool->dp_spa, new_kc);
+	if(ret) goto error;
+	
+	*kcobj_out = new_kc->kc_obj;
 	return 0;
 	
 error_unlock:
@@ -587,7 +605,7 @@ error:
 	LOG_ERROR(ret, "");
 	if(new_kc) dsl_keychain_free(new_kc);
 	
-	*kc_out = NULL;
+	*kcobj_out = 0;
 	return ret;
 }
 
@@ -703,15 +721,15 @@ zfs_keystatus_t dsl_keychain_keystatus(dsl_dataset_t *ds){
 	
 	if(kcobj == 0) return ZFS_KEYSTATUS_NONE;
 	
-	ret = spa_keychain_lookup(ds->ds_dir->dd_pool->dp_spa, kcobj, FTAG, &kc);
+	ret = spa_keystore_lookup(ds->ds_dir->dd_pool->dp_spa, kcobj, &kc);
 	if(ret) return ZFS_KEYSTATUS_UNAVAILABLE;
 	
-	dsl_keychain_rele(kc, FTAG);
+	LOG_DEBUG("current key refcount = %d", (int)refcount_count(&kc->kc_refcnt));
 	
 	return ZFS_KEYSTATUS_AVAILABLE;
 }
 
-int spa_keychain_entry_compare(const void *a, const void *b){
+static int spa_keychain_compare(const void *a, const void *b){
 	const dsl_keychain_t *kca = a;
 	const dsl_keychain_t *kcb = b;
 	
@@ -720,7 +738,28 @@ int spa_keychain_entry_compare(const void *a, const void *b){
 	return 0;
 }
 
-int spa_keychain_lookup(spa_t *spa, uint64_t kcobj, void *tag, dsl_keychain_t **kc_out){
+static int spa_keychain_index_compare(const void *a, const void *b){
+	const dsl_keychain_record_t *kra = a;
+	const dsl_keychain_record_t *krb = b;
+	
+	if(kra->kr_dsobj < krb->kr_dsobj) return -1;
+	if(kra->kr_dsobj > krb->kr_dsobj) return 1;
+	return 0;
+}
+
+void spa_keystore_init(spa_keystore_t *sk){
+	rw_init(&sk->sk_lock, NULL, RW_DEFAULT, NULL);
+	avl_create(&sk->sk_keychains, spa_keychain_compare, sizeof (dsl_keychain_t), offsetof(dsl_keychain_t, kc_avl_link));
+	avl_create(&sk->sk_keychain_index, spa_keychain_index_compare, sizeof (dsl_keychain_record_t), offsetof(dsl_keychain_record_t, kr_avl_link));
+}
+
+void spa_keystore_fini(spa_keystore_t *sk){
+	avl_destroy(&sk->sk_keychain_index);
+	avl_destroy(&sk->sk_keychains);
+	rw_destroy(&sk->sk_lock);
+}
+
+int spa_keystore_lookup(spa_t *spa, uint64_t kcobj, dsl_keychain_t **kc_out){
 	int ret;
 	dsl_keychain_t search_kc;
 	dsl_keychain_t *found_kc;
@@ -729,47 +768,45 @@ int spa_keychain_lookup(spa_t *spa, uint64_t kcobj, void *tag, dsl_keychain_t **
 	search_kc.kc_obj = kcobj;
 	
 	//lookup the keychain under the spa's keychain lock
-	rw_enter(&spa->spa_loaded_keys_lock, RW_READER);
+	rw_enter(&spa->spa_keystore.sk_lock, RW_READER);
 	
-	found_kc = avl_find(&spa->spa_loaded_keys, &search_kc, NULL);
+	found_kc = avl_find(&spa->spa_keystore.sk_keychains, &search_kc, NULL);
 	if(!found_kc){
 		ret = SET_ERROR(ENOENT);
 		goto error;
 	}
 	
-	rw_exit(&spa->spa_loaded_keys_lock);
-	
-	//increment the reference count
-	dsl_keychain_hold(found_kc, tag);
+	rw_exit(&spa->spa_keystore.sk_lock);
 	
 	*kc_out = found_kc;
 	return 0;
 	
 error:
-	rw_exit(&spa->spa_loaded_keys_lock);
+	LOG_ERROR(ret, "");
+	rw_exit(&spa->spa_keystore.sk_lock);
 	*kc_out = NULL;
 	return ret;
 }
 
-int spa_keychain_insert(spa_t *spa, dsl_keychain_t *kc){
+int spa_keystore_insert(spa_t *spa, dsl_keychain_t *kc){
 	int ret = 0;
 	avl_index_t where;
 	
-	rw_enter(&spa->spa_loaded_keys_lock, RW_WRITER);
+	rw_enter(&spa->spa_keystore.sk_lock, RW_WRITER);
 	
 	//add the keychain to the avl tree, return an error if one already exists for that kcobj
-	if(avl_find(&spa->spa_loaded_keys, kc, &where) != NULL){
+	if(avl_find(&spa->spa_keystore.sk_keychains, kc, &where) != NULL){
 		ret = SET_ERROR(EEXIST);
 		goto out;
 	}
-	avl_insert(&spa->spa_loaded_keys, kc, where);
+	avl_insert(&spa->spa_keystore.sk_keychains, kc, where);
 	
 out:
-	rw_exit(&spa->spa_loaded_keys_lock);
+	rw_exit(&spa->spa_keystore.sk_lock);
 	return ret;
 }
 
-int spa_keychain_load(spa_t *spa, uint64_t kcobj, uint8_t *wkeydata, uint_t wkeydata_len){
+int spa_keystore_load(spa_t *spa, uint64_t kcobj, uint8_t *wkeydata, uint_t wkeydata_len){
 	int ret;
 	dsl_keychain_t *kc;
 	
@@ -780,7 +817,7 @@ int spa_keychain_load(spa_t *spa, uint64_t kcobj, uint8_t *wkeydata, uint_t wkey
 	if(ret) return ret;
 	
 	//add the keychain to the spa
-	ret = spa_keychain_insert(spa, kc);
+	ret = spa_keystore_insert(spa, kc);
 	if(ret) goto error;
 	
 	LOG_DEBUG("loaded key sucessfully");
@@ -793,7 +830,7 @@ error:
 	return ret;
 }
 
-int spa_keychain_unload(spa_t *spa, uint64_t kcobj){
+int spa_keystore_unload(spa_t *spa, uint64_t kcobj){
 	int ret;
 	dsl_keychain_t search_kc;
 	dsl_keychain_t *found_kc;
@@ -803,10 +840,10 @@ int spa_keychain_unload(spa_t *spa, uint64_t kcobj){
 	//init the search keychain
 	search_kc.kc_obj = kcobj;
 	
-	rw_enter(&spa->spa_loaded_keys_lock, RW_READER);
+	rw_enter(&spa->spa_keystore.sk_lock, RW_READER);
 	
 	//lookup the keychain, check for unloading errors
-	found_kc = avl_find(&spa->spa_loaded_keys, &search_kc, NULL);
+	found_kc = avl_find(&spa->spa_keystore.sk_keychains, &search_kc, NULL);
 	if(found_kc == NULL){
 		ret = SET_ERROR(ENOENT);
 		goto error;
@@ -817,9 +854,9 @@ int spa_keychain_unload(spa_t *spa, uint64_t kcobj){
 	}
 	
 	//remove the keychain from the tree
-	avl_remove(&spa->spa_loaded_keys, found_kc);
+	avl_remove(&spa->spa_keystore.sk_keychains, found_kc);
 	
-	rw_exit(&spa->spa_loaded_keys_lock);
+	rw_exit(&spa->spa_keystore.sk_lock);
 	
 	LOG_DEBUG("unloaded key sucessfully");
 	
@@ -827,6 +864,125 @@ int spa_keychain_unload(spa_t *spa, uint64_t kcobj){
 	
 error:
 	LOG_ERROR(ret, "");
-	rw_exit(&spa->spa_loaded_keys_lock);
+	rw_exit(&spa->spa_keystore.sk_lock);
+	return ret;
+}
+
+/* The spa keystore index provides a means for the zio layer to lookup keys by objset id */
+int spa_keystore_lookup_index(spa_t *spa, uint64_t dsobj, dsl_keychain_t **kc_out){
+	int ret;
+	dsl_keychain_record_t search_kr;
+	dsl_keychain_record_t *found_kr;
+	
+	LOG_DEBUG("looking up index %d", (int)dsobj);
+	
+	//init the search keychain record
+	search_kr.kr_dsobj = dsobj;
+	
+	rw_enter(&spa->spa_keystore.sk_lock, RW_READER);
+	
+	//lookup the keychain under the spa's keychain lock
+	found_kr = avl_find(&spa->spa_keystore.sk_keychain_index, &search_kr, NULL);
+	if(!found_kr){
+		ret = SET_ERROR(ENOENT);
+		goto error;
+	}
+	
+	rw_exit(&spa->spa_keystore.sk_lock);
+	
+	*kc_out = found_kr->kr_keychain;
+	return 0;
+	
+error:
+	LOG_ERROR(ret, "");
+	rw_exit(&spa->spa_keystore.sk_lock);
+	*kc_out = NULL;
+	return ret;
+}
+
+static int spa_keystore_insert_index(spa_t *spa, uint64_t dsobj, dsl_keychain_t *kc){
+	int ret = 0;
+	avl_index_t where;
+	dsl_keychain_record_t *kr = NULL;
+	
+	LOG_DEBUG("inserting index %d -> %d", (int)dsobj, (int)kc->kc_obj);
+	
+	//allocate the keychain record
+	kr = kmem_alloc(sizeof(dsl_keychain_record_t), KM_SLEEP);
+	if(!kr) return SET_ERROR(ENOMEM);
+	
+	//populate the record
+	dsl_keychain_hold(kc, kr);
+	kr->kr_keychain = kc;
+	kr->kr_dsobj = dsobj;
+	
+	rw_enter(&spa->spa_keystore.sk_lock, RW_WRITER);
+	
+	//add the keychain record to the avl tree, return an error if one already exists for that kcobj
+	if(avl_find(&spa->spa_keystore.sk_keychain_index, kr, &where) != NULL){
+		ret = SET_ERROR(EEXIST);
+		goto error;
+	}
+	avl_insert(&spa->spa_keystore.sk_keychain_index, kr, where);
+	
+	rw_exit(&spa->spa_keystore.sk_lock);
+	return 0;
+	
+error:
+	LOG_ERROR(ret, "");
+	rw_exit(&spa->spa_keystore.sk_lock);
+	kmem_free(kr, sizeof(dsl_keychain_record_t));
+	dsl_keychain_rele(kc, kr);
+	
+	return ret;
+}
+
+int spa_keystore_create_index(spa_t *spa, uint64_t dsobj, uint64_t kcobj){
+	int ret;
+	dsl_keychain_t *kc;
+	
+	LOG_DEBUG("creating index");
+	
+	ret = spa_keystore_lookup(spa, kcobj, &kc);
+	if(ret) return ret;
+	
+	LOG_DEBUG("found keychain for indexing");
+	
+	return (spa_keystore_insert_index(spa, dsobj, kc));
+}
+
+int spa_keystore_remove_index(spa_t *spa, uint64_t dsobj){
+	int ret;
+	dsl_keychain_record_t search_kr;
+	dsl_keychain_record_t *found_kr;
+	
+	LOG_DEBUG("removing key index %lu", (unsigned long)dsobj);
+	
+	//init the search keychain record
+	search_kr.kr_dsobj = dsobj;
+	
+	rw_enter(&spa->spa_keystore.sk_lock, RW_READER);
+	
+	//lookup the keychain record
+	found_kr = avl_find(&spa->spa_keystore.sk_keychain_index, &search_kr, NULL);
+	if(found_kr == NULL){
+		ret = SET_ERROR(ENOENT);
+		goto error;
+	}
+	
+	//remove the keychain record from the tree
+	avl_remove(&spa->spa_keystore.sk_keychain_index, found_kr);
+	
+	rw_exit(&spa->spa_keystore.sk_lock);
+	
+	dsl_keychain_rele(found_kr->kr_keychain, found_kr);
+	kmem_free(found_kr, sizeof(dsl_keychain_record_t));
+	LOG_DEBUG("removed key index sucessfully");
+	
+	return 0;
+	
+error:
+	LOG_ERROR(ret, "");
+	rw_exit(&spa->spa_keystore.sk_lock);
 	return ret;
 }

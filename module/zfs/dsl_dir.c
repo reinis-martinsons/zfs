@@ -888,7 +888,6 @@ dsl_dir_create_sync(dsl_pool_t *dp, dsl_dir_t *pds, const char *name,
 	uint64_t ddobj;
 	dsl_dir_phys_t *ddphys;
 	dmu_buf_t *dbuf;
-	dsl_keychain_t *old_kc, *kc;
 
 	ddobj = dmu_object_alloc(mos, DMU_OT_DSL_DIR, 0,
 	    DMU_OT_DSL_DIR, sizeof (dsl_dir_phys_t), tx);
@@ -919,21 +918,15 @@ dsl_dir_create_sync(dsl_pool_t *dp, dsl_dir_t *pds, const char *name,
 		ddphys->dd_flags |= DD_FLAG_USED_BREAKDOWN;
 	
 	if (spa_feature_is_enabled(dp->dp_spa, SPA_FEATURE_ENCRYPTION)) {
-		if (crypto_key) {
+		if (crypto_key)
 			/* create a new keychain */
-			VERIFY(0 == dsl_keychain_create_sync(crypto_key, tx, &kc));
-			VERIFY(0 == spa_keychain_insert(dp->dp_spa, kc));
-			ddphys->dd_keychain_obj = kc->kc_obj;
-		} else if (dsl_dir_phys(pds)->dd_keychain_obj) {
+			VERIFY(0 == dsl_keychain_create_sync(crypto_key, tx, 
+				&ddphys->dd_keychain_obj));
+		else if (dsl_dir_phys(pds)->dd_keychain_obj)
 			/* create a copy of the parent's keychain */
-			VERIFY(0 == spa_keychain_lookup(dp->dp_spa,
-				dsl_dir_phys(pds)->dd_keychain_obj, FTAG, &old_kc));
-			VERIFY(0 == dsl_keychain_clone_sync(old_kc, tx, &kc));
-			dsl_keychain_rele(old_kc, FTAG);
-			
-			VERIFY(0 == spa_keychain_insert(dp->dp_spa, kc));
-			ddphys->dd_keychain_obj = kc->kc_obj;
-		}
+			VERIFY(0 == dsl_keychain_clone_sync(
+				dsl_dir_phys(pds)->dd_keychain_obj, tx,
+				&ddphys->dd_keychain_obj));
 	}
 	
 	dmu_buf_rele(dbuf, FTAG);
