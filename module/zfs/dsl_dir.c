@@ -922,11 +922,6 @@ dsl_dir_create_sync(dsl_pool_t *dp, dsl_dir_t *pds, const char *name,
 			/* create a new keychain */
 			VERIFY(0 == dsl_keychain_create_sync(crypto_key, tx, 
 				&ddphys->dd_keychain_obj));
-		else if (dsl_dir_phys(pds)->dd_keychain_obj)
-			/* create a copy of the parent's keychain */
-			VERIFY(0 == dsl_keychain_clone_sync(
-				dsl_dir_phys(pds)->dd_keychain_obj, tx,
-				&ddphys->dd_keychain_obj));
 	}
 	
 	dmu_buf_rele(dbuf, FTAG);
