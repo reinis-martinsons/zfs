@@ -3199,7 +3199,7 @@ zfs_ioc_create(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 	
 	nvlist_free(zct.zct_zplprops);
 	if(dcp.cp_wkey && error != 0)
-		dsl_wrapping_key_free(dcp.cp_wkey);
+		dsl_crypto_params_destroy(&dcp);
 
 	/*
 	 * It would be nice to do this atomically.
@@ -3234,6 +3234,7 @@ zfs_ioc_clone(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 	int error = 0;
 	nvlist_t *nvprops = NULL;
 	char *origin_name;
+	dsl_crypto_params_t dcp = { 0 };
 
 	if (nvlist_lookup_string(innvl, "origin", &origin_name) != 0)
 		return (SET_ERROR(EINVAL));
@@ -3242,14 +3243,18 @@ zfs_ioc_clone(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 	if (strchr(fsname, '@') ||
 	    strchr(fsname, '%'))
 		return (SET_ERROR(EINVAL));
-		
-	//FIXME
 
 	if (dataset_namecheck(origin_name, NULL, NULL) != 0)
 		return (SET_ERROR(EINVAL));
-	error = dmu_objset_clone(fsname, origin_name);
+	
+	error = dsl_crypto_params_init_nvlist(nvprops, &dcp);
 	if (error != 0)
 		return (error);
+	
+	error = dmu_objset_clone(fsname, origin_name, &dcp);
+	
+	if(dcp.cp_wkey && error != 0)
+		dsl_crypto_params_destroy(&dcp);
 
 	/*
 	 * It would be nice to do this atomically.
@@ -5291,8 +5296,6 @@ zfs_ioc_crypto(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl) {
 	int ret = 0;
 	dsl_crypto_params_t dcp = { 0 };
 	uint64_t crypto_cmd;
-	uint8_t *wkeydata;
-	uint_t wkeydata_len;
 	nvlist_t *args;
 	dsl_pool_t *dp = NULL;
 	
@@ -5321,15 +5324,11 @@ zfs_ioc_crypto(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl) {
 			goto error;
 		}
 		
-		ret = nvlist_lookup_uint8_array(args, "wkeydata", &wkeydata,
-			&wkeydata_len);
-		if (ret) {
-			ret = SET_ERROR(EINVAL);
+		ret = dsl_crypto_params_init_nvlist(args, &dcp);
+		if (ret)
 			goto error;
-		}
-				
-		ret = spa_keystore_load_wkey(dp->dp_spa, dsname, wkeydata,
-			wkeydata_len);
+		
+		ret = spa_keystore_load_wkey(dp->dp_spa, dsname, &dcp);
 		if (ret)
 			goto error;
 		
@@ -5357,7 +5356,7 @@ zfs_ioc_crypto(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl) {
 		if (ret)
 			goto error;
 		
-		ret = spa_keystore_rewrap(dp->dp_spa, dsname, dcp.cp_wkey);
+		ret = spa_keystore_rewrap(dp->dp_spa, dsname, &dcp);
 		if (ret)
 			goto error;
 		

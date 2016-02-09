@@ -853,7 +853,6 @@ dmu_objset_create_check(void *arg, dmu_tx_t *tx)
 	dmu_objset_create_arg_t *doca = arg;
 	dsl_pool_t *dp = dmu_tx_pool(tx);
 	dsl_dir_t *pdd;
-	dsl_wrapping_key_t *wkey;
 	const char *tail;
 	int error;
 
@@ -868,17 +867,12 @@ dmu_objset_create_check(void *arg, dmu_tx_t *tx)
 		return (SET_ERROR(EEXIST));
 	}
 	
-	if(doca->doca_dcp) LOG_CRYPTO_PARAMS(doca->doca_dcp);
-	else LOG_DEBUG("no crypto params");
-	
-	if (!doca->doca_dcp && dsl_dir_phys(pdd)->dd_keychain_obj != 0) {
-		error = spa_keystore_wkey_hold_ddobj(dp->dp_spa, pdd->dd_object, FTAG, &wkey);
-		if (error != 0){
+	if (doca->doca_dcp) {
+		error = dmu_objset_create_encryption_check(pdd, doca->doca_dcp);
+		if (error != 0) {
 			dsl_dir_rele(pdd, FTAG);
-			return (SET_ERROR(EPERM));
+			return (error);
 		}
-		
-		dsl_wrapping_key_rele(wkey, FTAG);
 	}
 	
 	error = dsl_fs_ss_limit_check(pdd, 1, ZFS_PROP_FILESYSTEM_LIMIT, NULL,
@@ -945,6 +939,7 @@ typedef struct dmu_objset_clone_arg {
 	const char *doca_clone;
 	const char *doca_origin;
 	cred_t *doca_cred;
+	dsl_crypto_params_t *doca_dcp;
 } dmu_objset_clone_arg_t;
 
 /*ARGSUSED*/
@@ -975,7 +970,6 @@ dmu_objset_clone_check(void *arg, dmu_tx_t *tx)
 		dsl_dir_rele(pdd, FTAG);
 		return (SET_ERROR(EDQUOT));
 	}
-	dsl_dir_rele(pdd, FTAG);
 
 	error = dsl_dataset_hold(dp, doca->doca_origin, FTAG, &origin);
 	if (error != 0)
@@ -986,7 +980,19 @@ dmu_objset_clone_check(void *arg, dmu_tx_t *tx)
 		dsl_dataset_rele(origin, FTAG);
 		return (SET_ERROR(EINVAL));
 	}
+	
+	if (doca->doca_dcp) {
+		error = dmu_objset_clone_encryption_check(pdd, origin->ds_dir, 
+			doca->doca_dcp);
+		if (error != 0) {
+			dsl_dataset_rele(origin, FTAG);
+			dsl_dir_rele(pdd, FTAG);
+			return (error);
+		}
+	}
+	
 	dsl_dataset_rele(origin, FTAG);
+	dsl_dir_rele(pdd, FTAG);
 
 	return (0);
 }
@@ -1006,7 +1012,7 @@ dmu_objset_clone_sync(void *arg, dmu_tx_t *tx)
 	VERIFY0(dsl_dataset_hold(dp, doca->doca_origin, FTAG, &origin));
 
 	obj = dsl_dataset_create_sync(pdd, tail, origin, 0,
-	    doca->doca_cred, NULL, tx);
+	    doca->doca_cred, doca->doca_dcp, tx);
 
 	VERIFY0(dsl_dataset_hold_obj(pdd->dd_pool, obj, FTAG, &ds));
 	dsl_dataset_name(origin, namebuf);
@@ -1018,13 +1024,15 @@ dmu_objset_clone_sync(void *arg, dmu_tx_t *tx)
 }
 
 int
-dmu_objset_clone(const char *clone, const char *origin)
+dmu_objset_clone(const char *clone, const char *origin, 
+	dsl_crypto_params_t *dcp)
 {
 	dmu_objset_clone_arg_t doca;
 
 	doca.doca_clone = clone;
 	doca.doca_origin = origin;
 	doca.doca_cred = CRED();
+	doca.doca_dcp = dcp;
 
 	return (dsl_sync_task(clone,
 	    dmu_objset_clone_check, dmu_objset_clone_sync, &doca,

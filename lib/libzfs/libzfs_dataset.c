@@ -3436,6 +3436,9 @@ zfs_clone(zfs_handle_t *zhp, const char *target, nvlist_t *props)
 		    zhp, errbuf)) == NULL)
 			return (-1);
 	}
+	
+	if (zfs_crypto_clone(hdl, zhp, props, parent) != 0)
+		return (zfs_error(hdl, EZFS_CRYPTOFAILED, errbuf));
 
 	ret = lzc_clone(target, zhp->zfs_name, props);
 	nvlist_free(props);

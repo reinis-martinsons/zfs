@@ -136,12 +136,13 @@ error:
 int dsl_crypto_params_init_nvlist(nvlist_t *props, dsl_crypto_params_t *dcp){
 	int ret;
 	dsl_wrapping_key_t *wkey = NULL;
-	boolean_t crypt_exists = B_TRUE, keydata_exists = B_TRUE;
-	boolean_t keysource_exists = B_TRUE, salt_exists = B_TRUE; 
+	boolean_t crypt_exists = B_TRUE, wkeydata_exists = B_TRUE;
+	boolean_t keysource_exists = B_TRUE, salt_exists = B_TRUE;
+	boolean_t cmd_exists = B_TRUE;
+	char *keysource = NULL;
+	uint64_t salt = 0, crypt = 0, cmd = ZFS_IOC_CRYPTO_CMD_NONE;
 	uint8_t *wkeydata;
 	uint_t wkeydata_len;
-	char *keysource;
-	uint64_t salt, crypt = 0;
 	
 	//get relevent properties from the nvlist
 	ret = nvlist_lookup_uint64(props, zfs_prop_to_name(ZFS_PROP_ENCRYPTION), &crypt);
@@ -151,29 +152,36 @@ int dsl_crypto_params_init_nvlist(nvlist_t *props, dsl_crypto_params_t *dcp){
 	if(ret) keysource_exists = B_FALSE;
 	
 	ret = nvlist_lookup_uint8_array(props, "wkeydata", &wkeydata, &wkeydata_len);
-	if(ret) keydata_exists = B_FALSE;
+	if(ret) wkeydata_exists = B_FALSE;
 	
-	//salt should be set each time
 	ret = nvlist_lookup_uint64(props, zfs_prop_to_name(ZFS_PROP_SALT), &salt);
 	if(ret) salt_exists = B_FALSE;
 	
-	LOG_DEBUG("%d %d %d %d", (int)crypt_exists, (int)keysource_exists, (int)keydata_exists, (int)salt_exists);
+	ret = nvlist_lookup_uint64(props, "crypto_cmd", &cmd);
+	if(ret) cmd_exists = B_FALSE;
+	
+	LOG_DEBUG("%d %d %d %d %d", (int)crypt_exists, (int)keysource_exists, (int)wkeydata_exists, (int)salt_exists, (int)cmd_exists);
 	
 	//no parameters are valid; results in inherited crypto settings
-	if(!crypt_exists && !keysource_exists && !keydata_exists & !salt_exists){
-		dcp->cp_crypt = ZIO_CRYPT_INHERIT;
-		dcp->cp_wkey = NULL;
-		return 0;
-	}
+	if(!crypt_exists && !keysource_exists && !wkeydata_exists & !salt_exists) goto out;
 	
 	//check wrapping key length
 	if(wkeydata_len != WRAPPING_KEY_LEN) return EINVAL; 
 	
 	//keydata requires keysource
-	if(keysource_exists && !keydata_exists) return EINVAL;
+	if(keysource_exists && !wkeydata_exists) return EINVAL;
+	
+	//remove crypto_cmd from props since it should not be used again
+	if(cmd_exists){
+		ret = nvlist_remove_all(props, "crypto_cmd");
+		if(ret){
+			ret = SET_ERROR(EIO);
+			goto error;
+		}
+	}
 		
 	//create the wrapping key from the raw data
-	if(keydata_exists){
+	if(wkeydata_exists){
 		//create the wrapping key now that we have parsed and verified the parameters
 		ret = dsl_wrapping_key_create(wkeydata, &wkey);
 		if(ret) goto error;
@@ -187,7 +195,10 @@ int dsl_crypto_params_init_nvlist(nvlist_t *props, dsl_crypto_params_t *dcp){
 		}
 	}
 	
+	dcp->cp_cmd = cmd;
 	dcp->cp_crypt = crypt;
+	dcp->cp_salt = salt;
+	dcp->cp_keysource = keysource;
 	dcp->cp_wkey = wkey;
 	return 0;
 	
@@ -195,9 +206,17 @@ error:
 	LOG_ERROR(ret, "");
 	if(wkey) dsl_wrapping_key_free(wkey);
 
+out:
+	dcp->cp_cmd = ZFS_IOC_CRYPTO_CMD_NONE;
 	dcp->cp_crypt = ZIO_CRYPT_INHERIT;
+	dcp->cp_salt = 0;
+	dcp->cp_keysource = NULL;
 	dcp->cp_wkey = NULL; 
 	return ret;
+}
+
+void dsl_crypto_params_destroy(dsl_crypto_params_t *dcp){
+	dsl_wrapping_key_free(dcp->cp_wkey);
 }
 
 int zio_do_crypt(boolean_t encrypt, uint64_t crypt, crypto_key_t *key, crypto_ctx_template_t tmpl, uint8_t *ivbuf, uint_t ivlen, uint_t maclen, uint8_t *plainbuf, uint8_t *cipherbuf, uint_t datalen){

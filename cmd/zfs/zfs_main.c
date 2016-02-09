@@ -650,7 +650,7 @@ zfs_do_clone(int argc, char **argv)
 		nomem();
 
 	/* check options */
-	while ((c = getopt(argc, argv, "o:p")) != -1) {
+	while ((c = getopt(argc, argv, "o:pK")) != -1) {
 		switch (c) {
 		case 'o':
 			if (parseprop(props))
@@ -658,6 +658,11 @@ zfs_do_clone(int argc, char **argv)
 			break;
 		case 'p':
 			parents = B_TRUE;
+			break;
+		case 'K':
+			if (nvlist_add_uint64(props, "crypto_cmd",
+				ZFS_IOC_CRYPTO_ADD_KEY) != 0)
+				nomem();
 			break;
 		case '?':
 			(void) fprintf(stderr, gettext("invalid option '%c'\n"),

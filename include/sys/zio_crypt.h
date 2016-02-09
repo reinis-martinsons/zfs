@@ -47,6 +47,7 @@
 #define BITS_TO_BYTES(x) (((x) + 7) >> 3)
 #define BYTES_TO_BITS(x) (x << 3)
 
+//supported commands for zfs_ioc_crypto()
 typedef enum zfs_ioc_crypto_cmd {
 	ZFS_IOC_CRYPTO_CMD_NONE = 0,
 	ZFS_IOC_CRYPTO_LOAD_KEY,
@@ -55,6 +56,7 @@ typedef enum zfs_ioc_crypto_cmd {
 	ZFS_IOC_CRYPTO_REWRAP,
 } zfs_ioc_crypto_cmd_t;
 
+//supported encryption algorithms
 typedef enum zio_encrypt {
 	ZIO_CRYPT_INHERIT = 0,
 	ZIO_CRYPT_ON,
@@ -108,7 +110,10 @@ typedef struct dsl_wrapping_key {
 } dsl_wrapping_key_t;
 
 typedef struct dsl_crypto_params {
+	zfs_ioc_crypto_cmd_t cp_cmd;
 	uint64_t cp_crypt;
+	uint64_t cp_salt;
+	const char *cp_keysource;
 	dsl_wrapping_key_t *cp_wkey;
 } dsl_crypto_params_t;
 
@@ -119,6 +124,7 @@ void dsl_wrapping_key_rele(dsl_wrapping_key_t *wkey, void *tag);
 void dsl_wrapping_key_free(dsl_wrapping_key_t *wkey);
 int dsl_wrapping_key_create(uint8_t *wkeydata, dsl_wrapping_key_t **wkey_out);
 int dsl_crypto_params_init_nvlist(nvlist_t *props, dsl_crypto_params_t *dcp);
+void dsl_crypto_params_destroy(dsl_crypto_params_t *dcp);
 int zio_do_crypt(boolean_t encrypt, uint64_t crypt, crypto_key_t *key, crypto_ctx_template_t tmpl, uint8_t *ivbuf, uint_t ivlen, uint_t maclen, uint8_t *plainbuf, uint8_t *cipherbuf, uint_t datalen);
 #define zio_encrypt(crypt, key, tmpl, iv, ivlen, maclen, plaindata, cipherdata, keylen) zio_do_crypt(B_TRUE, crypt, key, tmpl, iv, ivlen, maclen, plaindata, cipherdata, keylen)
 #define zio_decrypt(crypt, key, tmpl, iv, ivlen, maclen, plaindata, cipherdata, keylen) zio_do_crypt(B_FALSE, crypt, key, tmpl, iv, ivlen, maclen, plaindata, cipherdata, keylen)

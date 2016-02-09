@@ -87,14 +87,16 @@ int spa_keystore_wkey_hold_ddobj(spa_t *spa, uint64_t ddobj, void *tag, dsl_wrap
 int spa_keystore_keychain_hold_dd(spa_t *spa, dsl_dir_t *dd, void *tag, dsl_keychain_t **kc_out);
 void spa_keystore_keychain_rele(spa_t *spa, dsl_keychain_t *kc, void *tag);
 int spa_keystore_load_wkey_impl(spa_t *spa, dsl_wrapping_key_t *wkey);
-int spa_keystore_load_wkey(spa_t *spa, const char *dsname, uint8_t *wkeydata, uint_t wkeydata_len);
+int spa_keystore_load_wkey(spa_t *spa, const char *dsname, dsl_crypto_params_t *dcp);
 int spa_keystore_unload_wkey(spa_t *spa, const char *dsname);
 int spa_keystore_keychain_add_key(spa_t *spa, const char *dsname);
-int spa_keystore_rewrap(spa_t *spa, const char *dsname, dsl_wrapping_key_t *wkey);
+int spa_keystore_rewrap(spa_t *spa, const char *dsname, dsl_crypto_params_t *dcp);
 int spa_keystore_create_keychain_record(spa_t *spa, dsl_dataset_t *ds);
 int spa_keystore_remove_keychain_record(spa_t *spa, dsl_dataset_t *ds);
 int spa_keystore_hold_keychain_kr(spa_t *spa, uint64_t dsobj, dsl_keychain_t **kc_out);
 zfs_keystatus_t dsl_dataset_keystore_keystatus(dsl_dataset_t *ds);
+int dmu_objset_create_encryption_check(dsl_dir_t *pdd, dsl_crypto_params_t *dcp);
+int dmu_objset_clone_encryption_check(dsl_dir_t *pdd, dsl_dir_t *odd, dsl_crypto_params_t *dcp);
 uint64_t dsl_keychain_create_sync(uint64_t crypt, dsl_wrapping_key_t *wkey, dmu_tx_t *tx);
 uint64_t dsl_keychain_clone_sync(dsl_dir_t *orig_dd, dsl_wrapping_key_t *wkey, dmu_tx_t *tx);
 void dsl_keychain_destroy_sync(uint64_t kcobj, dmu_tx_t *tx);

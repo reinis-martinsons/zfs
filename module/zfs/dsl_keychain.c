@@ -548,28 +548,22 @@ error_unlock:
 	return ret;
 }
 
-int spa_keystore_load_wkey(spa_t *spa, const char *dsname, uint8_t *wkeydata, uint_t wkeydata_len){
+int spa_keystore_load_wkey(spa_t *spa, const char *dsname, dsl_crypto_params_t *dcp){
 	int ret;
 	dsl_dir_t *dd = NULL;
-	dsl_wrapping_key_t *wkey = NULL;
 	dsl_keychain_t *kc = NULL;
+	dsl_wrapping_key_t *wkey = dcp->cp_wkey;
 	dsl_pool_t *dp = spa_get_dsl(spa);
+	
+	if(!dcp->cp_wkey) return SET_ERROR(EINVAL);
+	if(dcp->cp_crypt || dcp->cp_keysource || dcp->cp_salt) return SET_ERROR(EINVAL);
+	if(dcp->cp_cmd) return SET_ERROR(EINVAL);
 	
 	//hold the dsl dir
 	ret = dsl_dir_hold(dp, dsname, FTAG, &dd, NULL);
 	if(ret) return ret;
 	
 	LOG_DEBUG("loading key ddobj = %u", (unsigned)dd->dd_object);
-	
-	//verify that the wkeydata is the correct length
-	if(wkeydata_len != WRAPPING_KEY_LEN){
-		ret = SET_ERROR(EINVAL);
-		goto error;
-	}
-	
-	//create the wrapping key from the raw data
-	ret = dsl_wrapping_key_create(wkeydata, &wkey);
-	if(ret) goto error;
 	
 	//initialize the wkey's ddobj
 	wkey->wk_ddobj = dd->dd_object;
@@ -714,11 +708,16 @@ int spa_keystore_keychain_add_key(spa_t *spa, const char *dsname){
 
 typedef struct spa_keystore_rewrap_args {
 	const char *skra_dsname;
-	dsl_wrapping_key_t *skra_wkey;
+	dsl_crypto_params_t *skra_cp;
 } spa_keystore_rewrap_args_t;
 
 static int spa_keystore_rewrap_check(void *arg, dmu_tx_t *tx){
 	spa_keystore_rewrap_args_t *skra = arg;
+	
+	if(skra->skra_cp->cp_crypt != ZIO_CRYPT_INHERIT) return SET_ERROR(EINVAL);
+	if(!skra->skra_cp || !skra->skra_cp->cp_wkey) return SET_ERROR(EINVAL);
+	if(skra->skra_cp->cp_cmd) return SET_ERROR(EINVAL);
+	
 	return dsl_keychain_check_impl(skra->skra_dsname, tx);
 }
 
@@ -804,7 +803,7 @@ static void spa_keystore_rewrap_sync(void *arg, dmu_tx_t *tx){
 	spa_t *spa = dp->dp_spa;
 	spa_keystore_rewrap_args_t *skra = arg;
 	const char *dsname = skra->skra_dsname;
-	dsl_wrapping_key_t *wkey = skra->skra_wkey;
+	dsl_wrapping_key_t *wkey = skra->skra_cp->cp_wkey;
 	dsl_wrapping_key_t *found_wkey;
 	
 	//create and initialize the wrapping key
@@ -834,12 +833,12 @@ static void spa_keystore_rewrap_sync(void *arg, dmu_tx_t *tx){
 	dsl_dir_rele(dd, FTAG);
 }
 
-int spa_keystore_rewrap(spa_t *spa, const char *dsname, dsl_wrapping_key_t *wkey){
+int spa_keystore_rewrap(spa_t *spa, const char *dsname, dsl_crypto_params_t *dcp){
 	spa_keystore_rewrap_args_t skra;
 	
 	//initialize the args struct
 	skra.skra_dsname = dsname;
-	skra.skra_wkey = wkey;
+	skra.skra_cp = dcp;
 	
 	//perform the actual work in syncing context
 	return (dsl_sync_task(dsname, spa_keystore_rewrap_check, spa_keystore_rewrap_sync, &skra, 0, ZFS_SPACE_CHECK_NORMAL));
@@ -966,6 +965,59 @@ zfs_keystatus_t dsl_dataset_keystore_keystatus(dsl_dataset_t *ds){
 	dsl_wrapping_key_rele(wkey, FTAG);
 	
 	return ZFS_KEYSTATUS_AVAILABLE;
+}
+
+int dmu_objset_create_encryption_check(dsl_dir_t *pdd, dsl_crypto_params_t *dcp){
+	int ret;
+	dsl_wrapping_key_t *wkey;
+	uint64_t pcrypt;
+	
+	LOG_CRYPTO_PARAMS(dcp);
+	
+	ret = dsl_prop_get_dd(pdd, zfs_prop_to_name(ZFS_PROP_ENCRYPTION), 8, 1, &pcrypt, NULL, B_FALSE);
+	if(ret) return ret;
+	
+	if(dcp->cp_crypt == ZIO_CRYPT_OFF && pcrypt != ZIO_CRYPT_OFF) return SET_ERROR(EINVAL);
+	if(dcp->cp_crypt == ZIO_CRYPT_INHERIT && pcrypt == ZIO_CRYPT_OFF && (dcp->cp_salt || dcp->cp_keysource || dcp->cp_wkey)) return SET_ERROR(EINVAL);
+	if(dcp->cp_crypt == ZIO_CRYPT_OFF && (dcp->cp_salt || dcp->cp_keysource || dcp->cp_wkey)) return SET_ERROR(EINVAL);
+	if(dcp->cp_crypt != ZIO_CRYPT_INHERIT && dcp->cp_crypt != ZIO_CRYPT_OFF && pcrypt == ZIO_CRYPT_OFF && !dcp->cp_keysource) return SET_ERROR(EINVAL);
+	if(dcp->cp_cmd) return SET_ERROR(EINVAL);
+	
+	if(!dcp->cp_wkey && pcrypt != ZIO_CRYPT_OFF){
+		ret = spa_keystore_wkey_hold_ddobj(pdd->dd_pool->dp_spa, pdd->dd_object, FTAG, &wkey);
+		if(ret) return (SET_ERROR(EPERM));
+		
+		dsl_wrapping_key_rele(wkey, FTAG);
+	}
+	
+	return 0;
+}
+
+int dmu_objset_clone_encryption_check(dsl_dir_t *pdd, dsl_dir_t *odd, dsl_crypto_params_t *dcp){
+	int ret;
+	dsl_wrapping_key_t *wkey;
+	uint64_t pcrypt = 0, ocrypt = 0;
+	
+	LOG_CRYPTO_PARAMS(dcp);
+	
+	ret = dsl_prop_get_dd(pdd, zfs_prop_to_name(ZFS_PROP_ENCRYPTION), 8, 1, &pcrypt, NULL, B_FALSE);
+	if(ret) return ret;
+	
+	ret = dsl_prop_get_dd(odd, zfs_prop_to_name(ZFS_PROP_ENCRYPTION), 8, 1, &ocrypt, NULL, B_FALSE);
+	if(ret) return ret;
+	
+	if(dcp->cp_crypt != ZIO_CRYPT_INHERIT) return SET_ERROR(EINVAL);
+	if(pcrypt != ZIO_CRYPT_OFF && ocrypt == ZIO_CRYPT_OFF) return SET_ERROR(EINVAL);
+	if(dcp->cp_cmd && dcp->cp_cmd != ZFS_IOC_CRYPTO_ADD_KEY) return SET_ERROR(EINVAL);
+	
+	if(!dcp->cp_wkey && pcrypt != ZIO_CRYPT_OFF){
+		ret = spa_keystore_wkey_hold_ddobj(pdd->dd_pool->dp_spa, pdd->dd_object, FTAG, &wkey);
+		if(ret) return (SET_ERROR(EPERM));
+		
+		dsl_wrapping_key_rele(wkey, FTAG);
+	}
+	
+	return 0;
 }
 
 uint64_t dsl_keychain_create_sync(uint64_t crypt, dsl_wrapping_key_t *wkey, dmu_tx_t *tx){
