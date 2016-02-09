@@ -1572,7 +1572,7 @@ dsl_scan_sync(dsl_pool_t *dp, dmu_tx_t *tx)
 		if (dp->dp_leak_dir == NULL) {
 			rrw_enter(&dp->dp_config_rwlock, RW_WRITER, FTAG);
 			(void) dsl_dir_create_sync(dp, dp->dp_root_dir,
-			    LEAK_DIR_NAME, NULL, tx);
+			    LEAK_DIR_NAME, tx);
 			VERIFY0(dsl_pool_open_special_dir(dp,
 			    LEAK_DIR_NAME, &dp->dp_leak_dir));
 			rrw_exit(&dp->dp_config_rwlock, FTAG);

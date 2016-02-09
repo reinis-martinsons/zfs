@@ -29,16 +29,17 @@
 #include <sys/refcount.h>
 #include <sys/crypto/api.h>
 #include <sys/nvpair.h>
+#include <sys/avl.h>
 
 #ifdef _KERNEL
 	#define LOG_DEBUG(fmt, args...) printk(KERN_DEBUG "debug: %s: %s %d: " fmt "\n", __FILE__, __FUNCTION__, __LINE__, ## args)
 	#define LOG_ERROR(error, fmt, args...) printk(KERN_ERR "error: %s: %s %d: " fmt ": %d\n",  __FILE__, __FUNCTION__, __LINE__, ## args, error)
-	#define PRINT_ZKEY(key, fmt, args...) printk(KERN_DEBUG "debug: " fmt ": crypt = %d, tmpl = %p, refcount = %d\n", ## args, (int)key->zk_crypt, key->zk_ctx_tmpl, (int)refcount_count(&key->zk_refcnt))
+	#define LOG_CRYPTO_PARAMS(dcp) LOG_DEBUG("cp: crypt = %llu, wkey = 0x%p", (unsigned long long)(dcp)->cp_crypt, (dcp)->cp_wkey)
 	#define dump_stack() spl_dumpstack()
 #else
 	#define LOG_DEBUG(fmt, args...)
 	#define LOG_ERROR(error, fmt, args...)
-	#define PRINT_ZKEY(key, fmt, args...)
+	#define LOG_CRYPTO_PARAMS(dcp)
 	#define dump_stack()
 #endif
 
@@ -70,6 +71,8 @@ typedef enum zio_encrypt {
 #define	ZIO_CRYPT_ON_VALUE	ZIO_CRYPT_AES_256_CCM
 #define	ZIO_CRYPT_DEFAULT	ZIO_CRYPT_OFF
 
+#define WRAPPING_KEY_LEN 32
+
 typedef enum zio_crypt_type {
 	ZIO_CRYPT_TYPE_NONE = 0,
 	ZIO_CRYPT_TYPE_CCM,
@@ -78,32 +81,46 @@ typedef enum zio_crypt_type {
 
 //table of supported crypto algorithms, modes and keylengths.
 typedef struct zio_crypt_info {
-	crypto_mech_name_t	ci_mechname;
-	zio_encrypt_type_t	ci_crypt_type;
-	size_t			ci_keylen;
-	size_t			ci_ivlen;
-	size_t			ci_maclen;
-	size_t			ci_zil_maclen;
-	char			*ci_name;
+	crypto_mech_name_t	ci_mechname; //mechanism name, needed by ICP
+	zio_encrypt_type_t	ci_crypt_type; //cipher mode type (GCM, CCM)
+	size_t	ci_keylen; //length of the encryption key
+	size_t	ci_ivlen; //length of the IV paramter
+	size_t	ci_maclen; //length of the output MAC parameter
+	size_t	ci_zil_maclen; //length of the the ouput MAC parameter for ZIL blocks
+	char	*ci_name; //human-readable name of the encryption alforithm
 } zio_crypt_info_t;
 
 extern zio_crypt_info_t zio_crypt_table[ZIO_CRYPT_FUNCTIONS];
 
 //in memory representation of an unwrapped key that is loaded into memory
 typedef struct zio_crypt_key {
-	enum zio_encrypt zk_crypt; //encryption algorithm
+	zio_encrypt_t zk_crypt; //encryption algorithm
 	crypto_key_t zk_key; //illumos crypto api key representation
 	crypto_ctx_template_t zk_ctx_tmpl; //private data for illumos crypto api
-	refcount_t zk_refcnt; //refcount
 } zio_crypt_key_t;
 
-void zio_crypt_key_hold(zio_crypt_key_t *key, void *tag);
-void zio_crypt_key_rele(zio_crypt_key_t *key, void *tag);
-int zio_crypt_key_create(uint64_t crypt, uint8_t *keydata, void *tag, zio_crypt_key_t **key_out);
-int zio_crypt_wkey_create_nvlist(nvlist_t *props, void *tag, zio_crypt_key_t **key_out);
+//in memory representation of a wrapping key
+typedef struct dsl_wrapping_key {
+	avl_node_t wk_avl_link; //link into the keystore's tree of wrapping keys
+	crypto_key_t wk_key; //actual wrapping key
+	refcount_t wk_refcnt; //refcount of number of keychains holding this struct (not freed on zero)
+	uint64_t wk_ddobj; //dsl directory object that owns this wrapping key (local keysource property)
+} dsl_wrapping_key_t;
 
-int zio_do_crypt(boolean_t encrypt, zio_crypt_key_t *key, uint8_t *ivbuf, uint_t ivlen, uint_t maclen, uint8_t *plainbuf, uint8_t *cipherbuf, uint_t datalen);
-#define zio_encrypt(wkey, iv, ivlen, maclen, plaindata, cipherdata, keylen) zio_do_crypt(B_TRUE, wkey, iv, ivlen, maclen, plaindata, cipherdata, keylen)
-#define zio_decrypt(wkey, iv, ivlen, maclen, plaindata, cipherdata, keylen) zio_do_crypt(B_FALSE, wkey, iv, ivlen, maclen, plaindata, cipherdata, keylen)
+typedef struct dsl_crypto_params {
+	uint64_t cp_crypt;
+	dsl_wrapping_key_t *cp_wkey;
+} dsl_crypto_params_t;
+
+void zio_crypt_key_destroy(zio_crypt_key_t *key);
+int zio_crypt_key_init(uint64_t crypt, uint8_t *keydata, zio_crypt_key_t *key);
+void dsl_wrapping_key_hold(dsl_wrapping_key_t *wkey, void *tag);
+void dsl_wrapping_key_rele(dsl_wrapping_key_t *wkey, void *tag);
+void dsl_wrapping_key_free(dsl_wrapping_key_t *wkey);
+int dsl_wrapping_key_create(uint8_t *wkeydata, dsl_wrapping_key_t **wkey_out);
+int dsl_crypto_params_init_nvlist(nvlist_t *props, dsl_crypto_params_t *dcp);
+int zio_do_crypt(boolean_t encrypt, uint64_t crypt, crypto_key_t *key, crypto_ctx_template_t tmpl, uint8_t *ivbuf, uint_t ivlen, uint_t maclen, uint8_t *plainbuf, uint8_t *cipherbuf, uint_t datalen);
+#define zio_encrypt(crypt, key, tmpl, iv, ivlen, maclen, plaindata, cipherdata, keylen) zio_do_crypt(B_TRUE, crypt, key, tmpl, iv, ivlen, maclen, plaindata, cipherdata, keylen)
+#define zio_decrypt(crypt, key, tmpl, iv, ivlen, maclen, plaindata, cipherdata, keylen) zio_do_crypt(B_FALSE, crypt, key, tmpl, iv, ivlen, maclen, plaindata, cipherdata, keylen)
 
 #endif

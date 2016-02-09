@@ -3114,7 +3114,7 @@ zfs_ioc_create(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 	int32_t type32;
 	dmu_objset_type_t type;
 	boolean_t is_insensitive = B_FALSE;
-	zio_crypt_key_t *crypto_key;
+	dsl_crypto_params_t dcp = { 0 };
 
 	if (nvlist_lookup_int32(innvl, "type", &type32) != 0)
 		return (SET_ERROR(EINVAL));
@@ -3185,18 +3185,21 @@ zfs_ioc_create(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 		}
 	}
 	
-	error = zio_crypt_wkey_create_nvlist(nvprops, FTAG, &crypto_key);
-	if(error != 0){
+	error = dsl_crypto_params_init_nvlist(nvprops, &dcp);
+	if (error != 0) {
 		nvlist_free(zct.zct_zplprops);
 		return (error);
 	}
+	
+	LOG_DEBUG("\n\nzfs create");
+	LOG_CRYPTO_PARAMS(&dcp);
 
 	error = dmu_objset_create(fsname, type,
-	    is_insensitive ? DS_FLAG_CI_DATASET : 0, crypto_key, cbfunc, &zct);
+	    is_insensitive ? DS_FLAG_CI_DATASET : 0, &dcp, cbfunc, &zct);
 	
 	nvlist_free(zct.zct_zplprops);
-	if(crypto_key)
-		zio_crypt_key_rele(crypto_key, FTAG);
+	if(dcp.cp_wkey && error != 0)
+		dsl_wrapping_key_free(dcp.cp_wkey);
 
 	/*
 	 * It would be nice to do this atomically.
@@ -3239,6 +3242,8 @@ zfs_ioc_clone(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 	if (strchr(fsname, '@') ||
 	    strchr(fsname, '%'))
 		return (SET_ERROR(EINVAL));
+		
+	//FIXME
 
 	if (dataset_namecheck(origin_name, NULL, NULL) != 0)
 		return (SET_ERROR(EINVAL));
@@ -5284,45 +5289,29 @@ out:
 static int
 zfs_ioc_crypto(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl) {
 	int ret = 0;
+	dsl_crypto_params_t dcp = { 0 };
 	uint64_t crypto_cmd;
 	uint8_t *wkeydata;
 	uint_t wkeydata_len;
 	nvlist_t *args;
 	dsl_pool_t *dp = NULL;
-	dsl_dataset_t *ds = NULL;
-	boolean_t held = B_FALSE;
-	
-	ret = nvlist_lookup_uint64(innvl, "crypto_cmd", &crypto_cmd);
-	if (ret)
-		return SET_ERROR(EINVAL);
 	
 	ret = dsl_pool_hold(dsname, FTAG, &dp);
 	if (ret)
 		return (ret);
 	
 	if (!spa_feature_is_enabled(dp->dp_spa, SPA_FEATURE_ENCRYPTION)) {
-		ret = SET_ERROR(EINVAL);
-		goto error;
-	}
-	
-	if (crypto_cmd == ZFS_IOC_CRYPTO_LOAD_KEY || 
-		crypto_cmd == ZFS_IOC_CRYPTO_UNLOAD_KEY) {
-		ret = dsl_dataset_hold(dp, dsname, FTAG, &ds);
-		held = B_TRUE;
-	} else {
-		/*
-		 * adding and rewrapping both use dsl_sync_task which holds the pool
-		 * so we must drop our hold here
-		 */
 		dsl_pool_rele(dp, FTAG);
-		held = B_FALSE;
+		return SET_ERROR(EINVAL);
 	}
 	
-	if (ret) {
-		LOG_ERROR(ret, "");
-		ds = NULL;
-		goto error;
-	}
+	dsl_pool_rele(dp, FTAG);
+	
+	ret = nvlist_lookup_uint64(innvl, "crypto_cmd", &crypto_cmd);
+	if (ret)
+		return SET_ERROR(EINVAL);
+	
+	LOG_DEBUG("\n\nzfs key: crypto_cmd = %u", (unsigned)crypto_cmd);
 	
 	switch(crypto_cmd){
 	case ZFS_IOC_CRYPTO_LOAD_KEY:
@@ -5339,21 +5328,20 @@ zfs_ioc_crypto(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl) {
 			goto error;
 		}
 				
-		ret = spa_keystore_load(dp->dp_spa,
-			dsl_dir_phys(ds->ds_dir)->dd_keychain_obj, wkeydata, wkeydata_len);
+		ret = spa_keystore_load_wkey(dp->dp_spa, dsname, wkeydata,
+			wkeydata_len);
 		if (ret)
 			goto error;
 		
 		break;
 	case ZFS_IOC_CRYPTO_UNLOAD_KEY:
-		ret = spa_keystore_unload(dp->dp_spa,
-			dsl_dir_phys(ds->ds_dir)->dd_keychain_obj);
+		ret = spa_keystore_unload_wkey(dp->dp_spa, dsname);
 		if (ret)
 			goto error;
 		
 		break;
 	case ZFS_IOC_CRYPTO_ADD_KEY:
-		ret = dsl_keychain_add_key(dsname);
+		ret = spa_keystore_keychain_add_key(dp->dp_spa, dsname);
 		if (ret)
 			goto error;
 		
@@ -5365,11 +5353,13 @@ zfs_ioc_crypto(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl) {
 			goto error;
 		}
 		
-		ret = dsl_keychain_rewrap_nvlist(dsname, args);
-		if (ret) {
-			ret = SET_ERROR(EINVAL);
+		ret = dsl_crypto_params_init_nvlist(args, &dcp);
+		if (ret)
 			goto error;
-		}
+		
+		ret = spa_keystore_rewrap(dp->dp_spa, dsname, dcp.cp_wkey);
+		if (ret)
+			goto error;
 		
 		/* this should probably be atomic */
 		VERIFY0(zfs_set_prop_nvlist(dsname, ZPROP_SRC_LOCAL, args, NULL));
@@ -5379,21 +5369,13 @@ zfs_ioc_crypto(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl) {
 		ret = SET_ERROR(EINVAL);
 		goto error;
 	}
-
-	if (held) {
-		dsl_dataset_rele(ds, FTAG);
-		dsl_pool_rele(dp, FTAG);
-	}
 	
 	return (0);
 	
 error:
-	if (held) {
-		if (ds) 
-			dsl_dataset_rele(ds, FTAG);
-		dsl_pool_rele(dp, FTAG);
-	}
-	
+	if (dcp.cp_wkey)
+		dsl_wrapping_key_free(dcp.cp_wkey);
+		
 	return (ret);
 }
 

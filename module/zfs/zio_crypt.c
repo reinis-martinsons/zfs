@@ -26,38 +26,23 @@
 #include <sys/zio_crypt.h>
 #include <sys/fs/zfs.h>
 
-void zio_crypt_key_hold(zio_crypt_key_t *key, void *tag){
-	refcount_add(&key->zk_refcnt, tag);
-}
-
-void zio_crypt_key_rele(zio_crypt_key_t *key, void *tag){
-	if(!refcount_remove(&key->zk_refcnt, tag)){
+void zio_crypt_key_destroy(zio_crypt_key_t *key){
+	if(key->zk_ctx_tmpl) crypto_destroy_ctx_template(key->zk_ctx_tmpl);
+	if(key->zk_key.ck_data){
 		bzero(key->zk_key.ck_data, BITS_TO_BYTES(key->zk_key.ck_length));
 		kmem_free(key->zk_key.ck_data, BITS_TO_BYTES(key->zk_key.ck_length));
-		crypto_destroy_ctx_template(key->zk_ctx_tmpl);
-		kmem_free(key, sizeof(zio_crypt_key_t));
 	}
 }
 
-int zio_crypt_key_create(uint64_t crypt, uint8_t *keydata, void *tag, zio_crypt_key_t **key_out){
+int zio_crypt_key_init(uint64_t crypt, uint8_t *keydata, zio_crypt_key_t *key){
 	int ret;
-	zio_crypt_key_t *key = NULL;
 	crypto_mechanism_t mech;
 	uint64_t keydata_len;
 	
 	ASSERT(crypt < ZIO_CRYPT_FUNCTIONS);
 	
-	*key_out = NULL;
-	
 	//get the key length from the crypt table (the buffer should be at least this size)
 	keydata_len = zio_crypt_table[crypt].ci_keylen;
-	
-	//allocate the key
-	key = kmem_zalloc(sizeof(zio_crypt_key_t), KM_SLEEP);
-	if(!key){
-		ret = ENOMEM;
-		goto error;
-	}
 	
 	//allocate the key data's new buffer
 	key->zk_key.ck_data = kmem_alloc(keydata_len, KM_SLEEP);
@@ -83,33 +68,80 @@ int zio_crypt_key_create(uint64_t crypt, uint8_t *keydata, void *tag, zio_crypt_
 		goto error;
 	}
 	
-	//initialize the refount
-	refcount_create(&key->zk_refcnt);
-	refcount_add(&key->zk_refcnt, tag);
-	
-	*key_out = key;
 	return 0;
 	
 error:
 	LOG_ERROR(ret, "");
 	if(key->zk_key.ck_data) kmem_free(key->zk_key.ck_data, keydata_len);
-	if(key) kmem_free(key, sizeof(zio_crypt_key_t));
 	
-	*key_out = NULL;
 	return ret;
 }
 
-int zio_crypt_wkey_create_nvlist(nvlist_t *props, void *tag, zio_crypt_key_t **key_out){
+void dsl_wrapping_key_hold(dsl_wrapping_key_t *wkey, void *tag){
+	(void)refcount_add(&wkey->wk_refcnt, tag);
+	LOG_DEBUG("wkey hold 0x%p: refcount = %d", wkey, (int)refcount_count(&wkey->wk_refcnt));
+}
+
+void dsl_wrapping_key_rele(dsl_wrapping_key_t *wkey, void *tag){
+	(void)refcount_remove(&wkey->wk_refcnt, tag);
+	LOG_DEBUG("wkey rele 0x%p: refcount = %d", wkey, (int)refcount_count(&wkey->wk_refcnt));
+}
+
+void dsl_wrapping_key_free(dsl_wrapping_key_t *wkey){
+	VERIFY0(refcount_count(&wkey->wk_refcnt));
+	
+	if(wkey->wk_key.ck_data){
+		bzero(wkey->wk_key.ck_data, BITS_TO_BYTES(wkey->wk_key.ck_length));
+		kmem_free(wkey->wk_key.ck_data, BITS_TO_BYTES(wkey->wk_key.ck_length));
+	}
+	
+	refcount_destroy(&wkey->wk_refcnt);
+	kmem_free(wkey, sizeof(dsl_wrapping_key_t));
+}
+
+int dsl_wrapping_key_create(uint8_t *wkeydata, dsl_wrapping_key_t **wkey_out){
 	int ret;
-	zio_crypt_key_t *key = NULL;
-	boolean_t crypt_exists = B_TRUE, keydata_exists = B_TRUE, keysource_exists = B_TRUE; 
-	uint64_t crypt;
+	dsl_wrapping_key_t *wkey;
+	
+	//allocate the wrapping key
+	wkey = kmem_alloc(sizeof(dsl_wrapping_key_t), KM_SLEEP);
+	if(!wkey) return SET_ERROR(ENOMEM);
+	
+	//allocate and initialize the underlying crypto key
+	wkey->wk_key.ck_data = kmem_alloc(WRAPPING_KEY_LEN, KM_SLEEP);
+	if(!wkey->wk_key.ck_data){
+		ret = ENOMEM;
+		goto error;
+	}
+	
+	wkey->wk_key.ck_format = CRYPTO_KEY_RAW;
+	wkey->wk_key.ck_length = BYTES_TO_BITS(WRAPPING_KEY_LEN);
+	
+	//copy the data
+	bcopy(wkeydata, wkey->wk_key.ck_data, WRAPPING_KEY_LEN);
+	
+	//initialize the refcount
+	refcount_create(&wkey->wk_refcnt);
+	
+	*wkey_out = wkey;
+	return 0;
+	
+error:
+	dsl_wrapping_key_free(wkey);
+	
+	*wkey_out = NULL;
+	return ret;
+}
+
+int dsl_crypto_params_init_nvlist(nvlist_t *props, dsl_crypto_params_t *dcp){
+	int ret;
+	dsl_wrapping_key_t *wkey = NULL;
+	boolean_t crypt_exists = B_TRUE, keydata_exists = B_TRUE;
+	boolean_t keysource_exists = B_TRUE, salt_exists = B_TRUE; 
 	uint8_t *wkeydata;
 	uint_t wkeydata_len;
 	char *keysource;
-	uint64_t salt;
-	
-	*key_out = NULL;
+	uint64_t salt, crypt = 0;
 	
 	//get relevent properties from the nvlist
 	ret = nvlist_lookup_uint64(props, zfs_prop_to_name(ZFS_PROP_ENCRYPTION), &crypt);
@@ -121,42 +153,55 @@ int zio_crypt_wkey_create_nvlist(nvlist_t *props, void *tag, zio_crypt_key_t **k
 	ret = nvlist_lookup_uint8_array(props, "wkeydata", &wkeydata, &wkeydata_len);
 	if(ret) keydata_exists = B_FALSE;
 	
-	//no encryption properties is valid, results in a NULL keychain
-	if(!crypt_exists && !keydata_exists && !keysource_exists) return 0;
-	
-	//all 3 properties must be present or not
-	if(!(crypt_exists && keydata_exists && keysource_exists)) return EINVAL;
-	
 	//salt should be set each time
 	ret = nvlist_lookup_uint64(props, zfs_prop_to_name(ZFS_PROP_SALT), &salt);
-	if(ret) return EINVAL;
+	if(ret) salt_exists = B_FALSE;
 	
-	//wkeydata len must match the desired encryption algorithm
-	if(zio_crypt_table[crypt].ci_keylen != wkeydata_len) return EINVAL;
+	LOG_DEBUG("%d %d %d %d", (int)crypt_exists, (int)keysource_exists, (int)keydata_exists, (int)salt_exists);
 	
-	//create the wrapping key now that we have parsed and verified the parameters
-	ret = zio_crypt_key_create(crypt, wkeydata, tag, &key);
-	if(ret) goto error;
-
-	//remove wkeydata from props since it should not be used again
-	bzero(wkeydata, wkeydata_len);
-	ret = nvlist_remove_all(props, "wkeydata");
-	if(ret) goto error;
+	//no parameters are valid; results in inherited crypto settings
+	if(!crypt_exists && !keysource_exists && !keydata_exists & !salt_exists){
+		dcp->cp_crypt = ZIO_CRYPT_INHERIT;
+		dcp->cp_wkey = NULL;
+		return 0;
+	}
 	
-	*key_out = key;
+	//check wrapping key length
+	if(wkeydata_len != WRAPPING_KEY_LEN) return EINVAL; 
+	
+	//keydata requires keysource
+	if(keysource_exists && !keydata_exists) return EINVAL;
+		
+	//create the wrapping key from the raw data
+	if(keydata_exists){
+		//create the wrapping key now that we have parsed and verified the parameters
+		ret = dsl_wrapping_key_create(wkeydata, &wkey);
+		if(ret) goto error;
+		
+		//remove wkeydata from props since it should not be used again
+		bzero(wkeydata, wkeydata_len);
+		ret = nvlist_remove_all(props, "wkeydata");
+		if(ret){
+			ret = SET_ERROR(EIO);
+			goto error;
+		}
+	}
+	
+	dcp->cp_crypt = crypt;
+	dcp->cp_wkey = wkey;
 	return 0;
 	
 error:
 	LOG_ERROR(ret, "");
-	if(key) zio_crypt_key_rele(key, tag);
+	if(wkey) dsl_wrapping_key_free(wkey);
 
-	*key_out = NULL;
+	dcp->cp_crypt = ZIO_CRYPT_INHERIT;
+	dcp->cp_wkey = NULL; 
 	return ret;
 }
 
-int zio_do_crypt(boolean_t encrypt, zio_crypt_key_t *key, uint8_t *ivbuf, uint_t ivlen, uint_t maclen, uint8_t *plainbuf, uint8_t *cipherbuf, uint_t datalen){
+int zio_do_crypt(boolean_t encrypt, uint64_t crypt, crypto_key_t *key, crypto_ctx_template_t tmpl, uint8_t *ivbuf, uint_t ivlen, uint_t maclen, uint8_t *plainbuf, uint8_t *cipherbuf, uint_t datalen){
 	int ret;
-	uint64_t crypt = key->zk_crypt;
 	crypto_data_t plaindata, cipherdata;
 	CK_AES_CCM_PARAMS ccmp;
 	CK_AES_GCM_PARAMS gcmp;
@@ -217,8 +262,8 @@ int zio_do_crypt(boolean_t encrypt, zio_crypt_key_t *key, uint8_t *ivbuf, uint_t
 	cipherdata.cd_raw.iov_len = datalen + maclen;
 	
 	//perform the actual encryption
-	if(encrypt)	ret = crypto_encrypt(&mech, &plaindata, &key->zk_key, key->zk_ctx_tmpl, &cipherdata, NULL);
-	else ret = crypto_decrypt(&mech, &cipherdata, &key->zk_key, key->zk_ctx_tmpl, &plaindata, NULL);
+	if(encrypt)	ret = crypto_encrypt(&mech, &plaindata, key, tmpl, &cipherdata, NULL);
+	else ret = crypto_decrypt(&mech, &cipherdata, key, tmpl, &plaindata, NULL);
 	
 	if(ret != CRYPTO_SUCCESS){
 		LOG_ERROR(ret, "");
