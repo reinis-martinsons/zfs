@@ -883,7 +883,8 @@ error_unlock:
 	rw_exit(&spa->spa_keystore.sk_kr_lock);
 error:
 	LOG_ERROR(ret, "");
-	if(kr) kmem_free(kr, sizeof(dsl_keychain_record_t));
+	if(kr->kr_keychain) spa_keystore_keychain_rele(spa, kr->kr_keychain, kr);
+	kmem_free(kr, sizeof(dsl_keychain_record_t));
 	
 	return ret;
 }
