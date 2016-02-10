@@ -98,7 +98,7 @@ zfs_keystatus_t dsl_dataset_keystore_keystatus(dsl_dataset_t *ds);
 int dmu_objset_create_encryption_check(dsl_dir_t *pdd, dsl_crypto_params_t *dcp);
 int dmu_objset_clone_encryption_check(dsl_dir_t *pdd, dsl_dir_t *odd, dsl_crypto_params_t *dcp);
 uint64_t dsl_keychain_create_sync(uint64_t crypt, dsl_wrapping_key_t *wkey, dmu_tx_t *tx);
-uint64_t dsl_keychain_clone_sync(dsl_dir_t *orig_dd, dsl_wrapping_key_t *wkey, dmu_tx_t *tx);
+uint64_t dsl_keychain_clone_sync(dsl_dir_t *orig_dd, dsl_wrapping_key_t *wkey, boolean_t add_key, dmu_tx_t *tx);
 void dsl_keychain_destroy_sync(uint64_t kcobj, dmu_tx_t *tx);
 
 #endif

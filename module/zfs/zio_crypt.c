@@ -163,7 +163,10 @@ int dsl_crypto_params_init_nvlist(nvlist_t *props, dsl_crypto_params_t *dcp){
 	LOG_DEBUG("%d %d %d %d %d", (int)crypt_exists, (int)keysource_exists, (int)wkeydata_exists, (int)salt_exists, (int)cmd_exists);
 	
 	//no parameters are valid; results in inherited crypto settings
-	if(!crypt_exists && !keysource_exists && !wkeydata_exists & !salt_exists) goto out;
+	if(!crypt_exists && !keysource_exists && !wkeydata_exists & !salt_exists){
+		ret = 0;
+		goto out;
+	}
 	
 	//check wrapping key length
 	if(wkeydata_len != WRAPPING_KEY_LEN) return EINVAL; 

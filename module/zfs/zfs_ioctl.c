@@ -3185,13 +3185,14 @@ zfs_ioc_create(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 		}
 	}
 	
+	LOG_DEBUG("\n\nzfs create");
+	
 	error = dsl_crypto_params_init_nvlist(nvprops, &dcp);
 	if (error != 0) {
 		nvlist_free(zct.zct_zplprops);
 		return (error);
 	}
 	
-	LOG_DEBUG("\n\nzfs create");
 	LOG_CRYPTO_PARAMS(&dcp);
 
 	error = dmu_objset_create(fsname, type,
@@ -3247,14 +3248,20 @@ zfs_ioc_clone(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 	if (dataset_namecheck(origin_name, NULL, NULL) != 0)
 		return (SET_ERROR(EINVAL));
 	
+	LOG_DEBUG("\n\nzfs clone");
+	
 	error = dsl_crypto_params_init_nvlist(nvprops, &dcp);
 	if (error != 0)
 		return (error);
+	
+	LOG_CRYPTO_PARAMS(&dcp);
 	
 	error = dmu_objset_clone(fsname, origin_name, &dcp);
 	
 	if(dcp.cp_wkey && error != 0)
 		dsl_crypto_params_destroy(&dcp);
+	
+	LOG_DEBUG("post clone");
 
 	/*
 	 * It would be nice to do this atomically.
@@ -5310,6 +5317,9 @@ zfs_ioc_crypto(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl) {
 	
 	dsl_pool_rele(dp, FTAG);
 	
+	if (strchr(dsname, '@') || strchr(dsname, '%'))
+		return (SET_ERROR(EINVAL));
+	
 	ret = nvlist_lookup_uint64(innvl, "crypto_cmd", &crypto_cmd);
 	if (ret)
 		return SET_ERROR(EINVAL);
@@ -5359,9 +5369,6 @@ zfs_ioc_crypto(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl) {
 		ret = spa_keystore_rewrap(dp->dp_spa, dsname, &dcp);
 		if (ret)
 			goto error;
-		
-		/* this should probably be atomic */
-		VERIFY0(zfs_set_prop_nvlist(dsname, ZPROP_SRC_LOCAL, args, NULL));
 	
 		break;
 	default:

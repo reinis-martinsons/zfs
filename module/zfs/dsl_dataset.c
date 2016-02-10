@@ -768,6 +768,7 @@ dsl_dataset_create_sync_dd(dsl_dir_t *dd, dsl_dataset_t *origin,
 	dsl_dataset_phys_t *dsphys;
 	uint64_t dsobj, crypt;
 	dsl_wrapping_key_t *wkey;
+	boolean_t add_key;
 	objset_t *mos = dp->dp_meta_objset;
 	
 	if (origin == NULL)
@@ -864,10 +865,13 @@ dsl_dataset_create_sync_dd(dsl_dir_t *dd, dsl_dataset_t *origin,
 		if (dcp == NULL) {
 			crypt = ZIO_CRYPT_INHERIT;
 			wkey = NULL;
+			add_key = B_FALSE;
 		} else {
 			LOG_CRYPTO_PARAMS(dcp);
 			crypt = dcp->cp_crypt;
 			wkey = dcp->cp_wkey;
+			add_key = (dcp->cp_cmd == ZFS_IOC_CRYPTO_ADD_KEY) ? 
+				B_TRUE : B_FALSE;
 		}
 
 		if (crypt == ZIO_CRYPT_INHERIT)
@@ -897,7 +901,7 @@ dsl_dataset_create_sync_dd(dsl_dir_t *dd, dsl_dataset_t *origin,
 				wkey->wk_ddobj = dd->dd_object;
 			
 			dsl_dir_phys(dd)->dd_keychain_obj =
-				dsl_keychain_clone_sync(origin->ds_dir, wkey, tx);
+				dsl_keychain_clone_sync(origin->ds_dir, wkey, add_key, tx);
 			
 			if (dcp == NULL || dcp->cp_wkey == NULL)
 				dsl_wrapping_key_rele(wkey, FTAG);

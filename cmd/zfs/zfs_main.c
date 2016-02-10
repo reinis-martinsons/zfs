@@ -641,7 +641,7 @@ static int
 zfs_do_clone(int argc, char **argv)
 {
 	zfs_handle_t *zhp = NULL;
-	boolean_t parents = B_FALSE;
+	boolean_t parents = B_FALSE, add_key = B_FALSE;
 	nvlist_t *props;
 	int ret = 0;
 	int c;
@@ -660,9 +660,7 @@ zfs_do_clone(int argc, char **argv)
 			parents = B_TRUE;
 			break;
 		case 'K':
-			if (nvlist_add_uint64(props, "crypto_cmd",
-				ZFS_IOC_CRYPTO_ADD_KEY) != 0)
-				nomem();
+			add_key = B_TRUE;
 			break;
 		case '?':
 			(void) fprintf(stderr, gettext("invalid option '%c'\n"),
@@ -709,7 +707,7 @@ zfs_do_clone(int argc, char **argv)
 	}
 
 	/* pass to libzfs */
-	ret = zfs_clone(zhp, argv[1], props);
+	ret = zfs_clone(zhp, argv[1], props, add_key);
 
 	/* create the mountpoint if necessary */
 	if (ret == 0) {

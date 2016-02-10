@@ -350,12 +350,12 @@ out:
 	return (ret);
 }
 
-int zfs_crypto_clone(libzfs_handle_t *hdl, zfs_handle_t *origin_zhp, nvlist_t *props, char *parent_name) {
+int zfs_crypto_clone(libzfs_handle_t *hdl, zfs_handle_t *origin_zhp, nvlist_t *props, char *parent_name, boolean_t add_key) {
 	int ret;
 	char errbuf[1024];
 	char *keysource = NULL;
 	zfs_handle_t *pzhp = NULL;
-	uint64_t crypt, pcrypt, ocrypt, crypto_cmd;
+	uint64_t crypt, pcrypt, ocrypt;
 	
 	(void) snprintf(errbuf, sizeof (errbuf), dgettext(TEXT_DOMAIN, "Encryption clone error"));
 
@@ -375,11 +375,6 @@ int zfs_crypto_clone(libzfs_handle_t *hdl, zfs_handle_t *origin_zhp, nvlist_t *p
 	if (ret)
 		keysource = NULL;
 	
-	/* lookup crypto_cmd */
-	ret = nvlist_lookup_uint64(props, zfs_prop_to_name(ZFS_PROP_ENCRYPTION), &crypto_cmd);
-	if (ret)
-		crypto_cmd = 0;
-	
 	/* crypt should not be set */
 	ret = nvlist_lookup_uint64(props, zfs_prop_to_name(ZFS_PROP_ENCRYPTION), &crypt);
 	if (ret == 0) {
@@ -397,7 +392,7 @@ int zfs_crypto_clone(libzfs_handle_t *hdl, zfs_handle_t *origin_zhp, nvlist_t *p
 	
 	/* if neither parent nor the origin is encrypted check to makre sure no encryption parameters are set */
 	if (pcrypt == ZIO_CRYPT_OFF && ocrypt == ZIO_CRYPT_OFF) {
-		if (crypto_cmd || keysource) {
+		if (add_key || keysource) {
 			ret = EINVAL;
 			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN, "Encryption properties may not be set for an unencrypted clone."));
 			goto out;
@@ -417,6 +412,12 @@ int zfs_crypto_clone(libzfs_handle_t *hdl, zfs_handle_t *origin_zhp, nvlist_t *p
 	/* prepare the keysource if needed */
 	if (keysource) {
 		ret = populate_create_encryption_params_nvlist(hdl, keysource, props);
+		if (ret)
+			goto out;
+	}
+	
+	if (add_key) {
+		ret = nvlist_add_uint64(props, "crypto_cmd", ZFS_IOC_CRYPTO_ADD_KEY);
 		if (ret)
 			goto out;
 	}

@@ -634,7 +634,7 @@ error_unlock:
 	return ret;
 }
 
-static int dsl_keychain_check_impl(const char *dsname, dmu_tx_t *tx){
+static int dsl_keychain_check_impl(const char *dsname, boolean_t needs_root, dmu_tx_t *tx){
 	int ret;
 	dsl_dir_t *dd;
 	dsl_keychain_t *kc = NULL;
@@ -656,8 +656,8 @@ static int dsl_keychain_check_impl(const char *dsname, dmu_tx_t *tx){
 	
 	ASSERT(kc->kc_wkey != NULL);
 	
-	//make sure this is an encryption root
-	if(kc->kc_wkey->wk_ddobj != dd->dd_object){
+	//make sure this is an encryption root if it is required
+	if(needs_root && kc->kc_wkey->wk_ddobj != dd->dd_object){
 		ret = SET_ERROR(EINVAL);
 		goto error;
 	}
@@ -676,7 +676,7 @@ error:
 }
 
 static int dsl_keychain_add_key_check(void *arg, dmu_tx_t *tx){
-	return dsl_keychain_check_impl((const char *)arg, tx);
+	return dsl_keychain_check_impl((const char *)arg, B_FALSE, tx);
 }
 
 static void dsl_keychain_add_key_sync(void *arg, dmu_tx_t *tx){
@@ -718,7 +718,7 @@ static int spa_keystore_rewrap_check(void *arg, dmu_tx_t *tx){
 	if(!skra->skra_cp || !skra->skra_cp->cp_wkey) return SET_ERROR(EINVAL);
 	if(skra->skra_cp->cp_cmd) return SET_ERROR(EINVAL);
 	
-	return dsl_keychain_check_impl(skra->skra_dsname, tx);
+	return dsl_keychain_check_impl(skra->skra_dsname, B_TRUE, tx);
 }
 
 static int spa_keystore_rewrap_sync_impl(uint64_t root_ddobj, uint64_t ddobj, dsl_wrapping_key_t *wkey, dmu_tx_t *tx){
@@ -797,25 +797,25 @@ error:
 }
 
 static void spa_keystore_rewrap_sync(void *arg, dmu_tx_t *tx){
-	dsl_dir_t *dd;
+	dsl_dataset_t *ds;
 	avl_index_t where;
 	dsl_pool_t *dp = dmu_tx_pool(tx);
 	spa_t *spa = dp->dp_spa;
 	spa_keystore_rewrap_args_t *skra = arg;
-	const char *dsname = skra->skra_dsname;
 	dsl_wrapping_key_t *wkey = skra->skra_cp->cp_wkey;
 	dsl_wrapping_key_t *found_wkey;
+	const char *keysource = skra->skra_cp->cp_keysource;
 	
 	//create and initialize the wrapping key
-	VERIFY0(dsl_dir_hold(dp, dsname, FTAG, &dd, NULL));
-	wkey->wk_ddobj = dd->dd_object;
+	VERIFY0(dsl_dataset_hold(dp, skra->skra_dsname, FTAG, &ds));
+	wkey->wk_ddobj = ds->ds_dir->dd_object;
 	
 	rw_enter(&spa->spa_keystore.sk_wkeys_lock, RW_WRITER);
 
-	//recurse through all children under dd and rewrap their keychain
-	VERIFY0(spa_keystore_rewrap_sync_impl(dd->dd_object, dd->dd_object, wkey, tx));
+	//recurse through all children under the dd and rewrap their keychain
+	VERIFY0(spa_keystore_rewrap_sync_impl(ds->ds_dir->dd_object, ds->ds_dir->dd_object, wkey, tx));
 	
-	LOG_DEBUG("searching for key to replace ddobj = %u", (unsigned)dd->dd_object);
+	LOG_DEBUG("searching for key to replace ddobj = %u", (unsigned)ds->ds_dir->dd_object);
 	
 	//all references to the old wkey should be released now, replace the wrapping key
 	found_wkey = avl_find(&spa->spa_keystore.sk_wkeys, wkey, NULL);
@@ -830,7 +830,11 @@ static void spa_keystore_rewrap_sync(void *arg, dmu_tx_t *tx){
 	
 	rw_exit(&spa->spa_keystore.sk_wkeys_lock);
 	
-	dsl_dir_rele(dd, FTAG);
+	//set additional properties which can be sent along with this ioctl
+	if(keysource) dsl_prop_set_sync_impl(ds, zfs_prop_to_name(ZFS_PROP_KEYSOURCE), ZPROP_SRC_LOCAL, 1, strlen(keysource) + 1, keysource, tx);
+	dsl_prop_set_sync_impl(ds, zfs_prop_to_name(ZFS_PROP_SALT), ZPROP_SRC_LOCAL, 8, 1, &skra->skra_cp->cp_salt, tx);
+	
+	dsl_dataset_rele(ds, FTAG);
 }
 
 int spa_keystore_rewrap(spa_t *spa, const char *dsname, dsl_crypto_params_t *dcp){
@@ -1005,7 +1009,7 @@ int dmu_objset_clone_encryption_check(dsl_dir_t *pdd, dsl_dir_t *odd, dsl_crypto
 	
 	ret = dsl_prop_get_dd(odd, zfs_prop_to_name(ZFS_PROP_ENCRYPTION), 8, 1, &ocrypt, NULL, B_FALSE);
 	if(ret) return ret;
-	
+
 	if(dcp->cp_crypt != ZIO_CRYPT_INHERIT) return SET_ERROR(EINVAL);
 	if(pcrypt != ZIO_CRYPT_OFF && ocrypt == ZIO_CRYPT_OFF) return SET_ERROR(EINVAL);
 	if(dcp->cp_cmd && dcp->cp_cmd != ZFS_IOC_CRYPTO_ADD_KEY) return SET_ERROR(EINVAL);
@@ -1037,10 +1041,10 @@ uint64_t dsl_keychain_create_sync(uint64_t crypt, dsl_wrapping_key_t *wkey, dmu_
 	return kcobj;
 }
 
-uint64_t dsl_keychain_clone_sync(dsl_dir_t *orig_dd, dsl_wrapping_key_t *wkey, dmu_tx_t *tx){
+uint64_t dsl_keychain_clone_sync(dsl_dir_t *orig_dd, dsl_wrapping_key_t *wkey, boolean_t add_key, dmu_tx_t *tx){
 	uint64_t kcobj;
 	dsl_keychain_t *orig_kc;
-	dsl_keychain_entry_t *kce;
+	dsl_keychain_entry_t *kce, new_kce;
 	spa_t *spa = orig_dd->dd_pool->dp_spa;
 
 	//create the DSL Keychain zap object
@@ -1052,6 +1056,12 @@ uint64_t dsl_keychain_clone_sync(dsl_dir_t *orig_dd, dsl_wrapping_key_t *wkey, d
 	//add all the entries from the old keychain, wrapped with the new wkey
 	for(kce = list_head(&orig_kc->kc_entries); kce; kce = list_next(&orig_kc->kc_entries, kce)){
 		VERIFY0(dsl_keychain_entry_sync(kce, wkey, kcobj, tx));
+	}
+	
+	//add a new key to the keychain if the option is specified
+	if(add_key){
+		VERIFY0(dsl_keychain_entry_init(&new_kce, orig_kc->kc_crypt, tx->tx_txg));
+		VERIFY0(dsl_keychain_entry_sync(&new_kce, wkey, kcobj, tx));
 	}
 	
 	//increment the encryption feature count
