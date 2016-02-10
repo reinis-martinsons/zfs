@@ -329,7 +329,15 @@ int zfs_crypto_create(libzfs_handle_t *hdl, nvlist_t *props, char *parent_name) 
 			goto out;
 		}
 		
-		return (0);
+		ret = 0;
+		goto out;
+	}
+	
+	/* If the parent doesn't have a keysource to inherit we need one provided */
+	if (pcrypt == ZIO_CRYPT_OFF && !keysource) {
+		ret = EINVAL;
+		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN, "Keysource required."));
+		goto out;
 	}
 	
 	/* If a local keysource is provided, this dataset will be a new encryption root. populate encryption params*/
