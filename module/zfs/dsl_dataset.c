@@ -706,27 +706,24 @@ dsl_dataset_tryown(dsl_dataset_t *ds, void *tag)
 	int ret = 0;
 	spa_t *spa = ds->ds_dir->dd_pool->dp_spa;
 	uint64_t kcobj = dsl_dir_phys(ds->ds_dir)->dd_keychain_obj;
-	
-	/* if the dataset is encrypted, the owner will need the keychain indexed */
-	if (kcobj != 0) {
-		ret = spa_keystore_create_keychain_record(spa, ds);
-		if(ret)
-			return (SET_ERROR(EPERM));
-	}
 
 	mutex_enter(&ds->ds_lock);
 	if (ds->ds_owner == NULL && !DS_IS_INCONSISTENT(ds)) {
 		ds->ds_owner = tag;
 		dsl_dataset_long_hold(ds, tag);
-		ret = 0;
+		
+		if (kcobj != 0) {
+			ret = spa_keystore_create_keychain_record(spa, ds);
+			if (ret) {
+				dsl_dataset_long_rele(ds, tag);
+				ds->ds_owner = NULL;
+				ret = SET_ERROR(EPERM);
+			}
+		}
 	} else {
 		ret = SET_ERROR(EBUSY);
 	}
 	mutex_exit(&ds->ds_lock);
-	
-	if (ret && kcobj != 0) {
-		VERIFY0(spa_keystore_remove_keychain_record(spa, ds));
-	}
 	
 	return (ret);
 }
