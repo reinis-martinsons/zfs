@@ -877,12 +877,12 @@ dsl_dataset_create_sync_dd(dsl_dir_t *dd, dsl_dataset_t *origin,
 				B_TRUE : B_FALSE;
 		}
 
-		if (crypt == ZIO_CRYPT_INHERIT)
-			VERIFY0(dsl_prop_get_dd(dd->dd_parent, 
-				zfs_prop_to_name(ZFS_PROP_ENCRYPTION), 8, 1, &crypt,
-				NULL, B_FALSE));
-
 		if (!dsl_dir_is_clone(dd) && crypt != ZIO_CRYPT_OFF) {
+			if (crypt == ZIO_CRYPT_INHERIT)
+				VERIFY0(dsl_prop_get_dd(dd->dd_parent, 
+					zfs_prop_to_name(ZFS_PROP_ENCRYPTION), 8, 1, &crypt,
+					NULL, B_FALSE));
+			
 			if(wkey == NULL)
 				VERIFY0(spa_keystore_wkey_hold_ddobj(dp->dp_spa, 
 					dd->dd_parent->dd_object, FTAG, &wkey));
@@ -897,6 +897,10 @@ dsl_dataset_create_sync_dd(dsl_dir_t *dd, dsl_dataset_t *origin,
 			else
 				VERIFY0(spa_keystore_load_wkey_impl(tx->tx_pool->dp_spa, wkey));
 		} else if (dsl_dir_phys(origin->ds_dir)->dd_keychain_obj != 0) {
+			VERIFY0(dsl_prop_get_dd(origin->ds_dir, 
+				zfs_prop_to_name(ZFS_PROP_ENCRYPTION), 8, 1, &crypt,
+				NULL, B_FALSE));
+			
 			if(wkey == NULL)
 				VERIFY0(spa_keystore_wkey_hold_ddobj(dp->dp_spa, 
 					dd->dd_parent->dd_object, FTAG, &wkey));
