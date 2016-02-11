@@ -3318,8 +3318,6 @@ zfs_create(libzfs_handle_t *hdl, const char *path, zfs_type_t type,
 
 	/* check for failure */
 	if (ret != 0) {
-		char buf[64];
-
 		switch (errno) {
 		case ENOENT:
 			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,

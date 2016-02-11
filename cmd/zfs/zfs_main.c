@@ -6759,7 +6759,7 @@ zfs_do_crypto(int argc, char **argv)
 			ret = 0;
 			break;
 		case 'o':
-			if (parseprop(props))
+			if (parseprop(props, optarg) != 0)
 				return (1);
 			break;
 		default:

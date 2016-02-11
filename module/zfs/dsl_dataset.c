@@ -903,6 +903,9 @@ dsl_dataset_create_sync_dd(dsl_dir_t *dd, dsl_dataset_t *origin,
 			else
 				wkey->wk_ddobj = dd->dd_object;
 			
+			VERIFY0(zap_update(mos, dsl_dir_phys(dd)->dd_props_zapobj, 
+				zfs_prop_to_name(ZFS_PROP_ENCRYPTION), 8, 1, &crypt, tx));
+			
 			dsl_dir_phys(dd)->dd_keychain_obj =
 				dsl_keychain_clone_sync(origin->ds_dir, wkey, add_key, tx);
 			
