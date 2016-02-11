@@ -474,6 +474,8 @@ typedef struct arc_stats {
 	kstat_named_t arcstat_meta_limit;
 	kstat_named_t arcstat_meta_max;
 	kstat_named_t arcstat_meta_min;
+	kstat_named_t arcstat_sync_wait_for_async;
+	kstat_named_t arcstat_demand_hit_predictive_prefetch;
 	kstat_named_t arcstat_need_free;
 	kstat_named_t arcstat_sys_free;
 } arc_stats_t;
@@ -568,6 +570,8 @@ static arc_stats_t arc_stats = {
 	{ "arc_meta_limit",		KSTAT_DATA_UINT64 },
 	{ "arc_meta_max",		KSTAT_DATA_UINT64 },
 	{ "arc_meta_min",		KSTAT_DATA_UINT64 },
+	{ "sync_wait_for_async",	KSTAT_DATA_UINT64 },
+	{ "demand_hit_predictive_prefetch", KSTAT_DATA_UINT64 },
 	{ "arc_need_free",		KSTAT_DATA_UINT64 },
 	{ "arc_sys_free",		KSTAT_DATA_UINT64 }
 };
@@ -3179,13 +3183,10 @@ arc_flush(spa_t *spa, boolean_t retry)
 void
 arc_shrink(int64_t to_free)
 {
-	if (arc_c > arc_c_min) {
+	uint64_t c = arc_c;
 
-		if (arc_c > arc_c_min + to_free)
-			atomic_add_64(&arc_c, -to_free);
-		else
-			arc_c = arc_c_min;
-
+	if (c > to_free && c - to_free > arc_c_min) {
+		arc_c = c - to_free;
 		atomic_add_64(&arc_p, -(arc_p >> arc_shrink_shift));
 		if (arc_c > arc_size)
 			arc_c = MAX(arc_size, arc_c_min);
@@ -3193,6 +3194,8 @@ arc_shrink(int64_t to_free)
 			arc_p = (arc_c >> 1);
 		ASSERT(arc_c >= arc_c_min);
 		ASSERT((int64_t)arc_p >= 0);
+	} else {
+		arc_c = arc_c_min;
 	}
 
 	if (arc_size > arc_c)
@@ -3763,7 +3766,6 @@ arc_adapt(int bytes, arc_state_t *state)
 	 * cache size, increment the target cache size
 	 */
 	ASSERT3U(arc_c, >=, 2ULL << SPA_MAXBLOCKSHIFT);
-	arc_c = MAX(arc_c, 2ULL << SPA_MAXBLOCKSHIFT);
 	if (arc_size >= arc_c - (2ULL << SPA_MAXBLOCKSHIFT)) {
 		atomic_add_64(&arc_c, (int64_t)bytes);
 		if (arc_c > arc_c_max)
@@ -4244,6 +4246,36 @@ top:
 
 		if (HDR_IO_IN_PROGRESS(hdr)) {
 
+			if ((hdr->b_flags & ARC_FLAG_PRIO_ASYNC_READ) &&
+			    priority == ZIO_PRIORITY_SYNC_READ) {
+				/*
+				 * This sync read must wait for an
+				 * in-progress async read (e.g. a predictive
+				 * prefetch).  Async reads are queued
+				 * separately at the vdev_queue layer, so
+				 * this is a form of priority inversion.
+				 * Ideally, we would "inherit" the demand
+				 * i/o's priority by moving the i/o from
+				 * the async queue to the synchronous queue,
+				 * but there is currently no mechanism to do
+				 * so.  Track this so that we can evaluate
+				 * the magnitude of this potential performance
+				 * problem.
+				 *
+				 * Note that if the prefetch i/o is already
+				 * active (has been issued to the device),
+				 * the prefetch improved performance, because
+				 * we issued it sooner than we would have
+				 * without the prefetch.
+				 */
+				DTRACE_PROBE1(arc__sync__wait__for__async,
+				    arc_buf_hdr_t *, hdr);
+				ARCSTAT_BUMP(arcstat_sync_wait_for_async);
+			}
+			if (hdr->b_flags & ARC_FLAG_PREDICTIVE_PREFETCH) {
+				hdr->b_flags &= ~ARC_FLAG_PREDICTIVE_PREFETCH;
+			}
+
 			if (*arc_flags & ARC_FLAG_WAIT) {
 				cv_wait(&hdr->b_l1hdr.b_cv, hash_lock);
 				mutex_exit(hash_lock);
@@ -4252,7 +4284,7 @@ top:
 			ASSERT(*arc_flags & ARC_FLAG_NOWAIT);
 
 			if (done) {
-				arc_callback_t	*acb = NULL;
+				arc_callback_t *acb = NULL;
 
 				acb = kmem_zalloc(sizeof (arc_callback_t),
 				    KM_SLEEP);
@@ -4277,6 +4309,19 @@ top:
 		    hdr->b_l1hdr.b_state == arc_mfu);
 
 		if (done) {
+			if (hdr->b_flags & ARC_FLAG_PREDICTIVE_PREFETCH) {
+				/*
+				 * This is a demand read which does not have to
+				 * wait for i/o because we did a predictive
+				 * prefetch i/o for it, which has completed.
+				 */
+				DTRACE_PROBE1(
+				    arc__demand__hit__predictive__prefetch,
+				    arc_buf_hdr_t *, hdr);
+				ARCSTAT_BUMP(
+				    arcstat_demand_hit_predictive_prefetch);
+				hdr->b_flags &= ~ARC_FLAG_PREDICTIVE_PREFETCH;
+			}
 			add_reference(hdr, hash_lock, private);
 			/*
 			 * If this block is already in use, create a new
@@ -4322,17 +4367,11 @@ top:
 
 		/*
 		 * Gracefully handle a damaged logical block size as a
-		 * checksum error by passing a dummy zio to the done callback.
+		 * checksum error.
 		 */
 		if (size > spa_maxblocksize(spa)) {
-			if (done) {
-				rzio = zio_null(pio, spa, NULL,
-				    NULL, NULL, zio_flags);
-				rzio->io_error = ECKSUM;
-				done(rzio, buf, private);
-				zio_nowait(rzio);
-			}
-			rc = ECKSUM;
+			ASSERT3P(buf, ==, NULL);
+			rc = SET_ERROR(ECKSUM);
 			goto out;
 		}
 
@@ -4355,12 +4394,16 @@ top:
 				goto top; /* restart the IO request */
 			}
 
-			/* if this is a prefetch, we don't have a reference */
-			if (*arc_flags & ARC_FLAG_PREFETCH) {
+			/*
+			 * If there is a callback, we pass our reference to
+			 * it; otherwise we remove our reference.
+			 */
+			if (done == NULL) {
 				(void) remove_reference(hdr, hash_lock,
 				    private);
-				hdr->b_flags |= ARC_FLAG_PREFETCH;
 			}
+			if (*arc_flags & ARC_FLAG_PREFETCH)
+				hdr->b_flags |= ARC_FLAG_PREFETCH;
 			if (*arc_flags & ARC_FLAG_L2CACHE)
 				hdr->b_flags |= ARC_FLAG_L2CACHE;
 			if (*arc_flags & ARC_FLAG_L2COMPRESS)
@@ -4383,11 +4426,13 @@ top:
 			ASSERT(refcount_is_zero(&hdr->b_l1hdr.b_refcnt));
 			ASSERT3P(hdr->b_l1hdr.b_buf, ==, NULL);
 
-			/* if this is a prefetch, we don't have a reference */
+			/*
+			 * If there is a callback, we pass a reference to it.
+			 */
+			if (done != NULL)
+				add_reference(hdr, hash_lock, private);
 			if (*arc_flags & ARC_FLAG_PREFETCH)
 				hdr->b_flags |= ARC_FLAG_PREFETCH;
-			else
-				add_reference(hdr, hash_lock, private);
 			if (*arc_flags & ARC_FLAG_L2CACHE)
 				hdr->b_flags |= ARC_FLAG_L2CACHE;
 			if (*arc_flags & ARC_FLAG_L2COMPRESS)
@@ -4405,6 +4450,8 @@ top:
 			arc_access(hdr, hash_lock);
 		}
 
+		if (*arc_flags & ARC_FLAG_PREDICTIVE_PREFETCH)
+			hdr->b_flags |= ARC_FLAG_PREDICTIVE_PREFETCH;
 		ASSERT(!GHOST_STATE(hdr->b_l1hdr.b_state));
 
 		acb = kmem_zalloc(sizeof (arc_callback_t), KM_SLEEP);
@@ -4443,6 +4490,11 @@ top:
 		ARCSTAT_CONDSTAT(!HDR_PREFETCH(hdr),
 		    demand, prefetch, !HDR_ISTYPE_METADATA(hdr),
 		    data, metadata, misses);
+
+		if (priority == ZIO_PRIORITY_ASYNC_READ)
+			hdr->b_flags |= ARC_FLAG_PRIO_ASYNC_READ;
+		else
+			hdr->b_flags &= ~ARC_FLAG_PRIO_ASYNC_READ;
 
 		if (vd != NULL && l2arc_ndev != 0 && !(l2arc_norw && devw)) {
 			/*
@@ -5106,7 +5158,9 @@ arc_tempreserve_space(uint64_t reserve, uint64_t txg)
 	int error;
 	uint64_t anon_size;
 
-	if (reserve > arc_c/4 && !arc_no_grow)
+	if (!arc_no_grow &&
+	    reserve > arc_c/4 &&
+	    reserve * 4 > (2ULL << SPA_MAXBLOCKSHIFT))
 		arc_c = MIN(arc_c_max, reserve * 4);
 
 	/*
@@ -5349,10 +5403,20 @@ arc_init(void)
 	arc_need_free = 0;
 #endif
 
-	/* Set min cache to allow safe operation of arc_adapt() */
-	arc_c_min = 2ULL << SPA_MAXBLOCKSHIFT;
 	/* Set max to 1/2 of all memory */
 	arc_c_max = allmem / 2;
+
+	/*
+	 * In userland, there's only the memory pressure that we artificially
+	 * create (see arc_available_memory()).  Don't let arc_c get too
+	 * small, because it can cause transactions to be larger than
+	 * arc_c, causing arc_tempreserve_space() to fail.
+	 */
+#ifndef	_KERNEL
+	arc_c_min = MAX(arc_c_max / 2, 2ULL << SPA_MAXBLOCKSHIFT);
+#else
+	arc_c_min = 2ULL << SPA_MAXBLOCKSHIFT;
+#endif
 
 	arc_c = arc_c_max;
 	arc_p = (arc_c >> 1);

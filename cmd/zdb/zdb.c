@@ -119,7 +119,7 @@ usage(void)
 {
 	(void) fprintf(stderr,
 	    "Usage: %s [-CumMdibcsDvhLXFPA] [-t txg] [-e [-p path...]] "
-	    "[-U config] [-I inflight I/Os] poolname [object...]\n"
+	    "[-U config] [-I inflight I/Os] [-x dumpdir] poolname [object...]\n"
 	    "       %s [-divPA] [-e -p path...] [-U config] dataset "
 	    "[object...]\n"
 	    "       %s -mM [-LXFPA] [-t txg] [-e [-p path...]] [-U config] "
@@ -158,7 +158,7 @@ usage(void)
 	(void) fprintf(stderr, "        -R read and display block from a "
 	    "device\n\n");
 	(void) fprintf(stderr, "    Below options are intended for use "
-	    "with other options (except -l):\n");
+	    "with other options:\n");
 	(void) fprintf(stderr, "        -A ignore assertions (-A), enable "
 	    "panic recovery (-AA) or both (-AAA)\n");
 	(void) fprintf(stderr, "        -F attempt automatic rewind within "
@@ -171,12 +171,14 @@ usage(void)
 	    "has altroot/not in a cachefile\n");
 	(void) fprintf(stderr, "        -p <path> -- use one or more with "
 	    "-e to specify path to vdev dir\n");
+	(void) fprintf(stderr, "        -x <dumpdir> -- "
+	    "dump all read blocks into specified directory\n");
 	(void) fprintf(stderr, "        -P print numbers in parseable form\n");
 	(void) fprintf(stderr, "        -t <txg> -- highest txg to use when "
 	    "searching for uberblocks\n");
 	(void) fprintf(stderr, "        -I <number of inflight I/Os> -- "
-	    "specify the maximum number of checksumming I/Os "
-	    "[default is 200]\n");
+	    "specify the maximum number of "
+	    "checksumming I/Os [default is 200]\n");
 	(void) fprintf(stderr, "Specify an option more than once (e.g. -bb) "
 	    "to make only that option verbose\n");
 	(void) fprintf(stderr, "Default is to dump everything non-verbosely\n");
@@ -1513,6 +1515,7 @@ dump_full_bpobj(bpobj_t *bpo, char *name, int indent)
 				continue;
 			}
 			dump_full_bpobj(&subbpo, "subobj", indent + 1);
+			bpobj_close(&subbpo);
 		}
 	} else {
 		(void) printf("    %*s: object %llu, %llu blkptrs, %s\n",
@@ -2517,6 +2520,9 @@ zdb_blkptr_cb(spa_t *spa, zilog_t *zilog, const blkptr_t *bp,
 	dmu_object_type_t type;
 	boolean_t is_metadata;
 
+	if (bp == NULL)
+		return (0);
+
 	if (dump_opt['b'] >= 5 && bp->blk_birth > 0) {
 		char blkbuf[BP_SPRINTF_LEN];
 		snprintf_blkptr(blkbuf, sizeof (blkbuf), bp);
@@ -3013,7 +3019,7 @@ zdb_ddt_add_cb(spa_t *spa, zilog_t *zilog, const blkptr_t *bp,
 	avl_index_t where;
 	zdb_ddt_entry_t *zdde, zdde_search;
 
-	if (BP_IS_HOLE(bp) || BP_IS_EMBEDDED(bp))
+	if (bp == NULL || BP_IS_HOLE(bp) || BP_IS_EMBEDDED(bp))
 		return (0);
 
 	if (dump_opt['S'] > 1 && zb->zb_level == ZB_ROOT_LEVEL) {
@@ -3408,8 +3414,10 @@ zdb_read_block(char *thing, spa_t *spa)
 				continue;
 
 			p = &flagstr[i + 1];
-			if (bit == ZDB_FLAG_PRINT_BLKPTR)
+			if (bit == ZDB_FLAG_PRINT_BLKPTR) {
 				blkptr_offset = strtoull(p, &p, 16);
+				i = p - &flagstr[i + 1];
+			}
 			if (*p != ':' && *p != '\0') {
 				(void) printf("***Invalid flag arg: '%s'\n", s);
 				free(dup);
@@ -3651,7 +3659,6 @@ main(int argc, char **argv)
 	int flags = ZFS_IMPORT_MISSING_LOG;
 	int rewind = ZPOOL_NEVER_REWIND;
 	char *spa_config_path_env;
-	const char *opts = "bcdhilmMI:suCDRSAFLXevp:t:U:P";
 	boolean_t target_is_spa = B_TRUE;
 
 	(void) setrlimit(RLIMIT_NOFILE, &rl);
@@ -3668,7 +3675,8 @@ main(int argc, char **argv)
 	if (spa_config_path_env != NULL)
 		spa_config_path = spa_config_path_env;
 
-	while ((c = getopt(argc, argv, opts)) != -1) {
+	while ((c = getopt(argc, argv,
+	    "bcdhilmMI:suCDRSAFLXx:evp:t:U:PV")) != -1) {
 		switch (c) {
 		case 'b':
 		case 'c':
@@ -3696,7 +3704,7 @@ main(int argc, char **argv)
 			dump_opt[c]++;
 			break;
 		case 'V':
-			flags = ZFS_IMPORT_VERBATIM;
+			flags |= ZFS_IMPORT_VERBATIM;
 			break;
 		case 'I':
 			max_inflight = strtoull(optarg, NULL, 0);
@@ -3721,6 +3729,9 @@ main(int argc, char **argv)
 				searchdirs = tmp;
 			}
 			searchdirs[nsearch++] = optarg;
+			break;
+		case 'x':
+			vn_dumpdir = optarg;
 			break;
 		case 't':
 			max_txg = strtoull(optarg, NULL, 0);

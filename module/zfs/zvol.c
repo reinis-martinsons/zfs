@@ -33,6 +33,8 @@
  *
  * Volumes are persistent through reboot and module load.  No user command
  * needs to be run before opening and using a device.
+ *
+ * Copyright 2014 Nexenta Systems, Inc.  All rights reserved.
  */
 
 #include <sys/dbuf.h>
@@ -42,6 +44,7 @@
 #include <sys/zap.h>
 #include <sys/zfeature.h>
 #include <sys/zil_impl.h>
+#include <sys/dmu_tx.h>
 #include <sys/zio.h>
 #include <sys/zfs_rlock.h>
 #include <sys/zfs_znode.h>
@@ -238,19 +241,9 @@ zvol_size_changed(zvol_state_t *zv, uint64_t volsize)
 	bdev = bdget_disk(zv->zv_disk, 0);
 	if (bdev == NULL)
 		return;
-/*
- * 2.6.28 API change
- * Added check_disk_size_change() helper function.
- */
-#ifdef HAVE_CHECK_DISK_SIZE_CHANGE
 	set_capacity(zv->zv_disk, volsize >> 9);
 	zv->zv_volsize = volsize;
 	check_disk_size_change(zv->zv_disk, bdev);
-#else
-	zv->zv_volsize = volsize;
-	zv->zv_changed = 1;
-	(void) check_disk_change(bdev);
-#endif /* HAVE_CHECK_DISK_SIZE_CHANGE */
 
 	bdput(bdev);
 }
@@ -287,6 +280,7 @@ zvol_update_volsize(uint64_t volsize, objset_t *os)
 
 	tx = dmu_tx_create(os);
 	dmu_tx_hold_zap(tx, ZVOL_ZAP_OBJ, TRUE, NULL);
+	dmu_tx_mark_netfree(tx);
 	error = dmu_tx_assign(tx, TXG_WAIT);
 	if (error) {
 		dmu_tx_abort(tx);
@@ -456,6 +450,24 @@ out:
 }
 
 /*
+ * Replay a TX_TRUNCATE ZIL transaction if asked.  TX_TRUNCATE is how we
+ * implement DKIOCFREE/free-long-range.
+ */
+static int
+zvol_replay_truncate(zvol_state_t *zv, lr_truncate_t *lr, boolean_t byteswap)
+{
+	uint64_t offset, length;
+
+	if (byteswap)
+		byteswap_uint64_array(lr, sizeof (*lr));
+
+	offset = lr->lr_offset;
+	length = lr->lr_length;
+
+	return (dmu_free_long_range(zv->zv_objset, ZVOL_OBJ, offset, length));
+}
+
+/*
  * Replay a TX_WRITE ZIL transaction that didn't get committed
  * after a system failure
  */
@@ -493,7 +505,7 @@ zvol_replay_err(zvol_state_t *zv, lr_t *lr, boolean_t byteswap)
 
 /*
  * Callback vectors for replaying records.
- * Only TX_WRITE is needed for zvol.
+ * Only TX_WRITE and TX_TRUNCATE are needed for zvol.
  */
 zil_replay_func_t zvol_replay_vector[TX_MAX_TYPE] = {
 	(zil_replay_func_t)zvol_replay_err,	/* no such transaction type */
@@ -506,7 +518,7 @@ zil_replay_func_t zvol_replay_vector[TX_MAX_TYPE] = {
 	(zil_replay_func_t)zvol_replay_err,	/* TX_LINK */
 	(zil_replay_func_t)zvol_replay_err,	/* TX_RENAME */
 	(zil_replay_func_t)zvol_replay_write,	/* TX_WRITE */
-	(zil_replay_func_t)zvol_replay_err,	/* TX_TRUNCATE */
+	(zil_replay_func_t)zvol_replay_truncate, /* TX_TRUNCATE */
 	(zil_replay_func_t)zvol_replay_err,	/* TX_SETATTR */
 	(zil_replay_func_t)zvol_replay_err,	/* TX_ACL */
 };
@@ -597,6 +609,7 @@ zvol_write(struct bio *bio)
 	int error = 0;
 	dmu_tx_t *tx;
 	rl_t *rl;
+	uio_t uio;
 
 	if (bio->bi_rw & VDEV_REQ_FLUSH)
 		zil_commit(zv->zv_zilog, ZVOL_OBJ);
@@ -606,6 +619,14 @@ zvol_write(struct bio *bio)
 	 */
 	if (size == 0)
 		goto out;
+
+	uio.uio_bvec = &bio->bi_io_vec[BIO_BI_IDX(bio)];
+	uio.uio_skip = BIO_BI_SKIP(bio);
+	uio.uio_resid = size;
+	uio.uio_iovcnt = bio->bi_vcnt - BIO_BI_IDX(bio);
+	uio.uio_loffset = offset;
+	uio.uio_limit = MAXOFFSET_T;
+	uio.uio_segflg = UIO_BVEC;
 
 	rl = zfs_range_lock(&zv->zv_znode, offset, size, RL_WRITER);
 
@@ -620,7 +641,7 @@ zvol_write(struct bio *bio)
 		goto out;
 	}
 
-	error = dmu_write_bio(zv->zv_objset, ZVOL_OBJ, bio, tx);
+	error = dmu_write_uio(zv->zv_objset, ZVOL_OBJ, &uio, size, tx);
 	if (error == 0)
 		zvol_log_write(zv, tx, offset, size,
 		    !!(bio->bi_rw & VDEV_REQ_FUA));
@@ -636,6 +657,30 @@ out:
 	return (error);
 }
 
+/*
+ * Log a DKIOCFREE/free-long-range to the ZIL with TX_TRUNCATE.
+ */
+static void
+zvol_log_truncate(zvol_state_t *zv, dmu_tx_t *tx, uint64_t off, uint64_t len,
+    boolean_t sync)
+{
+	itx_t *itx;
+	lr_truncate_t *lr;
+	zilog_t *zilog = zv->zv_zilog;
+
+	if (zil_replaying(zilog, tx))
+		return;
+
+	itx = zil_itx_create(TX_TRUNCATE, sizeof (*lr));
+	lr = (lr_truncate_t *)&itx->itx_lr;
+	lr->lr_foid = ZVOL_OBJ;
+	lr->lr_offset = off;
+	lr->lr_length = len;
+
+	itx->itx_sync = sync;
+	zil_itx_assign(zilog, itx, tx);
+}
+
 static int
 zvol_discard(struct bio *bio)
 {
@@ -645,6 +690,7 @@ zvol_discard(struct bio *bio)
 	uint64_t end = start + size;
 	int error;
 	rl_t *rl;
+	dmu_tx_t *tx;
 
 	if (end > zv->zv_volsize)
 		return (SET_ERROR(EIO));
@@ -669,12 +715,17 @@ zvol_discard(struct bio *bio)
 		return (0);
 
 	rl = zfs_range_lock(&zv->zv_znode, start, size, RL_WRITER);
-
-	error = dmu_free_long_range(zv->zv_objset, ZVOL_OBJ, start, size);
-
-	/*
-	 * TODO: maybe we should add the operation to the log.
-	 */
+	tx = dmu_tx_create(zv->zv_objset);
+	dmu_tx_mark_netfree(tx);
+	error = dmu_tx_assign(tx, TXG_WAIT);
+	if (error != 0) {
+		dmu_tx_abort(tx);
+	} else {
+		zvol_log_truncate(zv, tx, start, size, B_TRUE);
+		dmu_tx_commit(tx);
+		error = dmu_free_long_range(zv->zv_objset,
+		    ZVOL_OBJ, start, size);
+	}
 
 	zfs_range_unlock(rl);
 
@@ -686,17 +737,25 @@ zvol_read(struct bio *bio)
 {
 	zvol_state_t *zv = bio->bi_bdev->bd_disk->private_data;
 	uint64_t offset = BIO_BI_SECTOR(bio) << 9;
-	uint64_t len = BIO_BI_SIZE(bio);
+	uint64_t size = BIO_BI_SIZE(bio);
 	int error;
 	rl_t *rl;
+	uio_t uio;
 
-	if (len == 0)
+	if (size == 0)
 		return (0);
 
+	uio.uio_bvec = &bio->bi_io_vec[BIO_BI_IDX(bio)];
+	uio.uio_skip = BIO_BI_SKIP(bio);
+	uio.uio_resid = size;
+	uio.uio_iovcnt = bio->bi_vcnt - BIO_BI_IDX(bio);
+	uio.uio_loffset = offset;
+	uio.uio_limit = MAXOFFSET_T;
+	uio.uio_segflg = UIO_BVEC;
 
-	rl = zfs_range_lock(&zv->zv_znode, offset, len, RL_READER);
+	rl = zfs_range_lock(&zv->zv_znode, offset, size, RL_READER);
 
-	error = dmu_read_bio(zv->zv_objset, ZVOL_OBJ, bio);
+	error = dmu_read_uio(zv->zv_objset, ZVOL_OBJ, &uio, size);
 
 	zfs_range_unlock(rl);
 
@@ -1380,8 +1439,9 @@ __zvol_create_minor(const char *name, boolean_t ignore_snapdev)
 	 */
 	len = MIN(MAX(zvol_prefetch_bytes, 0), SPA_MAXBLOCKSIZE);
 	if (len > 0) {
-		dmu_prefetch(os, ZVOL_OBJ, 0, len);
-		dmu_prefetch(os, ZVOL_OBJ, volsize - len, len);
+		dmu_prefetch(os, ZVOL_OBJ, 0, 0, len, ZIO_PRIORITY_SYNC_READ);
+		dmu_prefetch(os, ZVOL_OBJ, 0, volsize - len, len,
+			ZIO_PRIORITY_SYNC_READ);
 	}
 
 	zv->zv_objset = NULL;

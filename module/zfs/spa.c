@@ -82,6 +82,12 @@
 #include "zfs_prop.h"
 #include "zfs_comutil.h"
 
+/*
+ * The interval, in seconds, at which failed configuration cache file writes
+ * should be retried.
+ */
+static int zfs_ccw_retry_interval = 300;
+
 typedef enum zti_modes {
 	ZTI_MODE_FIXED,			/* value is # of threads (min 1) */
 	ZTI_MODE_BATCH,			/* cpu-intensive; value is ignored */
@@ -582,7 +588,6 @@ spa_prop_validate(spa_t *spa, nvlist_t *props)
 					error = SET_ERROR(EINVAL);
 					break;
 				}
-				check++;
 			}
 			if (strlen(strval) > ZPROP_MAX_COMMENT)
 				error = SET_ERROR(E2BIG);
@@ -867,7 +872,7 @@ spa_taskqs_init(spa_t *spa, zio_type_t t, zio_taskq_type_t q)
 	case ZTI_MODE_BATCH:
 		batch = B_TRUE;
 		flags |= TASKQ_THREADS_CPU_PCT;
-		value = zio_taskq_batch_pct;
+		value = MIN(zio_taskq_batch_pct, 100);
 		break;
 
 	default:
@@ -1895,9 +1900,9 @@ spa_load_verify_done(zio_t *zio)
 	if (error) {
 		if ((BP_GET_LEVEL(bp) != 0 || DMU_OT_IS_METADATA(type)) &&
 		    type != DMU_OT_INTENT_LOG)
-			atomic_add_64(&sle->sle_meta_count, 1);
+			atomic_inc_64(&sle->sle_meta_count);
 		else
-			atomic_add_64(&sle->sle_data_count, 1);
+			atomic_inc_64(&sle->sle_data_count);
 	}
 	zio_data_buf_free(zio->io_data, zio->io_size);
 
@@ -1924,7 +1929,7 @@ spa_load_verify_cb(spa_t *spa, zilog_t *zilog, const blkptr_t *bp,
 	size_t size;
 	void *data;
 
-	if (BP_IS_HOLE(bp) || BP_IS_EMBEDDED(bp))
+	if (bp == NULL || BP_IS_HOLE(bp) || BP_IS_EMBEDDED(bp))
 		return (0);
 	/*
 	 * Note: normally this routine will not be called if
@@ -5915,13 +5920,34 @@ spa_async_resume(spa_t *spa)
 	mutex_exit(&spa->spa_async_lock);
 }
 
+static boolean_t
+spa_async_tasks_pending(spa_t *spa)
+{
+	uint_t non_config_tasks;
+	uint_t config_task;
+	boolean_t config_task_suspended;
+
+	non_config_tasks = spa->spa_async_tasks & ~SPA_ASYNC_CONFIG_UPDATE;
+	config_task = spa->spa_async_tasks & SPA_ASYNC_CONFIG_UPDATE;
+	if (spa->spa_ccw_fail_time == 0) {
+		config_task_suspended = B_FALSE;
+	} else {
+		config_task_suspended =
+		    (gethrtime() - spa->spa_ccw_fail_time) <
+		    (zfs_ccw_retry_interval * NANOSEC);
+	}
+
+	return (non_config_tasks || (config_task && !config_task_suspended));
+}
+
 static void
 spa_async_dispatch(spa_t *spa)
 {
 	mutex_enter(&spa->spa_async_lock);
-	if (spa->spa_async_tasks && !spa->spa_async_suspended &&
+	if (spa_async_tasks_pending(spa) &&
+	    !spa->spa_async_suspended &&
 	    spa->spa_async_thread == NULL &&
-	    rootdir != NULL && !vn_is_readonly(rootdir))
+	    rootdir != NULL)
 		spa->spa_async_thread = thread_create(NULL, 0,
 		    spa_async_thread, spa, 0, &p0, TS_RUN, maxclsyspri);
 	mutex_exit(&spa->spa_async_lock);
@@ -6494,16 +6520,10 @@ spa_sync(spa_t *spa, uint64_t txg)
 				if (svdcount == SPA_DVAS_PER_BP)
 					break;
 			}
-			error = vdev_config_sync(svd, svdcount, txg, B_FALSE);
-			if (error != 0)
-				error = vdev_config_sync(svd, svdcount, txg,
-				    B_TRUE);
+			error = vdev_config_sync(svd, svdcount, txg);
 		} else {
 			error = vdev_config_sync(rvd->vdev_child,
-			    rvd->vdev_children, txg, B_FALSE);
-			if (error != 0)
-				error = vdev_config_sync(rvd->vdev_child,
-				    rvd->vdev_children, txg, B_TRUE);
+			    rvd->vdev_children, txg);
 		}
 
 		if (error == 0)
@@ -6807,4 +6827,9 @@ MODULE_PARM_DESC(spa_load_verify_metadata,
 module_param(spa_load_verify_data, int, 0644);
 MODULE_PARM_DESC(spa_load_verify_data,
 	"Set to traverse data on pool import");
+
+module_param(zio_taskq_batch_pct, uint, 0444);
+MODULE_PARM_DESC(zio_taskq_batch_pct,
+	"Percentage of CPUs to run an IO worker thread");
+
 #endif

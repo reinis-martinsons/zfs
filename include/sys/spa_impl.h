@@ -254,6 +254,7 @@ struct spa {
 	uint64_t	spa_errata;		/* errata issues detected */
 	spa_stats_t	spa_stats;		/* assorted spa statistics */
 	spa_keystore_t	spa_keystore;	/* loaded keychains */
+	hrtime_t	spa_ccw_fail_time;	/* Conf cache write fail time */
 
 	/*
 	 * spa_refcount & spa_config_lock must be the last elements

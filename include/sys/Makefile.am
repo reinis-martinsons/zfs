@@ -11,6 +11,7 @@ COMMON_H = \
 	$(top_srcdir)/include/sys/bplist.h \
 	$(top_srcdir)/include/sys/bpobj.h \
 	$(top_srcdir)/include/sys/bptree.h \
+	$(top_srcdir)/include/sys/bqueue.h \
 	$(top_srcdir)/include/sys/dbuf.h \
 	$(top_srcdir)/include/sys/ddt.h \
 	$(top_srcdir)/include/sys/dmu.h \
@@ -103,6 +104,7 @@ COMMON_H = \
 	$(top_srcdir)/include/sys/zio_crypt.h \
 	$(top_srcdir)/include/sys/zio.h \
 	$(top_srcdir)/include/sys/zio_impl.h \
+	$(top_srcdir)/include/sys/zio_priority.h \
 	$(top_srcdir)/include/sys/zrlock.h
 
 KERNEL_H = \
