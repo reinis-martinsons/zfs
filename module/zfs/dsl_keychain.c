@@ -583,7 +583,6 @@ int spa_keystore_load_wkey(spa_t *spa, const char *dsname, dsl_crypto_params_t *
 	
 error:
 	LOG_ERROR(ret, "");
-	if(wkey) dsl_wrapping_key_free(wkey);
 	if(kc) dsl_keychain_rele(kc, FTAG);
 	dsl_dir_rele(dd, FTAG);
 	
