@@ -238,7 +238,7 @@ int zio_do_crypt(boolean_t encrypt, uint64_t crypt, crypto_key_t *key, crypto_ct
 	uint_t plain_full_len;
 	
 	ASSERT(crypt < ZIO_CRYPT_FUNCTIONS);
-	ASSERT(wkey->zk_key->ck_format == CRYPTO_KEY_RAW);
+	ASSERT(key->ck_format == CRYPTO_KEY_RAW);
 
 	//lookup the encryption info
 	crypt_info = zio_crypt_table[crypt];

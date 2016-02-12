@@ -68,11 +68,6 @@ static kmutex_t prov_tab_mutex; /* ensure exclusive access to the table */
 static uint_t prov_tab_num = 0; /* number of providers in table */
 static uint_t prov_tab_max = KCF_MAX_PROVIDERS;
 
-#ifdef DEBUG
-extern int kcf_frmwrk_debug;
-static void kcf_prov_tab_dump(char *message);
-#endif /* DEBUG */
-
 void
 kcf_prov_tab_destroy(void)
 {
@@ -138,11 +133,6 @@ kcf_prov_tab_add_provider(kcf_provider_desc_t *prov_desc)
 	prov_desc->pd_kcf_prov_handle =
 	    (crypto_kcf_provider_handle_t)prov_desc->pd_prov_id;
 
-#ifdef DEBUG
-	if (kcf_frmwrk_debug >= 1)
-		kcf_prov_tab_dump("kcf_prov_tab_add_provider");
-#endif /* DEBUG */
-
 	return (CRYPTO_SUCCESS);
 }
 
@@ -183,11 +173,6 @@ kcf_prov_tab_rem_provider(crypto_provider_id_t prov_id)
 
 	KCF_PROV_REFRELE(prov_desc);
 	KCF_PROV_IREFRELE(prov_desc);
-
-#ifdef DEBUG
-	if (kcf_frmwrk_debug >= 1)
-		kcf_prov_tab_dump("kcf_prov_tab_rem_provider");
-#endif /* DEBUG */
 
 	return (CRYPTO_SUCCESS);
 }
@@ -661,41 +646,3 @@ kcf_get_sw_prov(crypto_mech_type_t mech_type, kcf_provider_desc_t **pd,
 
 	return (CRYPTO_SUCCESS);
 }
-
-#ifdef DEBUG
-/*
- * Dump the Kernel crypto providers table, prov_tab.
- * If kcf_frmwrk_debug is >=2, also dump the mechanism lists.
- */
-static void
-kcf_prov_tab_dump(char *message)
-{
-	uint_t i, j;
-
-	mutex_enter(&prov_tab_mutex);
-	printf("Providers table prov_tab at %s:\n",
-	    message != NULL ? message : "");
-
-	for (i = 0; i < KCF_MAX_PROVIDERS; i++) {
-		kcf_provider_desc_t *p = prov_tab[i];
-		if (p != NULL) {
-			printf("[%d]: (%s) %d mechanisms, %s\n", i,
-			    (p->pd_prov_type == CRYPTO_HW_PROVIDER) ?
-			    "HW" : "SW",
-			    p->pd_mech_list_count, p->pd_description);
-			if (kcf_frmwrk_debug >= 2) {
-				printf("\tpd_mechanisms: ");
-				for (j = 0; j < p->pd_mech_list_count; ++j) {
-					printf("%s \n",
-					    p->pd_mechanisms[j].cm_mech_name);
-				}
-				printf("\n");
-			}
-		}
-	}
-	printf("(end of providers table)\n");
-
-	mutex_exit(&prov_tab_mutex);
-}
-
-#endif /* DEBUG */

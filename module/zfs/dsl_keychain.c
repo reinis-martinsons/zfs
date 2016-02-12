@@ -62,7 +62,7 @@ static int zio_crypt_key_unwrap(dsl_wrapping_key_t *wkey, uint64_t crypt, dsl_cr
 	int ret;
 	
 	ASSERT(crypt < ZIO_CRYPT_FUNCTIONS);
-	ASSERT(wkey->wk_key.zk_key->ck_format == CRYPTO_KEY_RAW);
+	ASSERT(wkey->wk_key.ck_format == CRYPTO_KEY_RAW);
 
 	//encrypt the key and store the result in dckp->keybuf
 	ret = zio_decrypt(crypt, &wkey->wk_key, NULL, dckp->dk_iv, ZIO_CRYPT_WRAPKEY_IVLEN, WRAPPING_MAC_LEN, keydata, dckp->dk_keybuf, zio_crypt_table[crypt].ci_keylen);
