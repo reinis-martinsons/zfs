@@ -143,6 +143,15 @@ spa_keystore_init(spa_keystore_t *sk) {
 void
 spa_keystore_fini(spa_keystore_t *sk)
 {
+	dsl_wrapping_key_t *wkey;
+	void *cookie = NULL;
+
+	ASSERT(avl_is_empty(&sk->sk_keychains));
+	ASSERT(avl_is_empty(&sk->sk_keychain_recs));
+
+	while ((wkey = avl_destroy_nodes(&sk->sk_wkeys, &cookie)) != NULL)
+		dsl_wrapping_key_free(wkey);
+
 	avl_destroy(&sk->sk_wkeys);
 	avl_destroy(&sk->sk_keychain_recs);
 	avl_destroy(&sk->sk_keychains);
@@ -1270,8 +1279,8 @@ dsl_keychain_create_sync(uint64_t crypt, dsl_wrapping_key_t *wkey,
 
 	/* create the DSL Keychain zap object */
 	kcobj = zap_create_flags(tx->tx_pool->dp_meta_objset, 0,
-		ZAP_FLAG_UINT64_KEY, DMU_OT_DSL_KEYCHAIN, 0, 0,
-		DMU_OT_NONE, 0, tx);
+		ZAP_FLAG_UINT64_KEY, DMU_OT_DSL_KEYCHAIN, SPA_MINBLOCKSHIFT,
+		SPA_MINBLOCKSHIFT, DMU_OT_NONE, 0, tx);
 
 	/* initialize a keychain entry and sync it to disk */
 	VERIFY0(dsl_keychain_entry_init(&kce, crypt, tx->tx_txg));
@@ -1294,8 +1303,8 @@ dsl_keychain_clone_sync(dsl_dir_t *orig_dd, dsl_wrapping_key_t *wkey,
 
 	/* create the DSL Keychain zap object */
 	kcobj = zap_create_flags(tx->tx_pool->dp_meta_objset, 0,
-		ZAP_FLAG_UINT64_KEY, DMU_OT_DSL_KEYCHAIN, 0, 0,
-		DMU_OT_NONE, 0, tx);
+		ZAP_FLAG_UINT64_KEY, DMU_OT_DSL_KEYCHAIN, SPA_MINBLOCKSHIFT,
+		SPA_MINBLOCKSHIFT, DMU_OT_NONE, 0, tx);
 
 	/* get the original keychain */
 	VERIFY0(spa_keystore_keychain_hold_dd(spa, orig_dd, FTAG, &orig_kc));

@@ -877,11 +877,14 @@ dsl_dataset_create_sync_dd(dsl_dir_t *dd, dsl_dataset_t *origin,
 				B_TRUE : B_FALSE;
 		}
 
-		if (!dsl_dir_is_clone(dd) && crypt != ZIO_CRYPT_OFF) {
+		if (!dsl_dir_is_clone(dd)) {
 			if (crypt == ZIO_CRYPT_INHERIT)
 				VERIFY0(dsl_prop_get_dd(dd->dd_parent,
 					zfs_prop_to_name(ZFS_PROP_ENCRYPTION),
 					8, 1, &crypt, NULL, B_FALSE));
+
+			if (crypt == ZIO_CRYPT_OFF)
+				goto no_crypto;
 
 			if (wkey == NULL)
 				VERIFY0(spa_keystore_wkey_hold_ddobj(dp->dp_spa,
@@ -901,6 +904,9 @@ dsl_dataset_create_sync_dd(dsl_dir_t *dd, dsl_dataset_t *origin,
 			VERIFY0(dsl_prop_get_dd(origin->ds_dir,
 				zfs_prop_to_name(ZFS_PROP_ENCRYPTION), 8, 1,
 				&crypt, NULL, B_FALSE));
+
+			if (crypt == ZIO_CRYPT_OFF)
+				goto no_crypto;
 
 			if (wkey == NULL)
 				VERIFY0(spa_keystore_wkey_hold_ddobj(dp->dp_spa,
@@ -925,6 +931,7 @@ dsl_dataset_create_sync_dd(dsl_dir_t *dd, dsl_dataset_t *origin,
 		}
 	}
 
+no_crypto:
 	if (spa_version(dp->dp_spa) >= SPA_VERSION_UNIQUE_ACCURATE)
 		dsphys->ds_flags |= DS_FLAG_UNIQUE_ACCURATE;
 
