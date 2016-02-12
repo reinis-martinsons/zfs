@@ -678,14 +678,13 @@ error_unlock:
 }
 
 int
-spa_keystore_load_wkey(spa_t *spa, const char *dsname,
-	dsl_crypto_params_t *dcp)
+spa_keystore_load_wkey(const char *dsname, dsl_crypto_params_t *dcp)
 {
 	int ret;
 	dsl_dir_t *dd = NULL;
 	dsl_keychain_t *kc = NULL;
 	dsl_wrapping_key_t *wkey = dcp->cp_wkey;
-	dsl_pool_t *dp = spa_get_dsl(spa);
+	dsl_pool_t *dp = NULL;
 
 	if (!dcp->cp_wkey)
 		return (SET_ERROR(EINVAL));
@@ -694,10 +693,14 @@ spa_keystore_load_wkey(spa_t *spa, const char *dsname,
 	if (dcp->cp_cmd)
 		return (SET_ERROR(EINVAL));
 
+	ret = dsl_pool_hold(dsname, FTAG, &dp);
+	if (ret)
+		goto error;
+
 	/* hold the dsl dir */
 	ret = dsl_dir_hold(dp, dsname, FTAG, &dd, NULL);
 	if (ret)
-		return (ret);
+		goto error;
 
 	LOG_DEBUG("loading key ddobj = %u", (unsigned)dd->dd_object);
 
@@ -711,12 +714,13 @@ spa_keystore_load_wkey(spa_t *spa, const char *dsname,
 		goto error;
 
 	/* insert the wrapping key into the keystore */
-	ret = spa_keystore_load_wkey_impl(spa, wkey);
+	ret = spa_keystore_load_wkey_impl(dp->dp_spa, wkey);
 	if (ret)
 		goto error;
 
 	dsl_keychain_rele(kc, FTAG);
 	dsl_dir_rele(dd, FTAG);
+	dsl_pool_rele(dp, FTAG);
 
 	return (0);
 
@@ -724,33 +728,42 @@ error:
 	LOG_ERROR(ret, "");
 	if (kc)
 		dsl_keychain_rele(kc, FTAG);
-	dsl_dir_rele(dd, FTAG);
+	if (dd)
+		dsl_dir_rele(dd, FTAG);
+	if (dp)
+		dsl_pool_rele(dp, FTAG);
 
 	return (ret);
 }
 
 int
-spa_keystore_unload_wkey(spa_t *spa, const char *dsname)
+spa_keystore_unload_wkey(const char *dsname)
 {
 	int ret = 0;
 	dsl_dir_t *dd = NULL;
 	dsl_wrapping_key_t search_wkey;
 	dsl_wrapping_key_t *found_wkey;
+	dsl_pool_t *dp = NULL;
 
 	/* hold the dsl dir */
-	ret = dsl_dir_hold(spa_get_dsl(spa), dsname, FTAG, &dd, NULL);
+	ret = dsl_pool_hold(dsname, FTAG, &dp);
 	if (ret)
-		return (ret);
+		goto error;
+
+	ret = dsl_dir_hold(dp, dsname, FTAG, &dd, NULL);
+	if (ret)
+		goto error;
 
 	LOG_DEBUG("unloading key ddobj = %u", (unsigned)dd->dd_object);
 
 	/* init the search wrapping key */
 	search_wkey.wk_ddobj = dd->dd_object;
 
-	rw_enter(&spa->spa_keystore.sk_wkeys_lock, RW_WRITER);
+	rw_enter(&dp->dp_spa->spa_keystore.sk_wkeys_lock, RW_WRITER);
 
 	/* remove the wrapping key */
-	found_wkey = avl_find(&spa->spa_keystore.sk_wkeys, &search_wkey, NULL);
+	found_wkey = avl_find(&dp->dp_spa->spa_keystore.sk_wkeys,
+		&search_wkey, NULL);
 	if (!found_wkey) {
 		ret = SET_ERROR(ENOENT);
 		goto error_unlock;
@@ -758,12 +771,13 @@ spa_keystore_unload_wkey(spa_t *spa, const char *dsname)
 		ret = SET_ERROR(EBUSY);
 		goto error_unlock;
 	}
-	avl_remove(&spa->spa_keystore.sk_wkeys, found_wkey);
+	avl_remove(&dp->dp_spa->spa_keystore.sk_wkeys, found_wkey);
 
 	LOG_DEBUG("unloaded key ddobj = %u", (unsigned)dd->dd_object);
 
-	rw_exit(&spa->spa_keystore.sk_wkeys_lock);
+	rw_exit(&dp->dp_spa->spa_keystore.sk_wkeys_lock);
 	dsl_dir_rele(dd, FTAG);
+	dsl_pool_rele(dp, FTAG);
 
 	/* free the wrapping key */
 	dsl_wrapping_key_free(found_wkey);
@@ -771,8 +785,15 @@ spa_keystore_unload_wkey(spa_t *spa, const char *dsname)
 	return (0);
 
 error_unlock:
+	rw_exit(&dp->dp_spa->spa_keystore.sk_wkeys_lock);
+
+error:
 	LOG_ERROR(ret, "");
-	rw_exit(&spa->spa_keystore.sk_wkeys_lock);
+	if (dd)
+		dsl_dir_rele(dd, FTAG);
+	if (dp)
+		dsl_pool_rele(dp, FTAG);
+
 	return (ret);
 }
 
@@ -857,7 +878,7 @@ dsl_keychain_add_key_sync(void *arg, dmu_tx_t *tx)
 }
 
 int
-spa_keystore_keychain_add_key(spa_t *spa, const char *dsname)
+spa_keystore_keychain_add_key(const char *dsname)
 {
 	return (dsl_sync_task(dsname, dsl_keychain_add_key_check,
 		dsl_keychain_add_key_sync, (void *)dsname, 1,
@@ -1031,7 +1052,7 @@ spa_keystore_rewrap_sync(void *arg, dmu_tx_t *tx)
 }
 
 int
-spa_keystore_rewrap(spa_t *spa, const char *dsname,
+spa_keystore_rewrap(const char *dsname,
 	dsl_crypto_params_t *dcp)
 {
 	spa_keystore_rewrap_args_t skra;

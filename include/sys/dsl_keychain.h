@@ -134,12 +134,10 @@ int spa_keystore_keychain_hold_dd(spa_t *spa, dsl_dir_t *dd, void *tag,
 	dsl_keychain_t **kc_out);
 void spa_keystore_keychain_rele(spa_t *spa, dsl_keychain_t *kc, void *tag);
 int spa_keystore_load_wkey_impl(spa_t *spa, dsl_wrapping_key_t *wkey);
-int spa_keystore_load_wkey(spa_t *spa, const char *dsname,
-	dsl_crypto_params_t *dcp);
-int spa_keystore_unload_wkey(spa_t *spa, const char *dsname);
-int spa_keystore_keychain_add_key(spa_t *spa, const char *dsname);
-int spa_keystore_rewrap(spa_t *spa, const char *dsname,
-	dsl_crypto_params_t *dcp);
+int spa_keystore_load_wkey(const char *dsname, dsl_crypto_params_t *dcp);
+int spa_keystore_unload_wkey(const char *dsname);
+int spa_keystore_keychain_add_key(const char *dsname);
+int spa_keystore_rewrap(const char *dsname, dsl_crypto_params_t *dcp);
 int spa_keystore_create_keychain_record(spa_t *spa, dsl_dataset_t *ds);
 int spa_keystore_remove_keychain_record(spa_t *spa, dsl_dataset_t *ds);
 int spa_keystore_hold_keychain_kr(spa_t *spa, uint64_t dsobj,

@@ -5318,25 +5318,29 @@ zfs_ioc_crypto(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl) {
 	dsl_crypto_params_t dcp = { 0 };
 	uint64_t crypto_cmd;
 	nvlist_t *args;
-	dsl_pool_t *dp = NULL;
+	spa_t *spa;
 
-	ret = dsl_pool_hold(dsname, FTAG, &dp);
+	ret = spa_open(dsname, &spa, FTAG);
 	if (ret)
 		return (ret);
 
-	if (!spa_feature_is_enabled(dp->dp_spa, SPA_FEATURE_ENCRYPTION)) {
-		dsl_pool_rele(dp, FTAG);
+	if (!spa_feature_is_enabled(spa, SPA_FEATURE_ENCRYPTION)) {
+		spa_close(spa, FTAG);
 		return (SET_ERROR(EINVAL));
 	}
 
-	dsl_pool_rele(dp, FTAG);
+	spa_close(spa, FTAG);
 
-	if (strchr(dsname, '@') || strchr(dsname, '%'))
-		return (SET_ERROR(EINVAL));
+	if (strchr(dsname, '@') || strchr(dsname, '%')) {
+		ret = (SET_ERROR(EINVAL));
+		goto error;
+	}
 
 	ret = nvlist_lookup_uint64(innvl, "crypto_cmd", &crypto_cmd);
-	if (ret)
-		return (SET_ERROR(EINVAL));
+	if (ret) {
+		ret = (SET_ERROR(EINVAL));
+		goto error;
+	}
 
 	LOG_DEBUG("\n\nzfs key: crypto_cmd = %u", (unsigned)crypto_cmd);
 
@@ -5352,19 +5356,19 @@ zfs_ioc_crypto(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl) {
 		if (ret)
 			goto error;
 
-		ret = spa_keystore_load_wkey(dp->dp_spa, dsname, &dcp);
+		ret = spa_keystore_load_wkey(dsname, &dcp);
 		if (ret)
 			goto error;
 
 		break;
 	case ZFS_IOC_CRYPTO_UNLOAD_KEY:
-		ret = spa_keystore_unload_wkey(dp->dp_spa, dsname);
+		ret = spa_keystore_unload_wkey(dsname);
 		if (ret)
 			goto error;
 
 		break;
 	case ZFS_IOC_CRYPTO_ADD_KEY:
-		ret = spa_keystore_keychain_add_key(dp->dp_spa, dsname);
+		ret = spa_keystore_keychain_add_key(dsname);
 		if (ret)
 			goto error;
 
@@ -5380,7 +5384,7 @@ zfs_ioc_crypto(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl) {
 		if (ret)
 			goto error;
 
-		ret = spa_keystore_rewrap(dp->dp_spa, dsname, &dcp);
+		ret = spa_keystore_rewrap(dsname, &dcp);
 		if (ret)
 			goto error;
 
