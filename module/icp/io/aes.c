@@ -27,13 +27,6 @@
  * AES provider for the Kernel Cryptographic Framework (KCF)
  */
 
- /*
-#include <sys/types.h>
-#include <sys/systm.h>
-#include <sys/ddi.h>
-#include <sys/sysmacros.h>
-#include <sys/strsun.h>
-*/
 
 #include <sys/crypto/common.h>
 #include <sys/crypto/impl.h>
@@ -44,7 +37,7 @@
 #include <sys/cmn_err.h>
 #include <sys/modctl.h>
 
-#define CRYPTO_PROVIDER_NAME "aes"
+#define	CRYPTO_PROVIDER_NAME "aes"
 
 /*
  * Module linkage information for the kernel.
@@ -198,7 +191,6 @@ static crypto_provider_info_t aes_prov_info = {{{{
 	CRYPTO_SPI_VERSION_1,
 	"AES Software Provider",
 	CRYPTO_SW_PROVIDER,
-	//{&modlinkage}, /* CURRENTLY UNSUPPORTED */
 	NULL,
 	&aes_crypto_ops,
 	sizeof (aes_mech_info_tab)/sizeof (crypto_mech_info_t),
@@ -223,22 +215,7 @@ aes_mod_init(void)
 	}
 
 	if ((ret = mod_install(&modlinkage)) != 0) {
-		//int rv;
-
 		ASSERT(aes_prov_handle != 0);
-		/* CURRENTLY UNSUPPORTED */
-		/*
-		//We should not return if the unregister returns busy.
-		while ((rv = crypto_unregister_provider(aes_prov_handle))
-		    == CRYPTO_BUSY) {
-			cmn_err(CE_WARN,
-			    "%s _init: crypto_unregister_provider() "
-			    "failed (0x%x). Retrying.",
-			    CRYPTO_PROVIDER_NAME, rv);
-			//wait 10 seconds and try again.
-			delay(10 * drv_usectohz(1000000));
-		}
-		*/
 		crypto_unregister_provider(aes_prov_handle);
 	}
 
@@ -266,15 +243,6 @@ aes_mod_fini(void)
 
 	return (mod_remove(&modlinkage));
 }
-
-/* CURRENTLY UNSUPPORTED */
-/*
-int
-_info(struct modinfo *modinfop)
-{
-	return (mod_info(&modlinkage, modinfop));
-}
-*/
 
 static int
 aes_check_mech_param(crypto_mechanism_t *mechanism, aes_ctx_t **ctx, int kmflag)
@@ -724,14 +692,6 @@ aes_encrypt_update(crypto_ctx_t *ctx, crypto_data_t *plaintext,
 		    plaintext, ciphertext, aes_encrypt_contiguous_blocks,
 		    aes_copy_block64);
 		break;
-	/* CURRENTLY UNSUPPORTED */
-	/*
-	case CRYPTO_DATA_MBLK:
-		ret = crypto_update_mp(ctx->cc_provider_private,
-		    plaintext, ciphertext, aes_encrypt_contiguous_blocks,
-		    aes_copy_block64);
-		break;
-	*/
 	default:
 		ret = CRYPTO_ARGUMENTS_BAD;
 	}
@@ -811,14 +771,6 @@ aes_decrypt_update(crypto_ctx_t *ctx, crypto_data_t *ciphertext,
 		    ciphertext, plaintext, aes_decrypt_contiguous_blocks,
 		    aes_copy_block64);
 		break;
-	/* CURRENTLY UNSUPPORTED */
-	/*
-	case CRYPTO_DATA_MBLK:
-		ret = crypto_update_mp(ctx->cc_provider_private,
-		    ciphertext, plaintext, aes_decrypt_contiguous_blocks,
-		    aes_copy_block64);
-		break;
-	*/
 	default:
 		ret = CRYPTO_ARGUMENTS_BAD;
 	}
@@ -1091,13 +1043,6 @@ aes_encrypt_atomic(crypto_provider_handle_t provider,
 		ret = crypto_update_uio(&aes_ctx, plaintext, ciphertext,
 		    aes_encrypt_contiguous_blocks, aes_copy_block64);
 		break;
-	/* CURRENTLY UNSUPPORTED */
-	/*
-	case CRYPTO_DATA_MBLK:
-		ret = crypto_update_mp(&aes_ctx, plaintext, ciphertext,
-		    aes_encrypt_contiguous_blocks, aes_copy_block64);
-		break;
-	*/
 	default:
 		ret = CRYPTO_ARGUMENTS_BAD;
 	}
@@ -1221,13 +1166,6 @@ aes_decrypt_atomic(crypto_provider_handle_t provider,
 		ret = crypto_update_uio(&aes_ctx, ciphertext, plaintext,
 		    aes_decrypt_contiguous_blocks, aes_copy_block64);
 		break;
-	/* CURRENTLY UNSUPPORTED */
-	/*
-	case CRYPTO_DATA_MBLK:
-		ret = crypto_update_mp(&aes_ctx, ciphertext, plaintext,
-		    aes_decrypt_contiguous_blocks, aes_copy_block64);
-		break;
-	*/
 	default:
 		ret = CRYPTO_ARGUMENTS_BAD;
 	}

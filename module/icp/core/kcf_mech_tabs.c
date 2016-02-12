@@ -374,18 +374,6 @@ kcf_add_mech_provider(short mech_indx,
 	ASSERT(prov_desc->pd_prov_type != CRYPTO_LOGICAL_PROVIDER);
 
 	mech_info = &prov_desc->pd_mechanisms[mech_indx];
-	
-	/* CURRENTLY UNSUPPORTED */
-	/*
-	 * Do not use the provider for the mechanism if
-	 * policy does not allow it.
-	 */
-	/*
-	if (is_mech_disabled(prov_desc, mech_info->cm_mech_name)) {
-		*pmdpp = NULL;
-		return (KCF_SUCCESS);
-	}
-	*/
 
 	/*
 	 * A mechanism belongs to exactly one mechanism table.
@@ -460,13 +448,6 @@ kcf_add_mech_provider(short mech_indx,
 		/* skip self */
 		if (dmi->cm_mech_number == mech_info->cm_mech_number)
 			continue;
-
-		/* CURRENTLY UNSUPPORTED */
-		/* skip if policy doesn't allow mechanism */
-		/*
-		if (is_mech_disabled(prov_desc, dmi->cm_mech_name))
-			continue;
-		*/
 
 		/* skip if not a dual operation mechanism */
 		if (!(dmi->cm_func_group_mask & dual_fg_mask) ||

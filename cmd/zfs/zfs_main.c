@@ -6716,7 +6716,7 @@ zfs_do_crypto(int argc, char **argv)
 	boolean_t add_key = B_FALSE, rewrap = B_FALSE;
 	nvlist_t *props = NULL;
 	zfs_handle_t *zhp;
-	
+
 	if (nvlist_alloc(&props, NV_UNIQUE_NAME, 0) != 0)
 		nomem();
 
@@ -6724,8 +6724,8 @@ zfs_do_crypto(int argc, char **argv)
 		switch (c) {
 		case 'u':
 			if (ret == 0) {
-				(void) fprintf(stderr, 
-					gettext("multiple actions specified\n"));
+				(void) fprintf(stderr, gettext(
+					"multiple actions specified\n"));
 				goto usage;
 			}
 			unload = B_TRUE;
@@ -6733,8 +6733,8 @@ zfs_do_crypto(int argc, char **argv)
 			break;
 		case 'l':
 			if (ret == 0) {
-				(void) fprintf(stderr, 
-					gettext("multiple actions specified\n"));
+				(void) fprintf(stderr, gettext(
+					"multiple actions specified\n"));
 				goto usage;
 			}
 			load = B_TRUE;
@@ -6742,8 +6742,8 @@ zfs_do_crypto(int argc, char **argv)
 			break;
 		case 'K':
 			if (ret == 0) {
-				(void) fprintf(stderr, 
-					gettext("multiple actions specified\n"));
+				(void) fprintf(stderr, gettext(
+					"multiple actions specified\n"));
 				goto usage;
 			}
 			add_key = B_TRUE;
@@ -6751,8 +6751,8 @@ zfs_do_crypto(int argc, char **argv)
 			break;
 		case 'c':
 			if (ret == 0) {
-				(void) fprintf(stderr, 
-					gettext("multiple actions specified\n"));
+				(void) fprintf(stderr, gettext(
+					"multiple actions specified\n"));
 				goto usage;
 			}
 			rewrap = B_TRUE;
@@ -6768,27 +6768,30 @@ zfs_do_crypto(int argc, char **argv)
 			goto usage;
 		}
 	}
-	
+
 	if (ret) {
-		(void) fprintf(stderr, gettext("No action specified\n"));
+		(void) fprintf(stderr,
+			gettext("No action specified\n"));
 		goto usage;
 	}
-	
+
 	if (!rewrap && !nvlist_empty(props)) {
-		(void) fprintf(stderr, 
-			gettext("Properties not accepted for specified command\n"));
+		(void) fprintf(stderr,
+			gettext("Properties not accepted "
+				"for specified command\n"));
 		goto usage;
 	}
-	
+
 	if (argc < 3) {
 		(void) fprintf(stderr, gettext("Too few arguments\n"));
 		goto usage;
 	}
-	
-	zhp = zfs_open(g_zfs, argv[argc - 1], ZFS_TYPE_FILESYSTEM|ZFS_TYPE_VOLUME);
+
+	zhp = zfs_open(g_zfs, argv[argc - 1],
+		ZFS_TYPE_FILESYSTEM|ZFS_TYPE_VOLUME);
 	if (zhp == NULL)
 		goto usage;
-	
+
 	if (load)
 		ret = zfs_crypto_load_key(zhp);
 	else if (unload)
@@ -6797,18 +6800,18 @@ zfs_do_crypto(int argc, char **argv)
 		ret = zfs_crypto_add_key(zhp);
 	else
 		ret = zfs_crypto_rewrap(zhp, props);
-		
+
 	if (ret)
 		goto error;
-	
+
 	if (props)
 		nvlist_free(props);
 	zfs_close(zhp);
 	return (0);
-	
+
 usage:
 	usage(B_FALSE);
-	
+
 error:
 	if (props)
 		nvlist_free(props);

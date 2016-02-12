@@ -464,12 +464,6 @@ extern kcf_global_swq_t *gswq;
 extern int kcf_maxthreads;
 extern int kcf_minthreads;
 
-/* Door handle for talking to kcfd CURRENTLY UNSUPPORTED*/
-/*
-extern door_handle_t kcf_dh;
-extern kmutex_t	 kcf_dh_lock;
-*/
-
 /*
  * All pending crypto bufcalls are put on a list. cbuf_list_lock
  * protects changes to this list.

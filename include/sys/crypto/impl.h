@@ -115,8 +115,8 @@ typedef struct kcf_sched_info {
 
 /*
  * The following two macros should be
- * #define KCF_OPS_CLASSSIZE (KCF_LAST_OPSCLASS - KCF_FIRST_OPSCLASS + 2)
- * #define KCF_MAXMECHTAB KCF_MAXCIPHER
+ * #define	KCF_OPS_CLASSSIZE (KCF_LAST_OPSCLASS - KCF_FIRST_OPSCLASS + 2)
+ * #define	KCF_MAXMECHTAB KCF_MAXCIPHER
  *
  * However, doing that would involve reorganizing the header file a bit.
  * When impl.h is broken up (bug# 4703218), this will be done. For now,
@@ -221,10 +221,10 @@ typedef struct kcf_provider_desc {
 	crypto_mech_info_t		*pd_mechanisms;
 	kcf_sched_info_t		pd_sched_info;
 	uint_t				pd_mech_list_count;
-	//char				*pd_name;
-	//uint_t				pd_instance;
-	//int				pd_module_id;
-	//struct modctl			*pd_mctlp;
+	// char				*pd_name;
+	// uint_t				pd_instance;
+	// int				pd_module_id;
+	// struct modctl			*pd_mctlp;
 	kcondvar_t			pd_remove_cv;
 	char				*pd_description;
 	uint_t				pd_flags;
@@ -242,7 +242,7 @@ typedef struct kcf_provider_list {
 } kcf_provider_list_t;
 
 /* atomic operations in linux implictly form a memory barrier */
-#define membar_exit()
+#define	membar_exit()
 
 /*
  * If a component has a reference to a kcf_provider_desc_t,
@@ -511,9 +511,6 @@ typedef struct crypto_minor {
 	uint_t				cm_provider_count;
 	crypto_provider_session_t	*cm_provider_session;
 } crypto_minor_t;
-
-/* resource control framework handle used by /dev/crypto CURRENTLY UNSUPPORTED */
-//extern rctl_hndl_t rc_project_crypto_mem;
 
 /*
  * Return codes for internal functions
@@ -1314,7 +1311,6 @@ extern boolean_t kcf_rngprov_check(void);
 extern int kcf_rnd_get_pseudo_bytes(uint8_t *, size_t);
 extern int kcf_rnd_get_bytes(uint8_t *, size_t, boolean_t, boolean_t);
 extern int random_add_pseudo_entropy(uint8_t *, size_t, uint_t);
-//extern void kcf_rnd_chpoll(short, int, short *, struct pollhead **); /* CURRENTLY UNSUPPORTED */
 extern void kcf_rnd_schedule_timeout(boolean_t);
 extern int crypto_uio_data(crypto_data_t *, uchar_t *, int, cmd_type_t,
     void *, void (*update)(void));

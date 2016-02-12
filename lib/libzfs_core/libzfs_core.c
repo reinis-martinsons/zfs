@@ -744,7 +744,7 @@ lzc_destroy_bookmarks(nvlist_t *bmarks, nvlist_t **errlist)
  * Performs key management functions
  *
  * crypto_cmd should be a value from zfs_ioc_crypto_cmd_t. If the command is
- * ZFS_IOC_CRYPTO_LOAD_KEY, the args should contain a uint8_t array property 
+ * ZFS_IOC_CRYPTO_LOAD_KEY, the args should contain a uint8_t array property
  * "wkeydata" with the key to load. Otherwise, args should be NULL.
  */
 int

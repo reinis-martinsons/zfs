@@ -45,9 +45,9 @@ struct modlinkage;
  * requires a set of mod_ops.
  */
 struct mod_ops {
-	int		(*modm_install)(struct modlmisc *, struct modlinkage *);	/* install module in kernel */
-	int		(*modm_remove)(struct modlmisc *, struct modlinkage *);	/* remove from kernel */
-	int		(*modm_info)(void *, struct modlinkage *, int *);		/* module info */
+	int	(*modm_install)(struct modlmisc *, struct modlinkage *);
+	int	(*modm_remove)(struct modlmisc *, struct modlinkage *);
+	int	(*modm_info)(void *, struct modlinkage *, int *);
 };
 
 #ifdef _KERNEL
@@ -88,36 +88,36 @@ extern struct mod_ops mod_kiconvops;
  */
 
 /* For drivers */
-//struct modldrv {
-//	struct mod_ops		*drv_modops;
-//	char			*drv_linkinfo;
-//	struct dev_ops		*drv_dev_ops;
-//};
+// struct modldrv {
+// 	struct mod_ops		*drv_modops;
+// 	char			*drv_linkinfo;
+// 	struct dev_ops		*drv_dev_ops;
+// };
 //
-///* For system calls */
-//struct modlsys {
-//	struct mod_ops		*sys_modops;
-//	char			*sys_linkinfo;
-//	struct sysent		*sys_sysent;
-//};
+// /* For system calls */
+// struct modlsys {
+// 	struct mod_ops		*sys_modops;
+// 	char			*sys_linkinfo;
+// 	struct sysent		*sys_sysent;
+// };
 //
-///* For filesystems */
-//struct modlfs {
-//	struct mod_ops		*fs_modops;
-//	char			*fs_linkinfo;
-//	struct vfsdef_v5	*fs_vfsdef;	/* version may actually vary */
-//};
+// /* For filesystems */
+// struct modlfs {
+// 	struct mod_ops		*fs_modops;
+// 	char			*fs_linkinfo;
+// 	struct vfsdef_v5	*fs_vfsdef;	/* version may actually vary */
+// };
 //
-//#if defined(__i386) || defined(__amd64)
-//struct cmi_ops;
+// #if defined(__i386) || defined(__amd64)
+// struct cmi_ops;
 //
-///* For CPU modules */
-//struct modlcpu {
-//	struct mod_ops		*cpu_modops;
-//	char			*cpu_linkinfo;
-//	struct cmi_ops		*cpu_cmiops;
-//};
-//#endif
+// /* For CPU modules */
+// struct modlcpu {
+// 	struct mod_ops		*cpu_modops;
+// 	char			*cpu_linkinfo;
+// 	struct cmi_ops		*cpu_cmiops;
+// };
+// #endif
 
 /* For cryptographic providers */
 struct modlcrypto {
@@ -131,75 +131,75 @@ struct modlmisc {
 	char			*misc_linkinfo;
 };
 
-///* For IP Modules */
-//struct modlipp {
-//	struct mod_ops		*ipp_modops;
-//	char			*ipp_linkinfo;
-//	struct ipp_ops		*ipp_ops;
-//};
+// /* For IP Modules */
+// struct modlipp {
+// 	struct mod_ops		*ipp_modops;
+// 	char			*ipp_linkinfo;
+// 	struct ipp_ops		*ipp_ops;
+// };
 //
-///* For Streams Modules. */
-//struct modlstrmod {
-//	struct mod_ops		*strmod_modops;
-//	char			*strmod_linkinfo;
-//	struct fmodsw		*strmod_fmodsw;
-//};
+// /* For Streams Modules. */
+// struct modlstrmod {
+// 	struct mod_ops		*strmod_modops;
+// 	char			*strmod_linkinfo;
+// 	struct fmodsw		*strmod_fmodsw;
+// };
 //
-///* For Scheduling classes */
-//struct modlsched {
-//	struct mod_ops		*sched_modops;
-//	char			*sched_linkinfo;
-//	struct sclass		*sched_class;
-//};
+// /* For Scheduling classes */
+// struct modlsched {
+// 	struct mod_ops		*sched_modops;
+// 	char			*sched_linkinfo;
+// 	struct sclass		*sched_class;
+// };
 //
-///* For Exec file type (like ELF, ...) */
-//struct modlexec {
-//	struct mod_ops		*exec_modops;
-//	char			*exec_linkinfo;
-//	struct execsw		*exec_execsw;
-//};
+// /* For Exec file type (like ELF, ...) */
+// struct modlexec {
+// 	struct mod_ops		*exec_modops;
+// 	char			*exec_linkinfo;
+// 	struct execsw		*exec_execsw;
+// };
 //
-///* For dacf modules */
-//struct modldacf {
-//	struct mod_ops		*dacf_modops;
-//	char			*dacf_linkinfo;
-//	struct dacfsw		*dacf_dacfsw;
-//};
+// /* For dacf modules */
+// struct modldacf {
+// 	struct mod_ops		*dacf_modops;
+// 	char			*dacf_linkinfo;
+// 	struct dacfsw		*dacf_dacfsw;
+// };
 //
-///* For PCBE modules */
-//struct modlpcbe {
-//	struct mod_ops		*pcbe_modops;
-//	char			*pcbe_linkinfo;
-//	struct __pcbe_ops	*pcbe_ops;
-//};
+// /* For PCBE modules */
+// struct modlpcbe {
+// 	struct mod_ops		*pcbe_modops;
+// 	char			*pcbe_linkinfo;
+// 	struct __pcbe_ops	*pcbe_ops;
+// };
 //
-///* For Brand modules */
-//struct modlbrand {
-//	struct mod_ops		*brand_modops;
-//	char			*brand_linkinfo;
-//	struct brand		*brand_branddef;
-//};
+// /* For Brand modules */
+// struct modlbrand {
+// 	struct mod_ops		*brand_modops;
+// 	char			*brand_linkinfo;
+// 	struct brand		*brand_branddef;
+// };
 //
-///* for devname fs */
-//struct modldev {
-//	struct mod_ops		*dev_modops;
-//	char			*dev_linkinfo;
-//	struct devname_ops	*dev_ops;
-//};
+// /* for devname fs */
+// struct modldev {
+// 	struct mod_ops		*dev_modops;
+// 	char			*dev_linkinfo;
+// 	struct devname_ops	*dev_ops;
+// };
 //
-///* For socket Modules. */
-//struct modlsockmod {
-//	struct mod_ops		*sockmod_modops;
-//	char			*sockmod_linkinfo;
-//	struct smod_reg_s	*sockmod_reg_info;
-//};
+// /* For socket Modules. */
+// struct modlsockmod {
+// 	struct mod_ops		*sockmod_modops;
+// 	char			*sockmod_linkinfo;
+// 	struct smod_reg_s	*sockmod_reg_info;
+// };
 //
-///* For kiconv modules */
-//struct modlkiconv {
-//	struct mod_ops		*kiconv_modops;
-//	char			*kiconv_linkinfo;
-//	struct kiconv_mod_info	*kiconv_moddef;
-//};
+// /* For kiconv modules */
+// struct modlkiconv {
+// 	struct mod_ops		*kiconv_modops;
+// 	char			*kiconv_linkinfo;
+// 	struct kiconv_mod_info	*kiconv_moddef;
+// };
 
 /*
  * Revision number of loadable modules support.  This is the value
@@ -548,107 +548,9 @@ extern int moddebug;
  */
 extern modctl_t modules;
 
-//extern int modload_qualified(const char *,
-//    const char *, const char *, const char *, uint_t[], int, int *);
-//
-//extern void	mod_setup(void);
-//extern int	modload(const char *, const char *);
-//extern int	modloadonly(const char *, const char *);
-//extern int	modunload(int);
-//extern int	mod_hold_stub(struct mod_stub_info *);
-//extern void	modunload_disable(void);
-//extern void	modunload_enable(void);
-//extern void	modunload_begin(void);
-//extern void	modunload_end(void);
-//extern int	mod_remove_by_name(char *);
-//extern int	mod_sysvar(const char *, const char *, u_longlong_t *);
-//extern int	mod_sysctl(int, void *);
-//struct sysparam;
-//extern int	mod_hold_by_modctl(modctl_t *, int);
-//#define		MOD_WAIT_ONCE		0x01
-//#define		MOD_WAIT_FOREVER	0x02
-//#define		MOD_LOCK_HELD		0x04
-//#define		MOD_LOCK_NOT_HELD	0x08
-//extern int	mod_sysctl_type(int, int (*)(struct sysparam *, void *),
-//    void *);
-//extern void	mod_read_system_file(int);
-//extern void	mod_release_stub(struct mod_stub_info *);
-//extern void	mod_askparams(void);
-//extern void	mod_uninstall_daemon(void);
-//extern void	modreap(void);
-//extern modctl_t *mod_hold_by_id(modid_t);
-//extern modctl_t *mod_hold_by_name(const char *);
-//extern void	mod_release_mod(modctl_t *);
-//extern uintptr_t modlookup(const char *, const char *);
-//extern uintptr_t modlookup_by_modctl(modctl_t *, const char *);
-//extern char	*modgetsymname(uintptr_t, unsigned long *);
-//extern void	mod_release_requisites(modctl_t *);
-//extern modctl_t *mod_load_requisite(modctl_t *, char *);
-//extern modctl_t *mod_find_by_filename(char *, char *);
-//extern uintptr_t	modgetsymvalue(char *, int);
-//
-//extern void	mod_rele_dev_by_major(major_t);
-//extern struct dev_ops *mod_hold_dev_by_major(major_t);
-//extern struct dev_ops *mod_hold_dev_by_devi(dev_info_t *);
-//extern void	mod_rele_dev_by_devi(dev_info_t *);
-//
-//extern int make_devname(char *, major_t);
-//extern int gmatch(const char *, const char *);
-//
-//extern void make_aliases(struct bind **);
-//extern int read_binding_file(char *, struct bind **,
-//    int (*line_parser)(char *, int, char *, struct bind **));
-//extern void clear_binding_hash(struct bind **);
-//
-//extern void read_class_file(void);
-//extern void setbootpath(char *);
-//extern void setbootfstype(char *);
-//
-//extern int install_stubs_by_name(modctl_t *, char *);
-//extern void install_stubs(modctl_t *);
-//extern void uninstall_stubs(modctl_t *);
-//extern void reset_stubs(modctl_t *);
-//extern modctl_t *mod_getctl(struct modlinkage *);
-//extern major_t mod_name_to_major(char *);
-//extern modid_t mod_name_to_modid(char *);
-//extern char *mod_major_to_name(major_t);
-//extern void init_devnamesp(int);
-//extern void init_syscallnames(int);
-//
-//extern char *mod_getsysname(int);
-//extern int mod_getsysnum(char *);
-//
-//extern char *mod_containing_pc(caddr_t);
-//extern int mod_in_autounload(void);
-//extern const char *mod_modname(struct modlinkage *);
-//
-//extern int dev_minorperm(dev_info_t *, char *, mperm_t *);
-//extern void dev_devices_cleanup(void);
-//
-///*
-// * Declarations used for dynamic linking support routines.  Interfaces
-// * are marked with the pragma "unknown_control_flow" to prevent tail call
-// * optimization, so that implementations can reliably use caller() to
-// * determine initiating module.
-// */
-//#define	KRTLD_MODE_FIRST	0x0001
-//typedef	struct __ddi_modhandle	*ddi_modhandle_t;
-//extern ddi_modhandle_t		ddi_modopen(const char *,
-//				    int, int *);
-//extern void			*ddi_modsym(ddi_modhandle_t,
-//				    const char *, int *);
-//extern int			ddi_modclose(ddi_modhandle_t);
-//#pragma	unknown_control_flow(ddi_modopen, ddi_modsym, ddi_modclose)
-
 /*
  * Only the following are part of the DDI/DKI
  */
-/* CURRENTLY UNSUPPORTED: replaced with linux kernel module_init() / module_exit() */
-/*
-extern int	_init(void);
-extern int	_fini(void);
-extern int	_info(struct modinfo *);
-*/
 extern int	mod_install(struct modlinkage *);
 extern int	mod_remove(struct modlinkage *);
 extern int	mod_info(struct modlinkage *, struct modinfo *);

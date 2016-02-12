@@ -58,7 +58,8 @@ typedef struct mod_hash mod_hash_t;
 /*
  * String hash table
  */
-mod_hash_t *mod_hash_create_strhash_nodtr(char *, size_t , void (*)(mod_hash_val_t));
+mod_hash_t *mod_hash_create_strhash_nodtr(char *, size_t,
+	void (*)(mod_hash_val_t));
 mod_hash_t *mod_hash_create_strhash(char *, size_t, void (*)(mod_hash_val_t));
 void mod_hash_destroy_strhash(mod_hash_t *);
 int mod_hash_strkey_cmp(mod_hash_key_t, mod_hash_key_t);
@@ -70,7 +71,7 @@ uint_t mod_hash_bystr(void *, mod_hash_key_t);
  * Pointer hash table
  */
 mod_hash_t *mod_hash_create_ptrhash(char *, size_t, void (*)(mod_hash_val_t),
-    size_t);
+	size_t);
 void mod_hash_destroy_ptrhash(mod_hash_t *);
 int mod_hash_ptrkey_cmp(mod_hash_key_t, mod_hash_key_t);
 uint_t mod_hash_byptr(void *, mod_hash_key_t);
@@ -88,8 +89,8 @@ uint_t mod_hash_iddata_gen(size_t);
  * Hash management functions
  */
 mod_hash_t *mod_hash_create_extended(char *, size_t, void (*)(mod_hash_key_t),
-    void (*)(mod_hash_val_t), uint_t (*)(void *, mod_hash_key_t), void *,
-    int (*)(mod_hash_key_t, mod_hash_key_t), int);
+	void (*)(mod_hash_val_t), uint_t (*)(void *, mod_hash_key_t), void *,
+	int (*)(mod_hash_key_t, mod_hash_key_t), int);
 
 void mod_hash_destroy_hash(mod_hash_t *);
 void mod_hash_clear(mod_hash_t *);
@@ -126,11 +127,11 @@ int mod_hash_remove(mod_hash_t *, mod_hash_key_t, mod_hash_val_t *);
 int mod_hash_destroy(mod_hash_t *, mod_hash_key_t);
 int mod_hash_find(mod_hash_t *, mod_hash_key_t, mod_hash_val_t *);
 int mod_hash_find_cb(mod_hash_t *, mod_hash_key_t, mod_hash_val_t *,
-    void (*)(mod_hash_key_t, mod_hash_val_t));
+	void (*)(mod_hash_key_t, mod_hash_val_t));
 int mod_hash_find_cb_rval(mod_hash_t *, mod_hash_key_t, mod_hash_val_t *,
-    int (*)(mod_hash_key_t, mod_hash_val_t), int *);
+	int (*)(mod_hash_key_t, mod_hash_val_t), int *);
 void mod_hash_walk(mod_hash_t *,
-    uint_t (*)(mod_hash_key_t, mod_hash_val_t *, void *), void *);
+	uint_t (*)(mod_hash_key_t, mod_hash_val_t *, void *), void *);
 
 /*
  * Reserving hash operations
@@ -139,7 +140,7 @@ int mod_hash_reserve(mod_hash_t *, mod_hash_hndl_t *);
 int mod_hash_reserve_nosleep(mod_hash_t *, mod_hash_hndl_t *);
 void mod_hash_cancel(mod_hash_t *, mod_hash_hndl_t *);
 int mod_hash_insert_reserve(mod_hash_t *, mod_hash_key_t, mod_hash_val_t,
-    mod_hash_hndl_t);
+	mod_hash_hndl_t);
 
 #endif /* _KERNEL */
 

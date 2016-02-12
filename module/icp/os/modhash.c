@@ -409,7 +409,7 @@ void
 mod_hash_fini(void)
 {
 	mutex_destroy(&mh_head_lock);
-	
+
 	if (mh_e_cache) kmem_cache_destroy(mh_e_cache);
 }
 
@@ -424,7 +424,7 @@ mod_hash_init(void)
 	mh_e_cache = kmem_cache_create("mod_hash_entries",
 	    sizeof (struct mod_hash_entry), 0, NULL, NULL, NULL, NULL,
 	    NULL, 0);
-		
+
 	mutex_init(&mh_head_lock, NULL, MUTEX_DEFAULT, NULL);
 }
 

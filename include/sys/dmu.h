@@ -272,7 +272,7 @@ int dmu_objset_open_ds(struct dsl_dataset *ds, objset_t **osp);
 
 void dmu_objset_evict_dbufs(objset_t *os);
 int dmu_objset_create(const char *name, dmu_objset_type_t type, uint64_t flags,
-    dsl_crypto_params_t *dcp, void (*func)(objset_t *os, void *arg, 
+    dsl_crypto_params_t *dcp, void (*func)(objset_t *os, void *arg,
 	cred_t *cr, dmu_tx_t *tx), void *arg);
 int dmu_objset_clone(const char *name, const char *origin,
 	dsl_crypto_params_t *dcp);

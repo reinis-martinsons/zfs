@@ -23,13 +23,6 @@
  * Use is subject to license terms.
  */
 
- /*
-#include <sys/strsun.h>
-#include <sys/md5.h>
-#include <sys/sha1.h>
-#include <sys/sha2.h>
-*/
-
 #include <sys/systm.h>
 #include <sys/sysmacros.h>
 #include <sys/kmem.h>
@@ -102,9 +95,7 @@ crypto_uio_data(crypto_data_t *data, uchar_t *buf, int len, cmd_type_t cmd,
 		case SHA1_DIGEST_DATA:
 		case SHA2_DIGEST_DATA:
 		case GHASH_DATA:
-			/* CURRENTLY UNSUPPORTED */
-			//update(digest_ctx, datap, cur_len);
-			break;
+			return (CRYPTO_ARGUMENTS_BAD);
 		}
 
 		length -= cur_len;
@@ -145,13 +136,6 @@ crypto_put_output_data(uchar_t *buf, crypto_data_t *output, int len)
 	case CRYPTO_DATA_UIO:
 		return (crypto_uio_data(output, buf, len,
 		    COPY_TO_DATA, NULL, NULL));
-	
-	/* CURRENTLY UNSUPPORTED */
-	/*
-	case CRYPTO_DATA_MBLK:
-		return (crypto_mblk_data(output, buf, len,
-		    COPY_TO_DATA, NULL, NULL));
-	*/
 	default:
 		return (CRYPTO_ARGUMENTS_BAD);
 	}

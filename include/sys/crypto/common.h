@@ -238,7 +238,6 @@ typedef struct {
 typedef enum crypto_data_format {
 	CRYPTO_DATA_RAW = 1,
 	CRYPTO_DATA_UIO,
-	//CRYPTO_DATA_MBLK /* CURRENTLY UNSUPPORTED */
 } crypto_data_format_t;
 
 typedef struct crypto_data {
@@ -252,10 +251,6 @@ typedef struct crypto_data {
 
 		/* uio scatter-gather format */
 		uio_t	*cdu_uio;
-		
-		//CURRENTLY UNSUPPORTED
-		/* mblk scatter-gather format */
-		//mblk_t	*cdu_mp;		/* The mblk chain */
 
 	} cdu;	/* Crypto Data Union */
 } crypto_data_t;

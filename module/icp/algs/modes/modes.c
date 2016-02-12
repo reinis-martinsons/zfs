@@ -27,7 +27,6 @@
 #include <stdlib.h>
 #endif
 
-//#include <sys/strsun.h>
 #include <sys/types.h>
 #include <modes/modes.h>
 #include <sys/crypto/common.h>
@@ -61,23 +60,6 @@ crypto_init_ptrs(crypto_data_t *out, void **iov_or_mp, offset_t *current_offset)
 		*iov_or_mp = (void *)vec_idx;
 		break;
 	}
-
-	/* CURRENTLY UNSUPPORTED */
-	/*
-	case CRYPTO_DATA_MBLK: {
-		mblk_t *mp;
-
-		offset = out->cd_offset;
-		for (mp = out->cd_mp; mp != NULL && offset >= MBLKL(mp);
-		    offset -= MBLKL(mp), mp = mp->b_cont)
-			;
-
-		*current_offset = offset;
-		*iov_or_mp = mp;
-		break;
-
-	}
-	*/
 	} /* end switch */
 }
 
@@ -140,33 +122,6 @@ crypto_get_ptrs(crypto_data_t *out, void **iov_or_mp, offset_t *current_offset,
 		*iov_or_mp = (void *)vec_idx;
 		break;
 	}
-	/* CURRENTLY UNSUPPORTED */
-	/*
-	case CRYPTO_DATA_MBLK: {
-		mblk_t *mp;
-		uint8_t *p;
-
-		offset = *current_offset;
-		mp = (mblk_t *)*iov_or_mp;
-		p = mp->b_rptr + offset;
-		*out_data_1 = p;
-		if ((p + amt) <= mp->b_wptr) {
-			//can fit one block into this mblk
-			*out_data_1_len = amt;
-			*out_data_2 = NULL;
-			*current_offset = offset + amt;
-		} else {
-			//one block spans two mblks
-			*out_data_1_len = mp->b_wptr - p;
-			if ((mp = mp->b_cont) == NULL)
-				return;
-			*out_data_2 = mp->b_rptr;
-			*current_offset = (amt - *out_data_1_len);
-		}
-		*iov_or_mp = mp;
-		break;
-	}
-	*/
 	} /* end switch */
 }
 

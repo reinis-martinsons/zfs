@@ -71,7 +71,8 @@ static uint_t prov_tab_max = KCF_MAX_PROVIDERS;
 void
 kcf_prov_tab_destroy(void)
 {
-	if (prov_tab) kmem_free(prov_tab, prov_tab_max * sizeof (kcf_provider_desc_t *));
+	if (prov_tab) kmem_free(prov_tab, prov_tab_max *
+		sizeof (kcf_provider_desc_t *));
 }
 
 /*
@@ -483,13 +484,6 @@ kcf_free_provider_desc(kcf_provider_desc_t *desc)
 		/* free the memory associated with the mechanism info's */
 		kmem_free(desc->pd_mechanisms, sizeof (crypto_mech_info_t) *
 		    desc->pd_mech_list_count);
-
-	/* CURRENTLY UNSUPPORTED */
-	/*
-	if (desc->pd_name != NULL) {
-		kmem_free(desc->pd_name, strlen(desc->pd_name) + 1);
-	}
-	*/
 
 	if (desc->pd_sched_info.ks_taskq != NULL)
 		taskq_destroy(desc->pd_sched_info.ks_taskq);

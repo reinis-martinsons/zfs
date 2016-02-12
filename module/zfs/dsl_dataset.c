@@ -693,7 +693,7 @@ dsl_dataset_disown(dsl_dataset_t *ds, void *tag)
 {
 	ASSERT3P(ds->ds_owner, ==, tag);
 	ASSERT(ds->ds_dbuf != NULL);
-	
+
 	if (dsl_dir_phys(ds->ds_dir)->dd_keychain_obj) {
 		VERIFY0(spa_keystore_remove_keychain_record(
 			ds->ds_dir->dd_pool->dp_spa, ds));
@@ -717,7 +717,7 @@ dsl_dataset_tryown(dsl_dataset_t *ds, void *tag)
 	if (ds->ds_owner == NULL && !DS_IS_INCONSISTENT(ds)) {
 		ds->ds_owner = tag;
 		dsl_dataset_long_hold(ds, tag);
-		
+
 		if (kcobj != 0) {
 			ret = spa_keystore_create_keychain_record(spa, ds);
 			if (ret) {
@@ -730,7 +730,7 @@ dsl_dataset_tryown(dsl_dataset_t *ds, void *tag)
 		ret = SET_ERROR(EBUSY);
 	}
 	mutex_exit(&ds->ds_lock);
-	
+
 	return (ret);
 }
 
@@ -763,7 +763,7 @@ dsl_dataset_deactivate_feature(uint64_t dsobj, spa_feature_t f, dmu_tx_t *tx)
 }
 
 uint64_t
-dsl_dataset_create_sync_dd(dsl_dir_t *dd, dsl_dataset_t *origin, 
+dsl_dataset_create_sync_dd(dsl_dir_t *dd, dsl_dataset_t *origin,
 	dsl_crypto_params_t *dcp, uint64_t flags, dmu_tx_t *tx)
 {
 	dsl_pool_t *dp = dd->dd_pool;
@@ -773,7 +773,7 @@ dsl_dataset_create_sync_dd(dsl_dir_t *dd, dsl_dataset_t *origin,
 	dsl_wrapping_key_t *wkey;
 	boolean_t add_key;
 	objset_t *mos = dp->dp_meta_objset;
-	
+
 	if (origin == NULL)
 		origin = dp->dp_origin_snap;
 
@@ -798,7 +798,7 @@ dsl_dataset_create_sync_dd(dsl_dir_t *dd, dsl_dataset_t *origin,
 	    DMU_OT_NONE, 0, tx);
 	dsphys->ds_creation_time = gethrestime_sec();
 	dsphys->ds_creation_txg = tx->tx_txg == TXG_INITIAL ? 1 : tx->tx_txg;
-	
+
 	if (origin == NULL) {
 		dsphys->ds_deadlist_obj = dsl_deadlist_alloc(mos, tx);
 	} else {
@@ -863,7 +863,7 @@ dsl_dataset_create_sync_dd(dsl_dir_t *dd, dsl_dataset_t *origin,
 			    dsobj, tx));
 		}
 	}
-	
+
 	if (spa_feature_is_enabled(dp->dp_spa, SPA_FEATURE_ENCRYPTION)) {
 		if (dcp == NULL) {
 			crypt = ZIO_CRYPT_INHERIT;
@@ -873,50 +873,55 @@ dsl_dataset_create_sync_dd(dsl_dir_t *dd, dsl_dataset_t *origin,
 			LOG_CRYPTO_PARAMS(dcp);
 			crypt = dcp->cp_crypt;
 			wkey = dcp->cp_wkey;
-			add_key = (dcp->cp_cmd == ZFS_IOC_CRYPTO_ADD_KEY) ? 
+			add_key = (dcp->cp_cmd == ZFS_IOC_CRYPTO_ADD_KEY) ?
 				B_TRUE : B_FALSE;
 		}
 
 		if (!dsl_dir_is_clone(dd) && crypt != ZIO_CRYPT_OFF) {
 			if (crypt == ZIO_CRYPT_INHERIT)
-				VERIFY0(dsl_prop_get_dd(dd->dd_parent, 
-					zfs_prop_to_name(ZFS_PROP_ENCRYPTION), 8, 1, &crypt,
-					NULL, B_FALSE));
-			
-			if(wkey == NULL)
-				VERIFY0(spa_keystore_wkey_hold_ddobj(dp->dp_spa, 
+				VERIFY0(dsl_prop_get_dd(dd->dd_parent,
+					zfs_prop_to_name(ZFS_PROP_ENCRYPTION),
+					8, 1, &crypt, NULL, B_FALSE));
+
+			if (wkey == NULL)
+				VERIFY0(spa_keystore_wkey_hold_ddobj(dp->dp_spa,
 					dd->dd_parent->dd_object, FTAG, &wkey));
 			else
 				wkey->wk_ddobj = dd->dd_object;
-			
+
 			dsl_dir_phys(dd)->dd_keychain_obj =
 				dsl_keychain_create_sync(crypt, wkey, tx);
-				
+
 			if (dcp == NULL || dcp->cp_wkey == NULL)
 				dsl_wrapping_key_rele(wkey, FTAG);
 			else
-				VERIFY0(spa_keystore_load_wkey_impl(tx->tx_pool->dp_spa, wkey));
+				VERIFY0(spa_keystore_load_wkey_impl(
+					tx->tx_pool->dp_spa, wkey));
 		} else if (dsl_dir_phys(origin->ds_dir)->dd_keychain_obj != 0) {
-			VERIFY0(dsl_prop_get_dd(origin->ds_dir, 
-				zfs_prop_to_name(ZFS_PROP_ENCRYPTION), 8, 1, &crypt,
-				NULL, B_FALSE));
-			
-			if(wkey == NULL)
-				VERIFY0(spa_keystore_wkey_hold_ddobj(dp->dp_spa, 
+			VERIFY0(dsl_prop_get_dd(origin->ds_dir,
+				zfs_prop_to_name(ZFS_PROP_ENCRYPTION), 8, 1,
+				&crypt, NULL, B_FALSE));
+
+			if (wkey == NULL)
+				VERIFY0(spa_keystore_wkey_hold_ddobj(dp->dp_spa,
 					dd->dd_parent->dd_object, FTAG, &wkey));
 			else
 				wkey->wk_ddobj = dd->dd_object;
-			
-			VERIFY0(zap_update(mos, dsl_dir_phys(dd)->dd_props_zapobj, 
-				zfs_prop_to_name(ZFS_PROP_ENCRYPTION), 8, 1, &crypt, tx));
-			
+
+			VERIFY0(zap_update(mos,
+				dsl_dir_phys(dd)->dd_props_zapobj,
+				zfs_prop_to_name(ZFS_PROP_ENCRYPTION),
+				8, 1, &crypt, tx));
+
 			dsl_dir_phys(dd)->dd_keychain_obj =
-				dsl_keychain_clone_sync(origin->ds_dir, wkey, add_key, tx);
-			
+				dsl_keychain_clone_sync(origin->ds_dir, wkey,
+				add_key, tx);
+
 			if (dcp == NULL || dcp->cp_wkey == NULL)
 				dsl_wrapping_key_rele(wkey, FTAG);
 			else
-				VERIFY0(spa_keystore_load_wkey_impl(tx->tx_pool->dp_spa, wkey));
+				VERIFY0(spa_keystore_load_wkey_impl(
+					tx->tx_pool->dp_spa, wkey));
 		}
 	}
 
@@ -943,7 +948,7 @@ dsl_dataset_zero_zil(dsl_dataset_t *ds, dmu_tx_t *tx)
 
 uint64_t
 dsl_dataset_create_sync(dsl_dir_t *pdd, const char *lastname,
-    dsl_dataset_t *origin, uint64_t flags, cred_t *cr, 
+    dsl_dataset_t *origin, uint64_t flags, cred_t *cr,
     dsl_crypto_params_t *dcp, dmu_tx_t *tx)
 {
 	dsl_pool_t *dp = pdd->dd_pool;
@@ -952,10 +957,10 @@ dsl_dataset_create_sync(dsl_dir_t *pdd, const char *lastname,
 
 	ASSERT(dmu_tx_is_syncing(tx));
 	ASSERT(lastname[0] != '@');
-	
+
 	ddobj = dsl_dir_create_sync(dp, pdd, lastname, tx);
 	VERIFY0(dsl_dir_hold_obj(dp, ddobj, lastname, FTAG, &dd));
-	
+
 	dsobj = dsl_dataset_create_sync_dd(dd, origin, dcp,
 	    flags & ~DS_CREATE_FLAG_NODIRTY, tx);
 

@@ -834,7 +834,7 @@ dmu_objset_create_check(void *arg, dmu_tx_t *tx)
 		dsl_dir_rele(pdd, FTAG);
 		return (SET_ERROR(EEXIST));
 	}
-	
+
 	if (doca->doca_dcp) {
 		error = dmu_objset_create_encryption_check(pdd, doca->doca_dcp);
 		if (error != 0) {
@@ -842,10 +842,10 @@ dmu_objset_create_check(void *arg, dmu_tx_t *tx)
 			return (error);
 		}
 	}
-	
+
 	error = dsl_fs_ss_limit_check(pdd, 1, ZFS_PROP_FILESYSTEM_LIMIT, NULL,
 	    doca->doca_cred);
-		
+
 	dsl_dir_rele(pdd, FTAG);
 
 	return (error);
@@ -885,7 +885,7 @@ dmu_objset_create_sync(void *arg, dmu_tx_t *tx)
 
 int
 dmu_objset_create(const char *name, dmu_objset_type_t type, uint64_t flags,
-    dsl_crypto_params_t *dcp, void (*func)(objset_t *os, void *arg, 
+    dsl_crypto_params_t *dcp, void (*func)(objset_t *os, void *arg,
 	cred_t *cr, dmu_tx_t *tx), void *arg)
 {
 	dmu_objset_create_arg_t doca;
@@ -948,9 +948,9 @@ dmu_objset_clone_check(void *arg, dmu_tx_t *tx)
 		dsl_dataset_rele(origin, FTAG);
 		return (SET_ERROR(EINVAL));
 	}
-	
+
 	if (doca->doca_dcp) {
-		error = dmu_objset_clone_encryption_check(pdd, origin->ds_dir, 
+		error = dmu_objset_clone_encryption_check(pdd, origin->ds_dir,
 			doca->doca_dcp);
 		if (error != 0) {
 			dsl_dataset_rele(origin, FTAG);
@@ -958,7 +958,7 @@ dmu_objset_clone_check(void *arg, dmu_tx_t *tx)
 			return (error);
 		}
 	}
-	
+
 	dsl_dataset_rele(origin, FTAG);
 	dsl_dir_rele(pdd, FTAG);
 
@@ -992,7 +992,7 @@ dmu_objset_clone_sync(void *arg, dmu_tx_t *tx)
 }
 
 int
-dmu_objset_clone(const char *clone, const char *origin, 
+dmu_objset_clone(const char *clone, const char *origin,
 	dsl_crypto_params_t *dcp)
 {
 	dmu_objset_clone_arg_t doca;

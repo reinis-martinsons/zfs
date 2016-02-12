@@ -42,21 +42,13 @@
  *   mechanisms.
  */
 
-/* CURRENTLY UNSUPPORTED */
-/*
-static struct modlmisc modlmisc = {
-	&mod_miscops,
-	"SHA2 Message-Digest Algorithm"
-};
-*/
-
 static struct modlcrypto modlcrypto = {
 	&mod_cryptoops,
 	"SHA2 Kernel SW Provider"
 };
 
 static struct modlinkage modlinkage = {
-	MODREV_1, {/*&modlmisc,*/ &modlcrypto, NULL}
+	MODREV_1, {&modlcrypto, NULL}
 };
 
 /*
@@ -233,7 +225,6 @@ static crypto_provider_info_t sha2_prov_info = {{{{
 	CRYPTO_SPI_VERSION_1,
 	"SHA2 Software Provider",
 	CRYPTO_SW_PROVIDER,
-	//{&modlinkage}, /* CURRENTLY UNSUPPORTED
 	NULL,
 	&sha2_crypto_ops,
 	sizeof (sha2_mech_info_tab)/sizeof (crypto_mech_info_t),
@@ -267,7 +258,7 @@ int
 sha2_mod_fini(void)
 {
 	int ret;
-	
+
 	if (sha2_prov_handle != 0) {
 		if ((ret = crypto_unregister_provider(sha2_prov_handle)) !=
 		    CRYPTO_SUCCESS) {
@@ -278,18 +269,9 @@ sha2_mod_fini(void)
 		}
 		sha2_prov_handle = 0;
 	}
-	
+
 	return (mod_remove(&modlinkage));
 }
-
-/* CURRENTLY UNSUPPORTED */
-/*
-int
-_info(struct modinfo *modinfop)
-{
-	return (mod_info(&modlinkage, modinfop));
-}
-*/
 
 /*
  * KCF software provider control entry points.
@@ -484,127 +466,6 @@ sha2_digest_final_uio(SHA2_CTX *sha2_ctx, crypto_data_t *digest,
 	return (CRYPTO_SUCCESS);
 }
 
-/* CURRENTLY UNSUPPORTED */
-/*
- * Helper SHA2 digest update for mblk's.
- */
- /*
-static int
-sha2_digest_update_mblk(SHA2_CTX *sha2_ctx, crypto_data_t *data)
-{
-	off_t offset = data->cd_offset;
-	size_t length = data->cd_length;
-	mblk_t *mp;
-	size_t cur_len;
-
-	// Jump to the first mblk_t containing data to be digested.
-	for (mp = data->cd_mp; mp != NULL && offset >= MBLKL(mp);
-	    offset -= MBLKL(mp), mp = mp->b_cont)
-		;
-	if (mp == NULL) {
-		// The caller specified an offset that is larger than the
-		// total size of the buffers it provided.
-		return (CRYPTO_DATA_LEN_RANGE);
-	}
-
-	//Now do the digesting on the mblk chain.
-	while (mp != NULL && length > 0) {
-		cur_len = MIN(MBLKL(mp) - offset, length);
-		SHA2Update(sha2_ctx, mp->b_rptr + offset, cur_len);
-		length -= cur_len;
-		offset = 0;
-		mp = mp->b_cont;
-	}
-
-	if (mp == NULL && length > 0) {
-		//The end of the mblk was reached but the length requested
-		// could not be processed, i.e. The caller requested
-		// to digest more data than it provided.
-		return (CRYPTO_DATA_LEN_RANGE);
-	}
-
-	return (CRYPTO_SUCCESS);
-}
-*/
-
-/* CURRENTLY UNSUPPORTED */
-/*
- * Helper SHA2 digest final for mblk's.
- * digest_len is the length of the desired digest. If digest_len
- * is smaller than the default SHA2 digest length, the caller
- * must pass a scratch buffer, digest_scratch, which must
- * be at least the algorithm's digest length bytes.
- */
- /*
-static int
-sha2_digest_final_mblk(SHA2_CTX *sha2_ctx, crypto_data_t *digest,
-    ulong_t digest_len, uchar_t *digest_scratch)
-{
-	off_t offset = digest->cd_offset;
-	mblk_t *mp;
-
-	// Jump to the first mblk_t that will be used to store the digest.
-	for (mp = digest->cd_mp; mp != NULL && offset >= MBLKL(mp);
-	    offset -= MBLKL(mp), mp = mp->b_cont)
-		;
-	if (mp == NULL) {
-		// The caller specified an offset that is larger than the
-		// total size of the buffers it provided.
-		return (CRYPTO_DATA_LEN_RANGE);
-	}
-
-	if (offset + digest_len <= MBLKL(mp)) {
-		// The computed SHA2 digest will fit in the current mblk.
-		// Do the SHA2Final() in-place.
-		if (((sha2_ctx->algotype <= SHA256_HMAC_GEN_MECH_INFO_TYPE) &&
-		    (digest_len != SHA256_DIGEST_LENGTH)) ||
-		    ((sha2_ctx->algotype > SHA256_HMAC_GEN_MECH_INFO_TYPE) &&
-		    (digest_len != SHA512_DIGEST_LENGTH))) {
-
-			// The caller requested a short digest. Digest
-			// into a scratch buffer and return to
-			// the user only what was requested.
-			SHA2Final(digest_scratch, sha2_ctx);
-			bcopy(digest_scratch, mp->b_rptr + offset, digest_len);
-		} else {
-			SHA2Final(mp->b_rptr + offset, sha2_ctx);
-		}
-	} else {
-		// The computed digest will be crossing one or more mblk's.
-		// This is bad performance-wise but we need to support it.
-		// Allocate a small scratch buffer on the stack and
-		// copy it piece meal to the specified digest iovec's.
-		uchar_t digest_tmp[SHA512_DIGEST_LENGTH];
-		off_t scratch_offset = 0;
-		size_t length = digest_len;
-		size_t cur_len;
-
-		SHA2Final(digest_tmp, sha2_ctx);
-
-		while (mp != NULL && length > 0) {
-			cur_len = MIN(MBLKL(mp) - offset, length);
-			bcopy(digest_tmp + scratch_offset,
-			    mp->b_rptr + offset, cur_len);
-
-			length -= cur_len;
-			mp = mp->b_cont;
-			scratch_offset += cur_len;
-			offset = 0;
-		}
-
-		if (mp == NULL && length > 0) {
-			// The end of the specified mblk was reached but
-			// the length requested could not be processed, i.e.
-			// The caller requested to digest more data than it
-			// provided.
-			return (CRYPTO_DATA_LEN_RANGE);
-		}
-	}
-
-	return (CRYPTO_SUCCESS);
-}
-*/
-
 /* ARGSUSED */
 static int
 sha2_digest(crypto_ctx_t *ctx, crypto_data_t *data, crypto_data_t *digest,
@@ -652,13 +513,6 @@ sha2_digest(crypto_ctx_t *ctx, crypto_data_t *data, crypto_data_t *digest,
 		ret = sha2_digest_update_uio(&PROV_SHA2_CTX(ctx)->sc_sha2_ctx,
 		    data);
 		break;
-	/* CURRENTLY UNSUPPORTED */
-	/*
-	case CRYPTO_DATA_MBLK:
-		ret = sha2_digest_update_mblk(&PROV_SHA2_CTX(ctx)->sc_sha2_ctx,
-		    data);
-		break;
-	*/
 	default:
 		ret = CRYPTO_ARGUMENTS_BAD;
 	}
@@ -684,13 +538,6 @@ sha2_digest(crypto_ctx_t *ctx, crypto_data_t *data, crypto_data_t *digest,
 		ret = sha2_digest_final_uio(&PROV_SHA2_CTX(ctx)->sc_sha2_ctx,
 		    digest, sha_digest_len, NULL);
 		break;
-	/* CURRENTLY UNSUPPORTED */
-	/*
-	case CRYPTO_DATA_MBLK:
-		ret = sha2_digest_final_mblk(&PROV_SHA2_CTX(ctx)->sc_sha2_ctx,
-		    digest, sha_digest_len, NULL);
-		break;
-	*/
 	default:
 		ret = CRYPTO_ARGUMENTS_BAD;
 	}
@@ -729,13 +576,6 @@ sha2_digest_update(crypto_ctx_t *ctx, crypto_data_t *data,
 		ret = sha2_digest_update_uio(&PROV_SHA2_CTX(ctx)->sc_sha2_ctx,
 		    data);
 		break;
-	/* CURRENTLY UNSUPPORTED */
-	/*
-	case CRYPTO_DATA_MBLK:
-		ret = sha2_digest_update_mblk(&PROV_SHA2_CTX(ctx)->sc_sha2_ctx,
-		    data);
-		break;
-	*/
 	default:
 		ret = CRYPTO_ARGUMENTS_BAD;
 	}
@@ -789,13 +629,6 @@ sha2_digest_final(crypto_ctx_t *ctx, crypto_data_t *digest,
 		ret = sha2_digest_final_uio(&PROV_SHA2_CTX(ctx)->sc_sha2_ctx,
 		    digest, sha_digest_len, NULL);
 		break;
-	/* CURRENTLY UNSUPPORTED */
-	/*
-	case CRYPTO_DATA_MBLK:
-		ret = sha2_digest_final_mblk(&PROV_SHA2_CTX(ctx)->sc_sha2_ctx,
-		    digest, sha_digest_len, NULL);
-		break;
-	*/
 	default:
 		ret = CRYPTO_ARGUMENTS_BAD;
 	}
@@ -838,12 +671,6 @@ sha2_digest_atomic(crypto_provider_handle_t provider,
 	case CRYPTO_DATA_UIO:
 		ret = sha2_digest_update_uio(&sha2_ctx, data);
 		break;
-	/* CURRENTLY UNSUPPORTED */
-	/*
-	case CRYPTO_DATA_MBLK:
-		ret = sha2_digest_update_mblk(&sha2_ctx, data);
-		break;
-	*/
 	default:
 		ret = CRYPTO_ARGUMENTS_BAD;
 	}
@@ -876,13 +703,6 @@ sha2_digest_atomic(crypto_provider_handle_t provider,
 		ret = sha2_digest_final_uio(&sha2_ctx, digest,
 		    sha_digest_len, NULL);
 		break;
-	/* CURRENTLY UNSUPPORTED */
-	/*
-	case CRYPTO_DATA_MBLK:
-		ret = sha2_digest_final_mblk(&sha2_ctx, digest,
-		    sha_digest_len, NULL);
-		break;
-	*/
 	default:
 		ret = CRYPTO_ARGUMENTS_BAD;
 	}
@@ -1071,13 +891,6 @@ sha2_mac_update(crypto_ctx_t *ctx, crypto_data_t *data,
 		ret = sha2_digest_update_uio(
 		    &PROV_SHA2_HMAC_CTX(ctx)->hc_icontext, data);
 		break;
-	/* CURRENTLY UNSUPPORTED */
-	/*
-	case CRYPTO_DATA_MBLK:
-		ret = sha2_digest_update_mblk(
-		    &PROV_SHA2_HMAC_CTX(ctx)->hc_icontext, data);
-		break;
-	*/
 	default:
 		ret = CRYPTO_ARGUMENTS_BAD;
 	}
@@ -1167,14 +980,6 @@ sha2_mac_final(crypto_ctx_t *ctx, crypto_data_t *mac, crypto_req_handle_t req)
 		    &PROV_SHA2_HMAC_CTX(ctx)->hc_ocontext, mac,
 		    digest_len, digest);
 		break;
-	/* CURRENTLY UNSUPPORTED */
-	/*
-	case CRYPTO_DATA_MBLK:
-		ret = sha2_digest_final_mblk(
-		    &PROV_SHA2_HMAC_CTX(ctx)->hc_ocontext, mac,
-		    digest_len, digest);
-		break;
-	*/
 	default:
 		ret = CRYPTO_ARGUMENTS_BAD;
 	}
@@ -1201,7 +1006,6 @@ sha2_mac_final(crypto_ctx_t *ctx, crypto_data_t *mac, crypto_req_handle_t req)
 	case CRYPTO_DATA_UIO:						\
 		ret = sha2_digest_update_uio(&(ctx).hc_icontext, data);	\
 		break;							\
-	/* CURRENTLY UNSUPPORTED CRYPTO_DATA_MBLK */	\
 	default:							\
 		ret = CRYPTO_ARGUMENTS_BAD;				\
 	}								\
@@ -1331,13 +1135,6 @@ sha2_mac_atomic(crypto_provider_handle_t provider,
 		ret = sha2_digest_final_uio(&sha2_hmac_ctx.hc_ocontext, mac,
 		    digest_len, digest);
 		break;
-	/* CURRENTLY UNSUPPORTED */
-	/*
-	case CRYPTO_DATA_MBLK:
-		ret = sha2_digest_final_mblk(&sha2_hmac_ctx.hc_ocontext, mac,
-		    digest_len, digest);
-		break;
-	*/
 	default:
 		ret = CRYPTO_ARGUMENTS_BAD;
 	}
@@ -1519,43 +1316,6 @@ sha2_mac_verify_atomic(crypto_provider_handle_t provider,
 		}
 		break;
 	}
-
-	/* CURRENTLY UNSUPPORTED */
-	/*
-	case CRYPTO_DATA_MBLK: {
-		off_t offset = mac->cd_offset;
-		mblk_t *mp;
-		off_t scratch_offset = 0;
-		size_t length = digest_len;
-		size_t cur_len;
-
-		// jump to the first mblk_t containing the expected digest
-		for (mp = mac->cd_mp; mp != NULL && offset >= MBLKL(mp);
-		    offset -= MBLKL(mp), mp = mp->b_cont)
-			;
-		if (mp == NULL) {
-			// The caller specified an offset that is larger than
-			// the total size of the buffers it provided.
-			ret = CRYPTO_DATA_LEN_RANGE;
-			break;
-		}
-
-		while (mp != NULL && length > 0) {
-			cur_len = MIN(MBLKL(mp) - offset, length);
-			if (bcmp(digest + scratch_offset,
-			    mp->b_rptr + offset, cur_len) != 0) {
-				ret = CRYPTO_INVALID_MAC;
-				break;
-			}
-
-			length -= cur_len;
-			mp = mp->b_cont;
-			scratch_offset += cur_len;
-			offset = 0;
-		}
-		break;
-	}
-	*/
 
 	default:
 		ret = CRYPTO_ARGUMENTS_BAD;

@@ -30,7 +30,6 @@
 extern "C" {
 #endif
 
-//#include <sys/strsun.h>
 #include <sys/systm.h>
 #include <sys/sysmacros.h>
 #include <sys/types.h>

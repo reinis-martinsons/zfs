@@ -69,20 +69,8 @@
 static void Encode(uint8_t *, uint32_t *, size_t);
 static void Encode64(uint8_t *, uint64_t *, size_t);
 
-/* CURRENTLY UNSUPPORTED */
-/*
-#if	defined(__amd64)
-#define	SHA512Transform(ctx, in) SHA512TransformBlocks((ctx), (in), 1)
-#define	SHA256Transform(ctx, in) SHA256TransformBlocks((ctx), (in), 1)
-
-void SHA512TransformBlocks(SHA2_CTX *ctx, const void *in, size_t num);
-void SHA256TransformBlocks(SHA2_CTX *ctx, const void *in, size_t num);
-
-#else
-*/
 static void SHA256Transform(SHA2_CTX *, const uint8_t *);
 static void SHA512Transform(SHA2_CTX *, const uint8_t *);
-//#endif	/* __amd64 */
 
 static uint8_t PADDING[128] = { 0x80, /* all zeros */ };
 
@@ -148,8 +136,6 @@ static uint8_t PADDING[128] = { 0x80, /* all zeros */ };
 	    ((uint64_t)(addr)[6] << 8) | (uint64_t)(addr)[7])
 #endif	/* _BIG_ENDIAN */
 
-
-//#if	!defined(__amd64)
 /* SHA256 Transform */
 
 static void
@@ -607,7 +593,6 @@ SHA512Transform(SHA2_CTX *ctx, const uint8_t *blk)
 	ctx->state.s64[7] += h;
 
 }
-//#endif	/* !__amd64 */
 
 
 /*
@@ -770,12 +755,6 @@ SHA2Update(SHA2_CTX *ctx, const void *inptr, size_t input_len)
 	uint32_t	i, buf_index, buf_len, buf_limit;
 	const uint8_t	*input = inptr;
 	uint32_t	algotype = ctx->algotype;
-	/* CURRENTLY UNSUPPORTED */
-	/*
-#if defined(__amd64)
-	uint32_t	block_count;
-#endif
-	*/
 
 	/* check for noop */
 	if (input_len == 0)
@@ -831,7 +810,6 @@ SHA2Update(SHA2_CTX *ctx, const void *inptr, size_t input_len)
 			i = buf_len;
 		}
 
-//#if !defined(__amd64)
 		if (algotype <= SHA256_HMAC_GEN_MECH_INFO_TYPE) {
 			for (; i + buf_limit - 1 < input_len; i += buf_limit) {
 				SHA256Transform(ctx, &input[i]);
@@ -841,27 +819,6 @@ SHA2Update(SHA2_CTX *ctx, const void *inptr, size_t input_len)
 				SHA512Transform(ctx, &input[i]);
 			}
 		}
-
-		/* CURRENTLY UNSUPPORTED */
-		/*
-#else
-		if (algotype <= SHA256_HMAC_GEN_MECH_INFO_TYPE) {
-			block_count = (input_len - i) >> 6;
-			if (block_count > 0) {
-				SHA256TransformBlocks(ctx, &input[i],
-				    block_count);
-				i += block_count << 6;
-			}
-		} else {
-			block_count = (input_len - i) >> 7;
-			if (block_count > 0) {
-				SHA512TransformBlocks(ctx, &input[i],
-				    block_count);
-				i += block_count << 7;
-			}
-		}
-#endif
-		*/
 
 		/*
 		 * general optimization:

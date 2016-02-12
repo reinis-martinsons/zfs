@@ -1268,7 +1268,7 @@ zfs_secpolicy_tmp_snapshot(zfs_cmd_t *zc, nvlist_t *innvl, cred_t *cr)
 static int
 zfs_secpolicy_crypto(zfs_cmd_t *zc, nvlist_t *innvl, cred_t *cr)
 {
-	return 0;
+	return (0);
 }
 
 /*
@@ -3183,22 +3183,22 @@ zfs_ioc_create(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 			return (error);
 		}
 	}
-	
+
 	LOG_DEBUG("\n\nzfs create");
-	
+
 	error = dsl_crypto_params_init_nvlist(nvprops, &dcp);
 	if (error != 0) {
 		nvlist_free(zct.zct_zplprops);
 		return (error);
 	}
-	
+
 	LOG_CRYPTO_PARAMS(&dcp);
 
 	error = dmu_objset_create(fsname, type,
 	    is_insensitive ? DS_FLAG_CI_DATASET : 0, &dcp, cbfunc, &zct);
-	
+
 	nvlist_free(zct.zct_zplprops);
-	if(dcp.cp_wkey && error != 0)
+	if (dcp.cp_wkey && error != 0)
 		dsl_crypto_params_destroy(&dcp);
 
 	/*
@@ -3246,20 +3246,20 @@ zfs_ioc_clone(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 
 	if (dataset_namecheck(origin_name, NULL, NULL) != 0)
 		return (SET_ERROR(EINVAL));
-	
+
 	LOG_DEBUG("\n\nzfs clone");
-	
+
 	error = dsl_crypto_params_init_nvlist(nvprops, &dcp);
 	if (error != 0)
 		return (error);
-	
+
 	LOG_CRYPTO_PARAMS(&dcp);
-	
+
 	error = dmu_objset_clone(fsname, origin_name, &dcp);
-	
-	if(dcp.cp_wkey && error != 0)
+
+	if (dcp.cp_wkey && error != 0)
 		dsl_crypto_params_destroy(&dcp);
-	
+
 	LOG_DEBUG("post clone");
 
 	/*
@@ -5319,55 +5319,55 @@ zfs_ioc_crypto(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl) {
 	uint64_t crypto_cmd;
 	nvlist_t *args;
 	dsl_pool_t *dp = NULL;
-	
+
 	ret = dsl_pool_hold(dsname, FTAG, &dp);
 	if (ret)
 		return (ret);
-	
+
 	if (!spa_feature_is_enabled(dp->dp_spa, SPA_FEATURE_ENCRYPTION)) {
 		dsl_pool_rele(dp, FTAG);
-		return SET_ERROR(EINVAL);
+		return (SET_ERROR(EINVAL));
 	}
-	
+
 	dsl_pool_rele(dp, FTAG);
-	
+
 	if (strchr(dsname, '@') || strchr(dsname, '%'))
 		return (SET_ERROR(EINVAL));
-	
+
 	ret = nvlist_lookup_uint64(innvl, "crypto_cmd", &crypto_cmd);
 	if (ret)
-		return SET_ERROR(EINVAL);
-	
+		return (SET_ERROR(EINVAL));
+
 	LOG_DEBUG("\n\nzfs key: crypto_cmd = %u", (unsigned)crypto_cmd);
-	
-	switch(crypto_cmd){
+
+	switch (crypto_cmd) {
 	case ZFS_IOC_CRYPTO_LOAD_KEY:
 		ret = nvlist_lookup_nvlist(innvl, "args", &args);
 		if (ret) {
 			ret = SET_ERROR(EINVAL);
 			goto error;
 		}
-		
+
 		ret = dsl_crypto_params_init_nvlist(args, &dcp);
 		if (ret)
 			goto error;
-		
+
 		ret = spa_keystore_load_wkey(dp->dp_spa, dsname, &dcp);
 		if (ret)
 			goto error;
-		
+
 		break;
 	case ZFS_IOC_CRYPTO_UNLOAD_KEY:
 		ret = spa_keystore_unload_wkey(dp->dp_spa, dsname);
 		if (ret)
 			goto error;
-		
+
 		break;
 	case ZFS_IOC_CRYPTO_ADD_KEY:
 		ret = spa_keystore_keychain_add_key(dp->dp_spa, dsname);
 		if (ret)
 			goto error;
-		
+
 		break;
 	case ZFS_IOC_CRYPTO_REWRAP:
 		ret = nvlist_lookup_nvlist(innvl, "args", &args);
@@ -5375,27 +5375,27 @@ zfs_ioc_crypto(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl) {
 			ret = SET_ERROR(EINVAL);
 			goto error;
 		}
-		
+
 		ret = dsl_crypto_params_init_nvlist(args, &dcp);
 		if (ret)
 			goto error;
-		
+
 		ret = spa_keystore_rewrap(dp->dp_spa, dsname, &dcp);
 		if (ret)
 			goto error;
-	
+
 		break;
 	default:
 		ret = SET_ERROR(EINVAL);
 		goto error;
 	}
-	
+
 	return (0);
-	
+
 error:
 	if (dcp.cp_wkey)
 		dsl_wrapping_key_free(dcp.cp_wkey);
-		
+
 	return (ret);
 }
 
@@ -5566,7 +5566,7 @@ zfs_ioctl_init(void)
 	    zfs_ioc_destroy_bookmarks, zfs_secpolicy_destroy_bookmarks,
 	    POOL_NAME,
 	    POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY, B_TRUE, B_TRUE);
-		
+
 	zfs_ioctl_register("cypto", ZFS_IOC_CRYPTO,
 	    zfs_ioc_crypto, zfs_secpolicy_crypto,
 	    DATASET_NAME, POOL_CHECK_SUSPENDED, B_TRUE, B_FALSE);
@@ -5926,7 +5926,7 @@ zfsdev_ioctl(struct file *filp, unsigned cmd, unsigned long arg)
 	char *saved_poolname = NULL;
 	nvlist_t *innvl = NULL;
 	fstrans_cookie_t cookie;
-	
+
 	vecnum = cmd - ZFS_IOC_FIRST;
 	if (vecnum >= sizeof (zfs_ioc_vec) / sizeof (zfs_ioc_vec[0]))
 		return (-SET_ERROR(EINVAL));
@@ -5980,7 +5980,7 @@ zfsdev_ioctl(struct file *filp, unsigned cmd, unsigned long arg)
 	case NO_NAME:
 		break;
 	}
-	
+
 	if (error == 0 && !(flag & FKIOCTL))
 		error = vec->zvec_secpolicy(zc, innvl, CRED());
 

@@ -242,7 +242,7 @@ zpool_feature_init(void)
 	    "Support for blocks larger than 128KB.",
 	    ZFEATURE_FLAG_PER_DATASET, large_blocks_deps);
 	}
-	
+
 	zfeature_register(SPA_FEATURE_ENCRYPTION,
 	    "com.datto:encryption", "encryption",
 	    "Support for dataset level encryption",

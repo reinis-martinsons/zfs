@@ -576,11 +576,10 @@ kcf_resubmit_request(kcf_areq_node_t *areq)
 	return (error);
 }
 
-//#define	EMPTY_TASKQ(tq)	((tq)->tq_task.tqent_next == &(tq)->tq_task)
-static inline int EMPTY_TASKQ(taskq_t *tq){
-	return tq->tq_lowest_id == tq->tq_next_id;
+static inline int EMPTY_TASKQ(taskq_t *tq)
+{
+	return (tq->tq_lowest_id == tq->tq_next_id);
 }
-
 
 /*
  * Routine called by both ioctl and k-api. The consumer should
@@ -1048,22 +1047,32 @@ kcf_context_cache_destructor(void *buf, void *cdrarg)
 	mutex_destroy(&kctx->kc_in_use_lock);
 }
 
-void kcf_sched_destroy(void){
+void
+kcf_sched_destroy(void)
+{
 	int i;
-	
-	if (kcf_misc_kstat) kstat_delete(kcf_misc_kstat);
-	
-	if (kcfpool) kmem_free(kcfpool, sizeof (kcf_pool_t));
-	
+
+	if (kcf_misc_kstat)
+		kstat_delete(kcf_misc_kstat);
+
+	if (kcfpool)
+		kmem_free(kcfpool, sizeof (kcf_pool_t));
+
 	for (i = 0; i < REQID_TABLES; i++) {
-		if(kcf_reqid_table[i]) kmem_free(kcf_reqid_table[i], sizeof (kcf_reqid_table_t));
+		if (kcf_reqid_table[i])
+			kmem_free(kcf_reqid_table[i],
+				sizeof (kcf_reqid_table_t));
 	}
-	
-	if (gswq) kmem_free(gswq, sizeof(kcf_global_swq_t));
-	
-	if (kcf_context_cache) kmem_cache_destroy(kcf_context_cache);
-	if (kcf_areq_cache) kmem_cache_destroy(kcf_areq_cache);
-	if (kcf_sreq_cache) kmem_cache_destroy(kcf_sreq_cache);
+
+	if (gswq)
+		kmem_free(gswq, sizeof (kcf_global_swq_t));
+
+	if (kcf_context_cache)
+		kmem_cache_destroy(kcf_context_cache);
+	if (kcf_areq_cache)
+		kmem_cache_destroy(kcf_areq_cache);
+	if (kcf_sreq_cache)
+		kmem_cache_destroy(kcf_sreq_cache);
 }
 
 /*
@@ -1094,9 +1103,6 @@ kcf_sched_init(void)
 	    sizeof (struct kcf_context), 64, kcf_context_cache_constructor,
 	    kcf_context_cache_destructor, NULL, NULL, NULL, 0);
 
-	/* CURRENTLY UNSUPPORTED */
-	//mutex_init(&kcf_dh_lock, NULL, MUTEX_DEFAULT, NULL);
-
 	gswq = kmem_alloc(sizeof (kcf_global_swq_t), KM_SLEEP);
 
 	mutex_init(&gswq->gs_lock, NULL, MUTEX_DEFAULT, NULL);
@@ -1119,11 +1125,6 @@ kcf_sched_init(void)
 	/* Initialize the event notification list variables */
 	mutex_init(&ntfy_list_lock, NULL, MUTEX_DEFAULT, NULL);
 	cv_init(&ntfy_list_cv, NULL, CV_DEFAULT, NULL);
-
-	/* CURRENTLY UNSUPPORTED */
-	/* Initialize the crypto_bufcall list variables */
-	//mutex_init(&cbuf_list_lock, NULL, MUTEX_DEFAULT, NULL);
-	//cv_init(&cbuf_list_cv, NULL, CV_DEFAULT, NULL);
 
 	/* Create the kcf kstat */
 	kcf_misc_kstat = kstat_create("kcf", 0, "framework_stats", "crypto",

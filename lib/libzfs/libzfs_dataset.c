@@ -3307,7 +3307,7 @@ zfs_create(libzfs_handle_t *hdl, const char *path, zfs_type_t type,
 			return (zfs_error(hdl, EZFS_BADPROP, errbuf));
 		}
 	}
-	
+
 	(void) parent_name(path, parent, sizeof (parent));
 	if (zfs_crypto_create(hdl, props, parent) != 0)
 		return (zfs_error(hdl, EZFS_CRYPTOFAILED, errbuf));
@@ -3528,7 +3528,7 @@ zfs_clone(zfs_handle_t *zhp, const char *target, nvlist_t *props,
 		    zhp, zhp->zpool_hdl, errbuf)) == NULL)
 			return (-1);
 	}
-	
+
 	if (zfs_crypto_clone(hdl, zhp, props, parent, add_key) != 0)
 		return (zfs_error(hdl, EZFS_CRYPTOFAILED, errbuf));
 

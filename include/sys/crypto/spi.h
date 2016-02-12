@@ -546,30 +546,6 @@ typedef struct crypto_ops {
 #define	co_nostore_key_ops		cou.cou_v3.co_nostore_key_ops
 
 /*
- * Provider device specification passed during registration.
- *
- * Software providers set the pi_provider_type field of provider_info_t
- * to CRYPTO_SW_PROVIDER, and set the pd_sw field of
- * crypto_provider_dev_t to the address of their modlinkage.
- *
- * Hardware providers set the pi_provider_type field of provider_info_t
- * to CRYPTO_HW_PROVIDER, and set the pd_hw field of
- * crypto_provider_dev_t to the dev_info structure corresponding
- * to the device instance being registered.
- *
- * Logical providers set the pi_provider_type field of provider_info_t
- * to CRYPTO_LOGICAL_PROVIDER, and set the pd_hw field of
- * crypto_provider_dev_t to the dev_info structure corresponding
- * to the device instance being registered.
- */
-
-/* CURRENTLY UNSUPPORTED */
-//typedef union crypto_provider_dev {
-//	struct modlinkage	*pd_sw; /* for CRYPTO_SW_PROVIDER */
-//	dev_info_t		*pd_hw; /* for CRYPTO_HW_PROVIDER */
-//} crypto_provider_dev_t;
-
-/*
  * The mechanism info structure crypto_mech_info_t contains a function group
  * bit mask cm_func_group_mask. This field, of type crypto_func_group_t,
  * specifies the provider entry point that can be used a particular
@@ -674,7 +650,6 @@ typedef struct crypto_provider_info_v1 {
 	uint_t				pi_interface_version;
 	char				*pi_provider_description;
 	crypto_provider_type_t		pi_provider_type;
-	//crypto_provider_dev_t		pi_provider_dev; /* CURRENTLY UNSUPPORTED */
 	crypto_provider_handle_t	pi_provider_handle;
 	crypto_ops_t			*pi_ops_vector;
 	uint_t				pi_mech_list_count;
@@ -698,8 +673,6 @@ typedef struct crypto_provider_info {
 #define	pi_interface_version		piu.piu_v1.pi_interface_version
 #define	pi_provider_description		piu.piu_v1.pi_provider_description
 #define	pi_provider_type		piu.piu_v1.pi_provider_type
-/* CURRENTLY UNSUPPORTED */
-//#define	pi_provider_dev			piu.piu_v1.pi_provider_dev
 #define	pi_provider_handle		piu.piu_v1.pi_provider_handle
 #define	pi_ops_vector			piu.piu_v1.pi_ops_vector
 #define	pi_mech_list_count		piu.piu_v1.pi_mech_list_count

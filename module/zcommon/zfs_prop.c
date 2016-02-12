@@ -101,7 +101,7 @@ zfs_prop_init(void)
 		{ "lz4",	ZIO_COMPRESS_LZ4 },
 		{ NULL }
 	};
-	
+
 	static zprop_index_t crypto_table[] = {
 		{ "on",		ZIO_CRYPT_ON },
 		{ "off",	ZIO_CRYPT_OFF },
@@ -187,7 +187,7 @@ zfs_prop_init(void)
 		{ "on",		1 },
 		{ NULL }
 	};
-	
+
 	static zprop_index_t keystatus_table[] = {
 		{ "none",			ZFS_KEYSTATUS_NONE},
 		{ "unavailable",	ZFS_KEYSTATUS_UNAVAILABLE},
@@ -261,7 +261,7 @@ zfs_prop_init(void)
 	    "on | off | lzjb | gzip | gzip-[1-9] | zle | lz4", "COMPRESS",
 	    compress_table);
 	zprop_register_index(ZFS_PROP_ENCRYPTION, "encryption",
-	    ZIO_CRYPT_DEFAULT, PROP_ONETIME, ZFS_TYPE_DATASET, 
+	    ZIO_CRYPT_DEFAULT, PROP_ONETIME, ZFS_TYPE_DATASET,
 		"on | off | aes-128-ccm | aes-192-ccm | aes-256-ccm | "
 		"aes-128-gcm | aes-192-gcm | aes-256-gcm", "ENCRYPTION",
 		crypto_table);
@@ -337,8 +337,9 @@ zfs_prop_init(void)
 	zprop_register_index(ZFS_PROP_DEFER_DESTROY, "defer_destroy", 0,
 	    PROP_READONLY, ZFS_TYPE_SNAPSHOT, "yes | no", "DEFER_DESTROY",
 	    boolean_table);
-	zprop_register_index(ZFS_PROP_KEYSTATUS, "keystatus", ZFS_KEYSTATUS_NONE,
-	    PROP_READONLY, ZFS_TYPE_DATASET, "none | unavailable | available",
+	zprop_register_index(ZFS_PROP_KEYSTATUS, "keystatus",
+		ZFS_KEYSTATUS_NONE, PROP_READONLY, ZFS_TYPE_DATASET,
+		"none | unavailable | available",
 		"KEYSTATUS", keystatus_table);
 
 	/* set once index properties */
@@ -389,8 +390,8 @@ zfs_prop_init(void)
 	    "none", PROP_DEFAULT, ZFS_TYPE_DATASET, "<selinux rootcontext>",
 	    "ROOTCONTEXT");
 	zprop_register_string(ZFS_PROP_KEYSOURCE, "keysource",
-	    "none", PROP_INHERIT, ZFS_TYPE_DATASET, "<prompt | file>,<passphrase | raw>",
-	    "KEYSOURCE");
+	    "none", PROP_INHERIT, ZFS_TYPE_DATASET,
+	    "<prompt | file>,<passphrase | raw>", "KEYSOURCE");
 
 	/* readonly number properties */
 	zprop_register_number(ZFS_PROP_USED, "used", 0, PROP_READONLY,

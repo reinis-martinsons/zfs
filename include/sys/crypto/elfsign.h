@@ -33,7 +33,7 @@ extern "C" {
 /*
  * Consolidation Private Interface for elfsign/libpkcs11/kcfd
  */
- 
+
 #include <sys/zfs_context.h>
 
 /*

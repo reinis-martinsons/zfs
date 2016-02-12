@@ -23,11 +23,6 @@
  * Use is subject to license terms.
  */
 
-/*
-#include <sys/strsun.h>
-#include <netinet/in.h>
-*/
-
 #include <sys/types.h>
 #include <sys/systm.h>
 #include <sys/ddi.h>
@@ -79,22 +74,22 @@
 /* EXPORT DELETE START */
 
 #ifdef	__amd64
-	/* External assembly functions: */
-	extern void aes_encrypt_impl(const uint32_t rk[], int Nr, const uint32_t pt[4],
-		uint32_t ct[4]);
-	extern void aes_decrypt_impl(const uint32_t rk[], int Nr, const uint32_t ct[4],
-		uint32_t pt[4]);
-	#define	AES_ENCRYPT_IMPL		aes_encrypt_impl
-	#define	AES_DECRYPT_IMPL		aes_decrypt_impl
+/* External assembly functions: */
+extern void aes_encrypt_impl(const uint32_t rk[], int Nr, const uint32_t pt[4],
+	uint32_t ct[4]);
+extern void aes_decrypt_impl(const uint32_t rk[], int Nr, const uint32_t ct[4],
+	uint32_t pt[4]);
+#define	AES_ENCRYPT_IMPL		aes_encrypt_impl
+#define	AES_DECRYPT_IMPL		aes_decrypt_impl
 
-	extern int rijndael_key_setup_enc(uint32_t rk[], const uint32_t cipherKey[],
-		int keyBits);
-	extern int rijndael_key_setup_dec(uint32_t rk[], const uint32_t cipherKey[],
-		int keyBits);
+extern int rijndael_key_setup_enc(uint32_t rk[], const uint32_t cipherKey[],
+	int keyBits);
+extern int rijndael_key_setup_dec(uint32_t rk[], const uint32_t cipherKey[],
+	int keyBits);
 #else
-	#define	AES_ENCRYPT_IMPL		rijndael_encrypt
-	#define	AES_DECRYPT_IMPL		rijndael_decrypt
-	#define	rijndael_key_setup_enc_raw	rijndael_key_setup_enc
+#define	AES_ENCRYPT_IMPL		rijndael_encrypt
+#define	AES_DECRYPT_IMPL		rijndael_decrypt
+#define	rijndael_key_setup_enc_raw	rijndael_key_setup_enc
 #endif	/* __amd64 */
 
 #if defined(_LITTLE_ENDIAN) && !defined(__amd64)
