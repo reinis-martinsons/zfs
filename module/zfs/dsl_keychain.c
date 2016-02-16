@@ -737,12 +737,48 @@ error:
 }
 
 int
+spa_keystore_unload_wkey_impl(spa_t *spa, uint64_t ddobj) {
+	int ret;
+	dsl_wrapping_key_t search_wkey;
+	dsl_wrapping_key_t *found_wkey;
+
+	LOG_DEBUG("unloading key ddobj = %u", (unsigned)ddobj);
+
+	/* init the search wrapping key */
+	search_wkey.wk_ddobj = ddobj;
+
+	rw_enter(&spa->spa_keystore.sk_wkeys_lock, RW_WRITER);
+
+	/* remove the wrapping key from the keystore */
+	found_wkey = avl_find(&spa->spa_keystore.sk_wkeys,
+		&search_wkey, NULL);
+	if (!found_wkey) {
+		ret = SET_ERROR(ENOENT);
+		goto error_unlock;
+	} else if (refcount_count(&found_wkey->wk_refcnt) != 0) {
+		ret = SET_ERROR(EBUSY);
+		goto error_unlock;
+	}
+	avl_remove(&spa->spa_keystore.sk_wkeys, found_wkey);
+
+	rw_exit(&spa->spa_keystore.sk_wkeys_lock);
+
+	/* free the wrapping key */
+	dsl_wrapping_key_free(found_wkey);
+
+	return (0);
+
+error_unlock:
+	LOG_ERROR(ret, "");
+	rw_exit(&spa->spa_keystore.sk_wkeys_lock);
+	return (ret);
+}
+
+int
 spa_keystore_unload_wkey(const char *dsname)
 {
 	int ret = 0;
 	dsl_dir_t *dd = NULL;
-	dsl_wrapping_key_t search_wkey;
-	dsl_wrapping_key_t *found_wkey;
 	dsl_pool_t *dp = NULL;
 
 	/* hold the dsl dir */
@@ -754,38 +790,15 @@ spa_keystore_unload_wkey(const char *dsname)
 	if (ret)
 		goto error;
 
-	LOG_DEBUG("unloading key ddobj = %u", (unsigned)dd->dd_object);
+	/* unload the wkey */
+	ret = spa_keystore_unload_wkey_impl(dp->dp_spa, dd->dd_object);
+	if (ret)
+		goto error;
 
-	/* init the search wrapping key */
-	search_wkey.wk_ddobj = dd->dd_object;
-
-	rw_enter(&dp->dp_spa->spa_keystore.sk_wkeys_lock, RW_WRITER);
-
-	/* remove the wrapping key */
-	found_wkey = avl_find(&dp->dp_spa->spa_keystore.sk_wkeys,
-		&search_wkey, NULL);
-	if (!found_wkey) {
-		ret = SET_ERROR(ENOENT);
-		goto error_unlock;
-	} else if (refcount_count(&found_wkey->wk_refcnt) != 0) {
-		ret = SET_ERROR(EBUSY);
-		goto error_unlock;
-	}
-	avl_remove(&dp->dp_spa->spa_keystore.sk_wkeys, found_wkey);
-
-	LOG_DEBUG("unloaded key ddobj = %u", (unsigned)dd->dd_object);
-
-	rw_exit(&dp->dp_spa->spa_keystore.sk_wkeys_lock);
 	dsl_dir_rele(dd, FTAG);
 	dsl_pool_rele(dp, FTAG);
 
-	/* free the wrapping key */
-	dsl_wrapping_key_free(found_wkey);
-
 	return (0);
-
-error_unlock:
-	rw_exit(&dp->dp_spa->spa_keystore.sk_wkeys_lock);
 
 error:
 	LOG_ERROR(ret, "");
