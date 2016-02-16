@@ -813,7 +813,7 @@ zfs_crypto_rewrap(zfs_handle_t *zhp, nvlist_t *props)
 			goto error;
 		}
 		keysource = prop_keysource;
-	} else {
+	} else if (ret) {
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
 			"Failed to find keysource."));
 		ret = EIO;
