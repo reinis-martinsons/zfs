@@ -6715,7 +6715,7 @@ zfs_do_crypto(int argc, char **argv)
 	boolean_t load = B_FALSE, unload = B_FALSE;
 	boolean_t add_key = B_FALSE, rewrap = B_FALSE;
 	nvlist_t *props = NULL;
-	zfs_handle_t *zhp;
+	zfs_handle_t *zhp = NULL;
 
 	if (nvlist_alloc(&props, NV_UNIQUE_NAME, 0) != 0)
 		nomem();
@@ -6804,8 +6804,7 @@ zfs_do_crypto(int argc, char **argv)
 	if (ret)
 		goto error;
 
-	if (props)
-		nvlist_free(props);
+	nvlist_free(props);
 	zfs_close(zhp);
 	return (0);
 
@@ -6815,7 +6814,8 @@ usage:
 error:
 	if (props)
 		nvlist_free(props);
-	zfs_close(zhp);
+	if (zhp)
+		zfs_close(zhp);
 	return (-1);
 }
 

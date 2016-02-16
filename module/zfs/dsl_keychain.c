@@ -396,7 +396,7 @@ dsl_keychain_free(dsl_keychain_t *kc)
 {
 	dsl_keychain_entry_t *kce;
 
-	VERIFY0(refcount_count(&kc->kc_refcnt));
+	ASSERT(refcount_count(&kc->kc_refcnt) == 0);
 
 	/* release each encryption key from the keychain */
 	while ((kce = list_head(&kc->kc_entries)) != NULL) {
@@ -458,7 +458,7 @@ dsl_keychain_open(objset_t *mos, dsl_wrapping_key_t *wkey,
 			sizeof (dsl_crypto_key_phys_t), &dckp);
 		if (ret) {
 			ret = SET_ERROR(EIO);
-			goto error;
+			goto error_fini;
 		}
 
 		/* all crypts should match */
@@ -476,21 +476,21 @@ dsl_keychain_open(objset_t *mos, dsl_wrapping_key_t *wkey,
 		ret = zio_crypt_key_unwrap(wkey, crypt, &dckp, keydata);
 		if (ret) {
 			ret = SET_ERROR(EINVAL);
-			goto error;
+			goto error_fini;
 		}
 
 		/* allocate an initialize a keychain entry */
 		kce = kmem_zalloc(sizeof (dsl_keychain_entry_t), KM_SLEEP);
 		if (!kce) {
 			ret = SET_ERROR(ENOMEM);
-			goto error;
+			goto error_fini;
 		}
 		list_link_init(&kce->ke_link);
 		kce->ke_txgid = txgid;
 
 		ret = zio_crypt_key_init(crypt, keydata, &kce->ke_key);
 		if (ret)
-			goto error;
+			goto error_fini;
 
 		/*
 		 * the zap does not store keys in order,
@@ -525,6 +525,8 @@ dsl_keychain_open(objset_t *mos, dsl_wrapping_key_t *wkey,
 	*kc_out = kc;
 	return (0);
 
+error_fini:
+	zap_cursor_fini(&zc);
 error:
 	LOG_ERROR(ret, "");
 	if (kce)
