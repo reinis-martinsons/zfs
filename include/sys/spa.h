@@ -446,6 +446,11 @@ _NOTE(CONSTCOND) } while (0)
 	((zc1).zc_word[2] - (zc2).zc_word[2]) | \
 	((zc1).zc_word[3] - (zc2).zc_word[3])))
 
+#define	ZIO_CHECKSUM_MAC_EQUAL(zc1, zc2) \
+	(0 == (((zc1).zc_word[0] - (zc2).zc_word[0]) | \
+	((zc1).zc_word[1] - (zc2).zc_word[1]) | \
+	(((zc1).zc_word[2] & 0xffff) - ((zc2).zc_word[2] & 0xffff))))
+
 #define	ZIO_CHECKSUM_IS_ZERO(zc) \
 	(0 == ((zc)->zc_word[0] | (zc)->zc_word[1] | \
 	(zc)->zc_word[2] | (zc)->zc_word[3]))
