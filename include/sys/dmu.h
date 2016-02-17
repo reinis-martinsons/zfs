@@ -98,16 +98,18 @@ typedef enum dmu_object_byteswap {
 
 #define	DMU_OT_NEWTYPE 0x80
 #define	DMU_OT_METADATA 0x40
-#define	DMU_OT_BYTESWAP_MASK 0x3f
+#define DMU_OT_ENCRYPTED 0x20
+#define	DMU_OT_BYTESWAP_MASK 0x1f
 
 /*
  * Defines a uint8_t object type. Object types specify if the data
  * in the object is metadata (boolean) and how to byteswap the data
  * (dmu_object_byteswap_t).
  */
-#define	DMU_OT(byteswap, metadata) \
+#define	DMU_OT(byteswap, encrypted, metadata) \
 	(DMU_OT_NEWTYPE | \
 	((metadata) ? DMU_OT_METADATA : 0) | \
+	((encrypted) ? DMU_OT_ENCRYPTED : 0) | \
 	((byteswap) & DMU_OT_BYTESWAP_MASK))
 
 #define	DMU_OT_IS_VALID(ot) (((ot) & DMU_OT_NEWTYPE) ? \
@@ -117,6 +119,10 @@ typedef enum dmu_object_byteswap {
 #define	DMU_OT_IS_METADATA(ot) (((ot) & DMU_OT_NEWTYPE) ? \
 	((ot) & DMU_OT_METADATA) : \
 	dmu_ot[(int)(ot)].ot_metadata)
+
+#define	DMU_OT_IS_ENCRYPTED(ot) (((ot) & DMU_OT_NEWTYPE) ? \
+	((ot) & DMU_OT_ENCRYPTED) : \
+	dmu_ot[(int)(ot)].ot_encrypt)
 
 /*
  * These object types use bp_fill != 1 for their L0 bp's. Therefore they can't
@@ -214,16 +220,16 @@ typedef enum dmu_object_type {
 	/*
 	 * Names for valid types declared with DMU_OT().
 	 */
-	DMU_OTN_UINT8_DATA = DMU_OT(DMU_BSWAP_UINT8, B_FALSE),
-	DMU_OTN_UINT8_METADATA = DMU_OT(DMU_BSWAP_UINT8, B_TRUE),
-	DMU_OTN_UINT16_DATA = DMU_OT(DMU_BSWAP_UINT16, B_FALSE),
-	DMU_OTN_UINT16_METADATA = DMU_OT(DMU_BSWAP_UINT16, B_TRUE),
-	DMU_OTN_UINT32_DATA = DMU_OT(DMU_BSWAP_UINT32, B_FALSE),
-	DMU_OTN_UINT32_METADATA = DMU_OT(DMU_BSWAP_UINT32, B_TRUE),
-	DMU_OTN_UINT64_DATA = DMU_OT(DMU_BSWAP_UINT64, B_FALSE),
-	DMU_OTN_UINT64_METADATA = DMU_OT(DMU_BSWAP_UINT64, B_TRUE),
-	DMU_OTN_ZAP_DATA = DMU_OT(DMU_BSWAP_ZAP, B_FALSE),
-	DMU_OTN_ZAP_METADATA = DMU_OT(DMU_BSWAP_ZAP, B_TRUE),
+	DMU_OTN_UINT8_DATA = DMU_OT(DMU_BSWAP_UINT8, B_FALSE, B_FALSE),
+	DMU_OTN_UINT8_METADATA = DMU_OT(DMU_BSWAP_UINT8, B_FALSE, B_TRUE),
+	DMU_OTN_UINT16_DATA = DMU_OT(DMU_BSWAP_UINT16, B_FALSE, B_FALSE),
+	DMU_OTN_UINT16_METADATA = DMU_OT(DMU_BSWAP_UINT16, B_FALSE, B_TRUE),
+	DMU_OTN_UINT32_DATA = DMU_OT(DMU_BSWAP_UINT32, B_FALSE, B_FALSE),
+	DMU_OTN_UINT32_METADATA = DMU_OT(DMU_BSWAP_UINT32, B_FALSE, B_TRUE),
+	DMU_OTN_UINT64_DATA = DMU_OT(DMU_BSWAP_UINT64, B_FALSE, B_FALSE),
+	DMU_OTN_UINT64_METADATA = DMU_OT(DMU_BSWAP_UINT64, B_FALSE, B_TRUE),
+	DMU_OTN_ZAP_DATA = DMU_OT(DMU_BSWAP_ZAP, B_FALSE, B_FALSE),
+	DMU_OTN_ZAP_METADATA = DMU_OT(DMU_BSWAP_ZAP, B_FALSE, B_TRUE),
 } dmu_object_type_t;
 
 typedef enum txg_how {
@@ -769,6 +775,7 @@ typedef void (*const arc_byteswap_func_t)(void *buf, size_t size);
 typedef struct dmu_object_type_info {
 	dmu_object_byteswap_t	ot_byteswap;
 	boolean_t		ot_metadata;
+	boolean_t		ot_encrypt;
 	char			*ot_name;
 } dmu_object_type_info_t;
 

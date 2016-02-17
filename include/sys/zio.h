@@ -36,6 +36,7 @@
 #include <sys/avl.h>
 #include <sys/fs/zfs.h>
 #include <sys/zio_impl.h>
+#include <sys/zio_crypt.h>
 
 #ifdef	__cplusplus
 extern "C" {
@@ -306,6 +307,7 @@ typedef struct zio_prop {
 	boolean_t		zp_dedup;
 	boolean_t		zp_dedup_verify;
 	boolean_t		zp_nopwrite;
+	boolean_t		zp_encrypt;
 } zio_prop_t;
 
 typedef struct zio_cksum_report zio_cksum_report_t;

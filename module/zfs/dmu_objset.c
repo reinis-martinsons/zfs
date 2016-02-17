@@ -169,6 +169,19 @@ compression_changed_cb(void *arg, uint64_t newval)
 }
 
 static void
+encryption_changed_cb(void *arg, uint64_t newval)
+{
+	objset_t *os = arg;
+
+	/*
+	 * Inheritance and range checking should have been done by now.
+	 */
+	ASSERT(newval != ZIO_CRYPT_INHERIT);
+
+	os->os_encrypted = (newval != ZIO_CRYPT_OFF ? B_TRUE : B_FALSE);
+}
+
+static void
 copies_changed_cb(void *arg, uint64_t newval)
 {
 	objset_t *os = arg;
@@ -370,6 +383,11 @@ dmu_objset_open_impl(spa_t *spa, dsl_dataset_t *ds, blkptr_t *bp,
 			    zfs_prop_to_name(ZFS_PROP_SECONDARYCACHE),
 			    secondary_cache_changed_cb, os);
 		}
+		if (err == 0) {
+			err = dsl_prop_register(ds,
+			    zfs_prop_to_name(ZFS_PROP_ENCRYPTION),
+			    encryption_changed_cb, os);
+		}
 		if (!ds->ds_is_snapshot) {
 			if (err == 0) {
 				err = dsl_prop_register(ds,
@@ -423,6 +441,7 @@ dmu_objset_open_impl(spa_t *spa, dsl_dataset_t *ds, blkptr_t *bp,
 		/* It's the meta-objset. */
 		os->os_checksum = ZIO_CHECKSUM_FLETCHER_4;
 		os->os_compress = ZIO_COMPRESS_ON;
+		os->os_compress = ZIO_CRYPT_OFF;
 		os->os_copies = spa_max_replication(spa);
 		os->os_dedup_checksum = ZIO_CHECKSUM_OFF;
 		os->os_dedup_verify = B_FALSE;
