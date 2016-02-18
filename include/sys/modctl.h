@@ -99,7 +99,6 @@ struct modlmisc {
 	char			*misc_linkinfo;
 };
 
-
 /*
  * Revision number of loadable modules support.  This is the value
  * that must be used in the modlinkage structure.
