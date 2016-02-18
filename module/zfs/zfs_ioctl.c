@@ -29,6 +29,7 @@
  * Copyright (c) 2011, 2014 by Delphix. All rights reserved.
  * Copyright (c) 2013 by Saso Kiselkov. All rights reserved.
  * Copyright (c) 2013 Steven Hartland. All rights reserved.
+ * Copyright (c) 2016, Datto, Inc. All rights reserved.
  */
 
 /*
@@ -177,6 +178,7 @@
 #include <sys/dsl_scan.h>
 #include <sharefs/share.h>
 #include <sys/fm/util.h>
+#include <sys/zio_crypt.h>
 
 #include <sys/dmu_send.h>
 #include <sys/dsl_destroy.h>
@@ -1261,6 +1263,12 @@ zfs_secpolicy_tmp_snapshot(zfs_cmd_t *zc, nvlist_t *innvl, cred_t *cr)
 	if (error == 0)
 		error = zfs_secpolicy_destroy(zc, innvl, cr);
 	return (error);
+}
+
+static int
+zfs_secpolicy_crypto(zfs_cmd_t *zc, nvlist_t *innvl, cred_t *cr)
+{
+	return (0);
 }
 
 /*
@@ -3105,6 +3113,7 @@ zfs_ioc_create(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 	int32_t type32;
 	dmu_objset_type_t type;
 	boolean_t is_insensitive = B_FALSE;
+	dsl_crypto_params_t dcp = { 0 };
 
 	if (nvlist_lookup_int32(innvl, "type", &type32) != 0)
 		return (SET_ERROR(EINVAL));
@@ -3175,9 +3184,22 @@ zfs_ioc_create(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 		}
 	}
 
+	LOG_DEBUG("\n\nzfs create");
+
+	error = dsl_crypto_params_init_nvlist(nvprops, &dcp);
+	if (error != 0) {
+		nvlist_free(zct.zct_zplprops);
+		return (error);
+	}
+
+	LOG_CRYPTO_PARAMS(&dcp);
+
 	error = dmu_objset_create(fsname, type,
-	    is_insensitive ? DS_FLAG_CI_DATASET : 0, cbfunc, &zct);
+	    is_insensitive ? DS_FLAG_CI_DATASET : 0, &dcp, cbfunc, &zct);
+
 	nvlist_free(zct.zct_zplprops);
+	if (dcp.cp_wkey && error != 0)
+		dsl_crypto_params_destroy(&dcp);
 
 	/*
 	 * It would be nice to do this atomically.
@@ -3212,6 +3234,7 @@ zfs_ioc_clone(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 	int error = 0;
 	nvlist_t *nvprops = NULL;
 	char *origin_name;
+	dsl_crypto_params_t dcp = { 0 };
 
 	if (nvlist_lookup_string(innvl, "origin", &origin_name) != 0)
 		return (SET_ERROR(EINVAL));
@@ -3223,9 +3246,21 @@ zfs_ioc_clone(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 
 	if (dataset_namecheck(origin_name, NULL, NULL) != 0)
 		return (SET_ERROR(EINVAL));
-	error = dmu_objset_clone(fsname, origin_name);
+
+	LOG_DEBUG("\n\nzfs clone");
+
+	error = dsl_crypto_params_init_nvlist(nvprops, &dcp);
 	if (error != 0)
 		return (error);
+
+	LOG_CRYPTO_PARAMS(&dcp);
+
+	error = dmu_objset_clone(fsname, origin_name, &dcp);
+
+	if (dcp.cp_wkey && error != 0)
+		dsl_crypto_params_destroy(&dcp);
+
+	LOG_DEBUG("post clone");
 
 	/*
 	 * It would be nice to do this atomically.
@@ -5277,6 +5312,97 @@ out:
 	return (error);
 }
 
+static int
+zfs_ioc_crypto(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl) {
+	int ret = 0;
+	dsl_crypto_params_t dcp = { 0 };
+	uint64_t crypto_cmd;
+	nvlist_t *args;
+	spa_t *spa;
+
+	ret = spa_open(dsname, &spa, FTAG);
+	if (ret)
+		return (ret);
+
+	if (!spa_feature_is_enabled(spa, SPA_FEATURE_ENCRYPTION)) {
+		spa_close(spa, FTAG);
+		return (SET_ERROR(EINVAL));
+	}
+
+	spa_close(spa, FTAG);
+
+	if (strchr(dsname, '@') || strchr(dsname, '%')) {
+		ret = (SET_ERROR(EINVAL));
+		goto error;
+	}
+
+	ret = nvlist_lookup_uint64(innvl, "crypto_cmd", &crypto_cmd);
+	if (ret) {
+		ret = (SET_ERROR(EINVAL));
+		goto error;
+	}
+
+	LOG_DEBUG("\n\nzfs key: crypto_cmd = %u", (unsigned)crypto_cmd);
+
+	switch (crypto_cmd) {
+	case ZFS_IOC_CRYPTO_LOAD_KEY:
+		ret = nvlist_lookup_nvlist(innvl, "args", &args);
+		if (ret) {
+			ret = SET_ERROR(EINVAL);
+			goto error;
+		}
+
+		ret = dsl_crypto_params_init_nvlist(args, &dcp);
+		if (ret)
+			goto error;
+
+		ret = spa_keystore_load_wkey(dsname, &dcp);
+		if (ret)
+			goto error;
+
+		break;
+	case ZFS_IOC_CRYPTO_UNLOAD_KEY:
+		ret = spa_keystore_unload_wkey(dsname);
+		if (ret)
+			goto error;
+
+		break;
+	case ZFS_IOC_CRYPTO_ADD_KEY:
+		ret = spa_keystore_keychain_add_key(dsname);
+		if (ret)
+			goto error;
+
+		break;
+	case ZFS_IOC_CRYPTO_REWRAP:
+		ret = nvlist_lookup_nvlist(innvl, "args", &args);
+		if (ret) {
+			ret = SET_ERROR(EINVAL);
+			goto error;
+		}
+
+		ret = dsl_crypto_params_init_nvlist(args, &dcp);
+		if (ret)
+			goto error;
+
+		ret = spa_keystore_rewrap(dsname, &dcp);
+		if (ret)
+			goto error;
+
+		break;
+	default:
+		ret = SET_ERROR(EINVAL);
+		goto error;
+	}
+
+	return (0);
+
+error:
+	if (dcp.cp_wkey)
+		dsl_wrapping_key_free(dcp.cp_wkey);
+
+	return (ret);
+}
+
 static zfs_ioc_vec_t zfs_ioc_vec[ZFS_IOC_LAST - ZFS_IOC_FIRST];
 
 static void
@@ -5444,6 +5570,10 @@ zfs_ioctl_init(void)
 	    zfs_ioc_destroy_bookmarks, zfs_secpolicy_destroy_bookmarks,
 	    POOL_NAME,
 	    POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY, B_TRUE, B_TRUE);
+
+	zfs_ioctl_register("cypto", ZFS_IOC_CRYPTO,
+	    zfs_ioc_crypto, zfs_secpolicy_crypto,
+	    DATASET_NAME, POOL_CHECK_SUSPENDED, B_TRUE, B_FALSE);
 
 	/* IOCTLS that use the legacy function signature */
 
@@ -5854,7 +5984,6 @@ zfsdev_ioctl(struct file *filp, unsigned cmd, unsigned long arg)
 	case NO_NAME:
 		break;
 	}
-
 
 	if (error == 0 && !(flag & FKIOCTL))
 		error = vec->zvec_secpolicy(zc, innvl, CRED());
