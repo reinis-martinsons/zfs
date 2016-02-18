@@ -38,6 +38,7 @@
 #include <sys/zfs_context.h>
 #include <sys/dsl_deadlist.h>
 #include <sys/refcount.h>
+#include <sys/dsl_keychain.h>
 #include <zfeature_common.h>
 
 #ifdef	__cplusplus
@@ -229,16 +230,17 @@ int dsl_dataset_hold_obj(struct dsl_pool *dp, uint64_t dsobj, void *tag,
     dsl_dataset_t **);
 void dsl_dataset_rele(dsl_dataset_t *ds, void *tag);
 int dsl_dataset_own(struct dsl_pool *dp, const char *name,
-    void *tag, dsl_dataset_t **dsp);
+    void *tag, boolean_t key_required, dsl_dataset_t **dsp);
 int dsl_dataset_own_obj(struct dsl_pool *dp, uint64_t dsobj,
-    void *tag, dsl_dataset_t **dsp);
+    void *tag, boolean_t key_required, dsl_dataset_t **dsp);
 void dsl_dataset_disown(dsl_dataset_t *ds, void *tag);
 void dsl_dataset_name(dsl_dataset_t *ds, char *name);
-boolean_t dsl_dataset_tryown(dsl_dataset_t *ds, void *tag);
+int dsl_dataset_tryown(dsl_dataset_t *ds, void *tag, boolean_t key_required);
 uint64_t dsl_dataset_create_sync(dsl_dir_t *pds, const char *lastname,
-    dsl_dataset_t *origin, uint64_t flags, cred_t *, dmu_tx_t *);
+    dsl_dataset_t *origin, uint64_t flags, cred_t *, dsl_crypto_params_t *,
+	dmu_tx_t *);
 uint64_t dsl_dataset_create_sync_dd(dsl_dir_t *dd, dsl_dataset_t *origin,
-    uint64_t flags, dmu_tx_t *tx);
+		dsl_crypto_params_t *dcp, uint64_t flags, dmu_tx_t *tx);
 int dsl_dataset_snapshot(nvlist_t *snaps, nvlist_t *props, nvlist_t *errors);
 int dsl_dataset_promote(const char *name, char *conflsnap);
 int dsl_dataset_rename_snapshot(const char *fsname,

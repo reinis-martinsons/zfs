@@ -52,6 +52,7 @@ KERNEL_C = \
 	dsl_deadlist.c \
 	dsl_deleg.c \
 	dsl_dir.c \
+	dsl_keychain.c \
 	dsl_pool.c \
 	dsl_prop.c \
 	dsl_scan.c \
@@ -107,6 +108,7 @@ KERNEL_C = \
 	zio.c \
 	zio_checksum.c \
 	zio_compress.c \
+	zio_crypt.c \
 	zio_inject.c \
 	zle.c \
 	zrlock.c
@@ -118,7 +120,8 @@ nodist_libzpool_la_SOURCES = \
 libzpool_la_LIBADD = \
 	$(top_builddir)/lib/libunicode/libunicode.la \
 	$(top_builddir)/lib/libuutil/libuutil.la \
-	$(top_builddir)/lib/libnvpair/libnvpair.la
+	$(top_builddir)/lib/libnvpair/libnvpair.la \
+	$(top_builddir)/lib/libicp/libicp.la
 
 libzpool_la_LIBADD += $(ZLIB)
 libzpool_la_LDFLAGS = -version-info 2:0:0

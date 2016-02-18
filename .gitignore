@@ -21,10 +21,19 @@
 *.swp
 .deps
 .libs
+.dirstamp
 .DS_Store
 modules.order
 Makefile
 Makefile.in
+
+#
+# Eclipse rules - REMOVE BEFORE SUBMITTING
+#
+.settings/
+.cproject
+.project
+.autotools
 
 #
 # Top level generated files specific to this top level dir
