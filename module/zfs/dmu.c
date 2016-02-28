@@ -1769,7 +1769,7 @@ dmu_write_policy(objset_t *os, dnode_t *dn, int level, int wp, zio_prop_t *zp)
 		compress = ZIO_COMPRESS_OFF;
 		checksum = ZIO_CHECKSUM_OFF;
 	} else {
-		if(DMU_OT_IS_ENCRYPTED(type))
+		if (DMU_OT_IS_ENCRYPTED(type))
 			encrypt = os->os_encrypted;
 
 		/*

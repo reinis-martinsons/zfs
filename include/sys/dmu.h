@@ -98,7 +98,7 @@ typedef enum dmu_object_byteswap {
 
 #define	DMU_OT_NEWTYPE 0x80
 #define	DMU_OT_METADATA 0x40
-#define DMU_OT_ENCRYPTED 0x20
+#define	DMU_OT_ENCRYPTED 0x20
 #define	DMU_OT_BYTESWAP_MASK 0x1f
 
 /*

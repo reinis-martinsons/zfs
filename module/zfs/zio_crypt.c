@@ -264,9 +264,9 @@ dsl_crypto_params_destroy(dsl_crypto_params_t *dcp)
 }
 
 int
-zio_do_crypt(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
-	crypto_ctx_template_t tmpl, uint8_t *ivbuf, uint_t ivlen, uint_t maclen,
-	uint8_t *plainbuf, uint8_t *cipherbuf, uint_t datalen)
+zio_do_crypt_raw(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
+	crypto_ctx_template_t tmpl, uint8_t *ivbuf,	uint8_t *plainbuf,
+	uint8_t *cipherbuf, uint_t datalen)
 {
 	int ret;
 	crypto_data_t plaindata, cipherdata;
@@ -286,14 +286,109 @@ zio_do_crypt(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
 	mech.cm_type = crypto_mech2id(crypt_info.ci_mechname);
 
 	/* plain length will include the MAC if we are decrypting */
-	if (encrypt) plain_full_len = datalen;
-	else plain_full_len = datalen + maclen;
+	if (encrypt)
+		plain_full_len = datalen;
+	else
+		plain_full_len = datalen + WRAPPING_MAC_LEN;
 
 	/*
 	 * setup encryption params (currently only AES
 	 * CCM and AES GCM are supported)
 	 */
-	if (crypt_info.ci_crypt_type == ZIO_CRYPT_TYPE_CCM) {
+	if (crypt_info.ci_crypt_type == ZC_TYPE_CCM) {
+		ccmp.ulNonceSize = ZIO_CRYPT_WRAPKEY_IVLEN;
+		ccmp.ulAuthDataSize = 0;
+		ccmp.authData = NULL;
+		ccmp.ulMACSize = WRAPPING_MAC_LEN;
+		ccmp.nonce = ivbuf;
+		ccmp.ulDataSize = plain_full_len;
+
+		mech.cm_param = (char *)(&ccmp);
+		mech.cm_param_len = sizeof (CK_AES_CCM_PARAMS);
+	} else {
+		gcmp.ulIvLen = ZIO_CRYPT_WRAPKEY_IVLEN;
+		gcmp.ulIvBits = BYTES_TO_BITS(ZIO_CRYPT_WRAPKEY_IVLEN);
+		gcmp.ulAADLen = 0;
+		gcmp.pAAD = NULL;
+		gcmp.ulTagBits = BYTES_TO_BITS(WRAPPING_MAC_LEN);
+		gcmp.pIv = ivbuf;
+
+		mech.cm_param = (char *)(&gcmp);
+		mech.cm_param_len = sizeof (CK_AES_GCM_PARAMS);
+	}
+
+	/* setup plaindata struct with buffer from plainbuf */
+	plaindata.cd_format = CRYPTO_DATA_RAW;
+	plaindata.cd_offset = 0;
+	plaindata.cd_length = plain_full_len;
+	plaindata.cd_miscdata = NULL;
+	plaindata.cd_raw.iov_base = (char *)plainbuf;
+	plaindata.cd_raw.iov_len = plain_full_len;
+
+	/* setup cipherdata to be filled */
+	cipherdata.cd_format = CRYPTO_DATA_RAW;
+	cipherdata.cd_offset = 0;
+	cipherdata.cd_length = datalen + WRAPPING_MAC_LEN;
+	cipherdata.cd_miscdata = NULL;
+	cipherdata.cd_raw.iov_base = (char *)cipherbuf;
+	cipherdata.cd_raw.iov_len = datalen + WRAPPING_MAC_LEN;
+
+	/* perform the actual encryption */
+	if (encrypt)
+		ret = crypto_encrypt(&mech, &plaindata, key, tmpl, &cipherdata,
+			NULL);
+	else
+		ret = crypto_decrypt(&mech, &cipherdata, key, tmpl, &plaindata,
+			NULL);
+
+	if (ret != CRYPTO_SUCCESS) {
+		LOG_ERROR(ret, "");
+		ret = EIO;
+		goto error;
+	}
+
+	return (0);
+
+error:
+	LOG_ERROR(ret, "");
+	return (ret);
+}
+
+int
+zio_do_crypt_uio(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
+	crypto_ctx_template_t tmpl, uint8_t *ivbuf, uint_t datalen,
+	uio_t *puio, uio_t *cuio)
+{
+	int ret;
+	crypto_data_t plaindata, cipherdata;
+	CK_AES_CCM_PARAMS ccmp;
+	CK_AES_GCM_PARAMS gcmp;
+	crypto_mechanism_t mech;
+	zio_crypt_info_t crypt_info;
+	uint_t plain_full_len, ivlen, maclen;
+
+	ASSERT(crypt < ZIO_CRYPT_FUNCTIONS);
+	ASSERT(key->ck_format == CRYPTO_KEY_RAW);
+
+	/* lookup the encryption info */
+	crypt_info = zio_crypt_table[crypt];
+	ivlen = crypt_info.ci_ivlen;
+	maclen = crypt_info.ci_maclen;
+
+	/* setup encryption mechanism (same as crypt) */
+	mech.cm_type = crypto_mech2id(crypt_info.ci_mechname);
+
+	/* plain length will include the MAC if we are decrypting */
+	if (encrypt)
+		plain_full_len = datalen;
+	else
+		plain_full_len = datalen + maclen;
+
+	/*
+	 * setup encryption params (currently only AES
+	 * CCM and AES GCM are supported)
+	 */
+	if (crypt_info.ci_crypt_type == ZC_TYPE_CCM) {
 		ccmp.ulNonceSize = ivlen;
 		ccmp.ulAuthDataSize = 0;
 		ccmp.authData = NULL;
@@ -315,21 +410,18 @@ zio_do_crypt(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
 		mech.cm_param_len = sizeof (CK_AES_GCM_PARAMS);
 	}
 
-	/* setup plaindata struct with buffer from keydata */
-	plaindata.cd_format = CRYPTO_DATA_RAW;
+	/* populate the cipher and plain data structs */
+	plaindata.cd_format = CRYPTO_DATA_UIO;
 	plaindata.cd_offset = 0;
-	plaindata.cd_length = plain_full_len;
+	plaindata.cd_uio = puio;
 	plaindata.cd_miscdata = NULL;
-	plaindata.cd_raw.iov_base = (char *)plainbuf;
-	plaindata.cd_raw.iov_len = plain_full_len;
+	plaindata.cd_length = plain_full_len;
 
-	/* setup cipherdata to be filled */
-	cipherdata.cd_format = CRYPTO_DATA_RAW;
+	cipherdata.cd_format = CRYPTO_DATA_UIO;
 	cipherdata.cd_offset = 0;
+	cipherdata.cd_uio = cuio;
+	plaindata.cd_miscdata = NULL;
 	cipherdata.cd_length = datalen + maclen;
-	cipherdata.cd_miscdata = NULL;
-	cipherdata.cd_raw.iov_base = (char *)cipherbuf;
-	cipherdata.cd_raw.iov_len = datalen + maclen;
 
 	/* perform the actual encryption */
 	if (encrypt)

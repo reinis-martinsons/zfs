@@ -30,16 +30,9 @@
 #include <sys/dsl_prop.h>
 #include <sys/spa_impl.h>
 
-/* macros for defining encryption parameter lengths */
-#define	MAX_KEY_LEN 32
-#define	ZIO_CRYPT_WRAPKEY_IVLEN 13
-#define	WRAPPING_MAC_LEN 16
-#define	WRAPPED_KEYDATA_LEN(keylen) \
-	((keylen) + ZIO_CRYPT_WRAPKEY_IVLEN + WRAPPING_MAC_LEN)
-
 static int
 zio_crypt_key_wrap(dsl_wrapping_key_t *wkey, uint64_t crypt,
-	uint8_t *keydata, uint8_t *ivdata, dsl_crypto_key_phys_t *dckp)
+	uint8_t *keydata, dsl_crypto_key_phys_t *dckp)
 {
 	int ret;
 
@@ -48,14 +41,17 @@ zio_crypt_key_wrap(dsl_wrapping_key_t *wkey, uint64_t crypt,
 
 	/* copy the crypt and iv data into the dsl_crypto_key_phys_t */
 	dckp->dk_crypt_alg = crypt;
-	bcopy(ivdata, dckp->dk_iv, ZIO_CRYPT_WRAPKEY_IVLEN);
 	bzero(dckp->dk_padding, sizeof (dckp->dk_padding));
 	bzero(dckp->dk_keybuf, sizeof (dckp->dk_keybuf));
 
+	/* generate an iv */
+	ret = random_get_bytes(dckp->dk_iv, ZIO_CRYPT_WRAPKEY_IVLEN);
+	if (ret)
+		goto error;
+
 	/* encrypt the key and store the result in dckp->keybuf */
-	ret = zio_encrypt(crypt, &wkey->wk_key, NULL, ivdata,
-		ZIO_CRYPT_WRAPKEY_IVLEN, WRAPPING_MAC_LEN, keydata,
-		dckp->dk_keybuf, zio_crypt_table[crypt].ci_keylen);
+	ret = zio_encrypt_raw(crypt, &wkey->wk_key, NULL, dckp->dk_iv,
+		keydata, dckp->dk_keybuf, zio_crypt_table[crypt].ci_keylen);
 	if (ret)
 		goto error;
 
@@ -75,9 +71,8 @@ zio_crypt_key_unwrap(dsl_wrapping_key_t *wkey, uint64_t crypt,
 	ASSERT(wkey->wk_key.ck_format == CRYPTO_KEY_RAW);
 
 	/* encrypt the key and store the result in dckp->keybuf */
-	ret = zio_decrypt(crypt, &wkey->wk_key, NULL, dckp->dk_iv,
-		ZIO_CRYPT_WRAPKEY_IVLEN, WRAPPING_MAC_LEN, keydata,
-		dckp->dk_keybuf, zio_crypt_table[crypt].ci_keylen);
+	ret = zio_decrypt_raw(crypt, &wkey->wk_key, NULL, dckp->dk_iv,
+		keydata, dckp->dk_keybuf, zio_crypt_table[crypt].ci_keylen);
 	if (ret)
 		goto error;
 
@@ -172,17 +167,11 @@ dsl_keychain_entry_sync(dsl_keychain_entry_t *kce,
 	dsl_wrapping_key_t *wkey, uint64_t kcobj, dmu_tx_t *tx)
 {
 	int ret;
-	uint8_t ivdata[ZIO_CRYPT_WRAPKEY_IVLEN];
 	dsl_crypto_key_phys_t key_phys;
-
-	/* generate an iv */
-	ret = random_get_bytes(ivdata, ZIO_CRYPT_WRAPKEY_IVLEN);
-	if (ret)
-		goto error;
 
 	/* wrap the key and store the result in key_phys */
 	ret = zio_crypt_key_wrap(wkey, kce->ke_key.zk_crypt,
-		kce->ke_key.zk_key.ck_data, ivdata, &key_phys);
+		kce->ke_key.zk_key.ck_data, &key_phys);
 	if (ret)
 		goto error;
 
@@ -265,6 +254,26 @@ error:
 	zio_crypt_key_destroy(&kce->ke_key);
 	kmem_free(kce, sizeof (dsl_keychain_entry_t));
 	return (ret);
+}
+
+static int
+dsl_keychain_lookup_entry(dsl_keychain_t *kc, uint64_t txgid,
+	dsl_keychain_entry_t **kce_out)
+{
+	dsl_keychain_entry_t *kce;
+
+	rw_enter(&kc->kc_lock, RW_READER);
+
+	for (kce = list_tail(&kc->kc_entries); kce;
+		kce = list_prev(&kc->kc_entries, kce)) {
+		if (kce->ke_txgid <= txgid)
+			break;
+	}
+
+	rw_exit(&kc->kc_lock);
+
+	*kce_out = kce;
+	return ((kce) ? 0 : SET_ERROR(ENOENT));
 }
 
 static int
@@ -872,7 +881,6 @@ dsl_keychain_add_key_sync(void *arg, dmu_tx_t *tx)
 	const char *dsname = arg;
 	dsl_dir_t *dd;
 	dsl_keychain_t *kc;
-	dsl_keychain_entry_t *kce;
 
 	/* find the keychain */
 	VERIFY0(dsl_dir_hold(dp, dsname, FTAG, &dd, NULL));
@@ -881,12 +889,6 @@ dsl_keychain_add_key_sync(void *arg, dmu_tx_t *tx)
 	/* generate and add a key to the keychain */
 	VERIFY0(dsl_keychain_add_key_sync_impl(kc, kc->kc_crypt,
 		tx->tx_txg, tx));
-
-	LOG_DEBUG("added keychain entry sucessfully");
-	for (kce = list_head(&kc->kc_entries); kce;
-		kce = list_next(&kc->kc_entries, kce)) {
-		LOG_DEBUG("kce %lu", (unsigned long)kce->ke_txgid);
-	}
 
 	spa_keystore_keychain_rele(dp->dp_spa, kc, FTAG);
 	dsl_dir_rele(dd, FTAG);
@@ -961,6 +963,8 @@ spa_keystore_rewrap_sync_impl(uint64_t root_ddobj, uint64_t ddobj,
 
 	LOG_DEBUG("rewrapping keychain kcobj = %u", (unsigned)kc->kc_obj);
 
+	rw_enter(&kc->kc_lock, RW_READER);
+
 	/* sync all keychain entries with the new wrapping key */
 	for (kce = list_head(&kc->kc_entries); kce;
 		kce = list_next(&kc->kc_entries, kce)) {
@@ -969,8 +973,10 @@ spa_keystore_rewrap_sync_impl(uint64_t root_ddobj, uint64_t ddobj,
 		ret = dsl_keychain_entry_sync(kce, wkey,
 			dsl_dir_phys(dd)->dd_keychain_obj, tx);
 		if (ret)
-			goto error;
+			goto error_unlock;
 	}
+
+	rw_exit(&kc->kc_lock);
 
 	LOG_DEBUG("replacing wkey ddobj = %u", (unsigned)wkey->wk_ddobj);
 
@@ -1001,6 +1007,8 @@ spa_keystore_rewrap_sync_impl(uint64_t root_ddobj, uint64_t ddobj,
 
 	return (0);
 
+error_unlock:
+	rw_exit(&kc->kc_lock);
 error:
 	LOG_ERROR(ret, "");
 	if (kc)
@@ -1167,7 +1175,7 @@ error_unlock:
 }
 
 int
-spa_keystore_hold_keychain_kr(spa_t *spa, uint64_t dsobj,
+spa_keystore_lookup_keychain_kr(spa_t *spa, uint64_t dsobj,
 	dsl_keychain_t **kc_out)
 {
 	int ret;
@@ -1345,11 +1353,15 @@ dsl_keychain_clone_sync(dsl_dir_t *orig_dd, dsl_wrapping_key_t *wkey,
 	/* get the original keychain */
 	VERIFY0(spa_keystore_keychain_hold_dd(spa, orig_dd, FTAG, &orig_kc));
 
+	rw_enter(&orig_kc->kc_lock, RW_READER);
+
 	/* add the entries from the old keychain, wrapped with the new wkey */
 	for (kce = list_head(&orig_kc->kc_entries); kce;
 		kce = list_next(&orig_kc->kc_entries, kce)) {
 		VERIFY0(dsl_keychain_entry_sync(kce, wkey, kcobj, tx));
 	}
+
+	rw_exit(&orig_kc->kc_lock);
 
 	/* add a new key to the keychain if the option is specified */
 	if (add_key) {
@@ -1374,4 +1386,139 @@ dsl_keychain_destroy_sync(uint64_t kcobj, dmu_tx_t *tx)
 
 	/* decrement the feature count */
 	spa_feature_decr(tx->tx_pool->dp_spa, SPA_FEATURE_ENCRYPTION, tx);
+}
+
+static void crypto_destroy_uio(uio_t *uio) {
+	if (uio->uio_iov)
+		kmem_free(uio->uio_iov, uio->uio_iovcnt * sizeof (iovec_t));
+}
+
+static int
+crypto_init_uios(boolean_t encrypt, dmu_object_type_t ot, uint8_t *plainbuf,
+	uint8_t *cipherbuf, uint_t datalen, uint8_t *mac, uio_t *puio,
+	uio_t *cuio)
+{
+	int ret;
+	uint_t nr_iovecs, nr_plain, nr_cipher;
+	iovec_t *plain_iovecs = NULL, *cipher_iovecs = NULL, *mac_iov = NULL;
+
+	/* other encrypted objects will be added later */
+	ASSERT(ot == DMU_OT_PLAIN_FILE_CONTENTS);
+
+	/* allocate the iovecs for the plain and cipher data */
+	nr_iovecs = 1;
+
+	if (encrypt) {
+		nr_plain = nr_iovecs;
+		plain_iovecs = kmem_alloc(nr_plain * sizeof (iovec_t),
+			KM_SLEEP);
+		if (!plain_iovecs) {
+			ret = SET_ERROR(ENOMEM);
+			goto error;
+		}
+
+		nr_cipher = nr_iovecs + 1;
+		cipher_iovecs = kmem_alloc(nr_cipher * sizeof (iovec_t),
+			KM_SLEEP);
+		if (!cipher_iovecs) {
+			ret = SET_ERROR(ENOMEM);
+			goto error;
+		}
+		mac_iov = &cipher_iovecs[nr_iovecs];
+	} else {
+		nr_plain = nr_iovecs + 1;
+		plain_iovecs = kmem_alloc(nr_plain * sizeof (iovec_t),
+			KM_SLEEP);
+		if (!plain_iovecs) {
+			ret = SET_ERROR(ENOMEM);
+			goto error;
+		}
+
+		nr_cipher = nr_iovecs;
+		cipher_iovecs = kmem_alloc(nr_cipher * sizeof (iovec_t),
+			KM_SLEEP);
+		if (!cipher_iovecs) {
+			ret = SET_ERROR(ENOMEM);
+			goto error;
+		}
+		mac_iov = &plain_iovecs[nr_iovecs];
+	}
+
+	plain_iovecs[0].iov_base = plainbuf;
+	plain_iovecs[0].iov_len = datalen;
+	cipher_iovecs[0].iov_base = cipherbuf;
+	cipher_iovecs[0].iov_len = datalen;
+	mac_iov->iov_base = mac;
+	mac_iov->iov_len = DATA_MAC_LEN;
+
+	/* populate the uios */
+#ifdef _KERNEL
+	puio->uio_segflg = UIO_SYSSPACE;
+	cuio->uio_segflg = UIO_SYSSPACE;
+#else
+	puio->uio_segflg = UIO_USERSPACE;
+	cuio->uio_segflg = UIO_USERSPACE;
+#endif
+
+	puio->uio_iov = plain_iovecs;
+	puio->uio_iovcnt = nr_plain;
+	cuio->uio_iov = cipher_iovecs;
+	cuio->uio_iovcnt = nr_cipher;
+	return (0);
+
+error:
+	LOG_ERROR(ret, "");
+	if (plain_iovecs)
+		kmem_free(plain_iovecs, nr_iovecs * sizeof (iovec_t));
+	if (cipher_iovecs)
+		kmem_free(cipher_iovecs, nr_iovecs * sizeof (iovec_t));
+
+	return (ret);
+}
+
+int
+zio_decrypt_data(spa_t *spa, zbookmark_phys_t *bookmark, uint64_t txgid,
+	dmu_object_type_t ot, uint8_t *iv, uint8_t *src, uint_t datalen,
+	uint8_t *mac, uint8_t *dst)
+{
+	int ret;
+	dsl_keychain_t *kc;
+	dsl_keychain_entry_t *kce;
+	uio_t puio, cuio;
+
+	bzero(&puio, sizeof (uio_t));
+	bzero(&cuio, sizeof (uio_t));
+
+	/* lookup the keychain from the objset id */
+	ret = spa_keystore_lookup_keychain_kr(spa, bookmark->zb_objset,
+		&kc);
+	if (ret)
+		goto error;
+
+	/* lookup the keychain entry for this txgid */
+	ret = dsl_keychain_lookup_entry(kc, txgid, &kce);
+	if (ret)
+		goto error;
+
+	/* create uios for encryption */
+	ret = crypto_init_uios(B_FALSE, ot, dst, src, datalen,
+		mac, &puio, &cuio);
+	if (ret)
+		goto error;
+
+	/* perfrom the encryption */
+	zio_decrypt_uio(kce->ke_key.zk_crypt, &kce->ke_key.zk_key,
+		kce->ke_key.zk_ctx_tmpl, iv, datalen, &puio, &cuio);
+
+	crypto_destroy_uio(&puio);
+	crypto_destroy_uio(&cuio);
+
+	return (0);
+
+error:
+	LOG_ERROR(ret, "");
+	crypto_destroy_uio(&puio);
+	crypto_destroy_uio(&cuio);
+
+	return (ret);
 }

@@ -141,7 +141,7 @@ int spa_keystore_keychain_add_key(const char *dsname);
 int spa_keystore_rewrap(const char *dsname, dsl_crypto_params_t *dcp);
 int spa_keystore_create_keychain_record(spa_t *spa, dsl_dataset_t *ds);
 int spa_keystore_remove_keychain_record(spa_t *spa, dsl_dataset_t *ds);
-int spa_keystore_hold_keychain_kr(spa_t *spa, uint64_t dsobj,
+int spa_keystore_lookup_keychain_kr(spa_t *spa, uint64_t dsobj,
 	dsl_keychain_t **kc_out);
 zfs_keystatus_t dsl_dataset_keystore_keystatus(dsl_dataset_t *ds);
 int dmu_objset_create_encryption_check(dsl_dir_t *pdd,

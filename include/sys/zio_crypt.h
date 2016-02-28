@@ -56,6 +56,12 @@
 
 #endif
 
+/* macros defining key encryption lengths */
+#define	MAX_KEY_LEN 32
+#define	ZIO_CRYPT_WRAPKEY_IVLEN 13
+#define	WRAPPING_MAC_LEN 16
+#define	DATA_MAC_LEN 12
+
 /* utility macros */
 #define	BITS_TO_BYTES(x) (((x) + 7) >> 3)
 #define	BYTES_TO_BITS(x) (x << 3)
@@ -90,8 +96,10 @@ typedef enum zio_encrypt {
 
 typedef enum zio_crypt_type
 {
-	ZIO_CRYPT_TYPE_NONE = 0, ZIO_CRYPT_TYPE_CCM, ZIO_CRYPT_TYPE_GCM
-} zio_encrypt_type_t;
+	ZC_TYPE_NONE = 0,
+	ZC_TYPE_CCM,
+	ZC_TYPE_GCM
+} zio_crypt_type_t;
 
 /* table of supported crypto algorithms, modes and keylengths. */
 typedef struct zio_crypt_info
@@ -100,7 +108,7 @@ typedef struct zio_crypt_info
 	crypto_mech_name_t ci_mechname;
 
 	/* cipher mode type (GCM, CCM) */
-	zio_encrypt_type_t ci_crypt_type;
+	zio_crypt_type_t ci_crypt_type;
 
 	/* length of the encryption key */
 	size_t ci_keylen;
@@ -110,9 +118,6 @@ typedef struct zio_crypt_info
 
 	/* length of the output MAC parameter */
 	size_t ci_maclen;
-
-	/* length of the the ouput MAC parameter for ZIL blocks */
-	size_t ci_zil_maclen;
 
 	/* human-readable name of the encryption alforithm */
 	char *ci_name;
@@ -176,16 +181,21 @@ void dsl_wrapping_key_free(dsl_wrapping_key_t *wkey);
 int dsl_wrapping_key_create(uint8_t *wkeydata, dsl_wrapping_key_t **wkey_out);
 int dsl_crypto_params_init_nvlist(nvlist_t *props, dsl_crypto_params_t *dcp);
 void dsl_crypto_params_destroy(dsl_crypto_params_t *dcp);
-int zio_do_crypt(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
-	crypto_ctx_template_t tmpl, uint8_t *ivbuf, uint_t ivlen, uint_t maclen,
-	uint8_t *plainbuf, uint8_t *cipherbuf, uint_t datalen);
-#define	zio_encrypt(crypt, key, tmpl, iv, ivlen, maclen, \
-	plaindata, cipherdata, keylen) \
-	zio_do_crypt(B_TRUE, crypt, key, tmpl, iv, ivlen, maclen, \
-	plaindata, cipherdata, keylen)
-#define	zio_decrypt(crypt, key, tmpl, iv, ivlen, maclen, \
-	plaindata, cipherdata, keylen) \
-	zio_do_crypt(B_FALSE, crypt, key, tmpl, iv, ivlen, maclen, \
-	plaindata, cipherdata, keylen)
+
+int zio_do_crypt_raw(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
+	crypto_ctx_template_t tmpl, uint8_t *ivbuf,	uint8_t *plainbuf,
+	uint8_t *cipherbuf, uint_t datalen);
+#define	zio_encrypt_raw(crypt, key, tmpl, iv, pd, cd, datalen) \
+	zio_do_crypt_raw(B_TRUE, crypt, key, tmpl, iv, pd, cd, datalen)
+#define	zio_decrypt_raw(crypt, key, tmpl, iv, pd, cd, datalen) \
+	zio_do_crypt_raw(B_FALSE, crypt, key, tmpl, iv, pd, cd, datalen)
+
+int zio_do_crypt_uio(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
+	crypto_ctx_template_t tmpl, uint8_t *ivbuf, uint_t datalen,
+	uio_t *puio, uio_t *cuio);
+#define	zio_encrypt_uio(crypt, key, tmpl, ivbuf, datalen, pu, cu) \
+	zio_do_crypt_uio(B_TRUE, crypt, key, tmpl, ivbuf, datalen, pu, cu)
+#define	zio_decrypt_uio(crypt, key, tmpl, ivbuf, datalen, pu, cu) \
+	zio_do_crypt_uio(B_FALSE, crypt, key, tmpl, ivbuf, datalen, pu, cu)
 
 #endif
