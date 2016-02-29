@@ -36,7 +36,6 @@
 #include <sys/avl.h>
 #include <sys/fs/zfs.h>
 #include <sys/zio_impl.h>
-#include <sys/zio_crypt.h>
 
 #ifdef	__cplusplus
 extern "C" {
@@ -119,6 +118,23 @@ enum zio_compress {
 	ZIO_COMPRESS_LZ4,
 	ZIO_COMPRESS_FUNCTIONS
 };
+
+/* supported encryption algorithms */
+typedef enum zio_encrypt {
+	ZIO_CRYPT_INHERIT = 0,
+	ZIO_CRYPT_ON,
+	ZIO_CRYPT_OFF,
+	ZIO_CRYPT_AES_128_CCM,
+	ZIO_CRYPT_AES_192_CCM,
+	ZIO_CRYPT_AES_256_CCM,
+	ZIO_CRYPT_AES_128_GCM,
+	ZIO_CRYPT_AES_192_GCM,
+	ZIO_CRYPT_AES_256_GCM,
+	ZIO_CRYPT_FUNCTIONS
+} zio_encrypt_t;
+
+#define	ZIO_CRYPT_ON_VALUE	ZIO_CRYPT_AES_256_CCM
+#define	ZIO_CRYPT_DEFAULT	ZIO_CRYPT_OFF
 
 /*
  * The number of "legacy" compression functions which can be set on individual

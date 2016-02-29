@@ -46,7 +46,6 @@
 #include <sys/fs/zfs.h>
 #include <sys/zio_priority.h>
 #include <sys/uio.h>
-#include <sys/zio_crypt.h>
 
 #ifdef	__cplusplus
 extern "C" {
@@ -266,6 +265,9 @@ void zfs_znode_byteswap(void *buf, size_t size);
  */
 #define	DMU_BONUS_BLKID		(-1ULL)
 #define	DMU_SPILL_BLKID		(-2ULL)
+
+typedef struct dsl_crypto_params dsl_crypto_params_t;
+
 /*
  * Public routines to create, destroy, open, and close objsets.
  */

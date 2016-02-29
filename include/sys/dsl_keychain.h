@@ -38,20 +38,40 @@ typedef enum zfs_keystatus {
 	ZFS_KEYSTATUS_AVAILABLE,
 } zfs_keystatus_t;
 
-/* physical representation of a wrapped key in the DSL Keychain */
-typedef struct dsl_crypto_key_phys
+/* in memory representation of a wrapping key */
+typedef struct dsl_wrapping_key
 {
-	/* encryption algorithm (see zio_encrypt enum) */
-	uint64_t dk_crypt_alg;
+	/* link into the keystore's tree of wrapping keys */
+	avl_node_t wk_avl_link;
 
-	/* iv / nonce for unwrapping the key */
-	uint8_t dk_iv[13];
+	/* actual wrapping key */
+	crypto_key_t wk_key;
 
-	uint8_t dk_padding[3];
+	/* refcount of number of keychains holding this struct */
+	refcount_t wk_refcnt;
 
-	/* wrapped key data */
-	uint8_t dk_keybuf[48];
-} dsl_crypto_key_phys_t;
+	/* dsl directory object that owns this wrapping key */
+	uint64_t wk_ddobj;
+} dsl_wrapping_key_t;
+
+/* structure for passing around encryption params from userspace */
+typedef struct dsl_crypto_params
+{
+	/* command to be executed */
+	zfs_ioc_crypto_cmd_t cp_cmd;
+
+	/* the encryption algorithm */
+	uint64_t cp_crypt;
+
+	/* the salt, if the keysource is of type passphrase */
+	uint64_t cp_salt;
+
+	/* keysource property string */
+	const char *cp_keysource;
+
+	/* the wrapping key */
+	dsl_wrapping_key_t *cp_wkey;
+} dsl_crypto_params_t;
 
 /* in memory representation of an entry in the DSL Keychain */
 typedef struct dsl_keychain_entry
@@ -125,6 +145,15 @@ typedef struct spa_keystore
 	/* tree of all wrapping keys, indexed by ddobj */
 	avl_tree_t sk_wkeys;
 } spa_keystore_t;
+
+typedef struct dsl_dataset dsl_dataset_t;
+
+void dsl_wrapping_key_hold(dsl_wrapping_key_t *wkey, void *tag);
+void dsl_wrapping_key_rele(dsl_wrapping_key_t *wkey, void *tag);
+void dsl_wrapping_key_free(dsl_wrapping_key_t *wkey);
+int dsl_wrapping_key_create(uint8_t *wkeydata, dsl_wrapping_key_t **wkey_out);
+int dsl_crypto_params_init_nvlist(nvlist_t *props, dsl_crypto_params_t *dcp);
+void dsl_crypto_params_destroy(dsl_crypto_params_t *dcp);
 
 void spa_keystore_init(spa_keystore_t *sk);
 void spa_keystore_fini(spa_keystore_t *sk);

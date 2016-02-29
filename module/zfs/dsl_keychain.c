@@ -30,56 +30,182 @@
 #include <sys/dsl_prop.h>
 #include <sys/spa_impl.h>
 
-static int
-zio_crypt_key_wrap(dsl_wrapping_key_t *wkey, uint64_t crypt,
-	uint8_t *keydata, dsl_crypto_key_phys_t *dckp)
+void
+dsl_wrapping_key_hold(dsl_wrapping_key_t *wkey, void *tag)
+{
+	(void) refcount_add(&wkey->wk_refcnt, tag);
+	LOG_DEBUG("wkey hold 0x%p: refcount = %d", wkey,
+		(int)refcount_count(&wkey->wk_refcnt));
+}
+
+void
+dsl_wrapping_key_rele(dsl_wrapping_key_t *wkey, void *tag)
+{
+	(void) refcount_remove(&wkey->wk_refcnt, tag);
+	LOG_DEBUG("wkey rele 0x%p: refcount = %d", wkey,
+		(int)refcount_count(&wkey->wk_refcnt));
+}
+
+void
+dsl_wrapping_key_free(dsl_wrapping_key_t *wkey) {
+	VERIFY0(refcount_count(&wkey->wk_refcnt));
+
+	if (wkey->wk_key.ck_data) {
+		bzero(wkey->wk_key.ck_data,
+			BITS_TO_BYTES(wkey->wk_key.ck_length));
+		kmem_free(wkey->wk_key.ck_data,
+			BITS_TO_BYTES(wkey->wk_key.ck_length));
+	}
+
+	refcount_destroy(&wkey->wk_refcnt);
+	kmem_free(wkey, sizeof (dsl_wrapping_key_t));
+}
+
+int
+dsl_wrapping_key_create(uint8_t *wkeydata, dsl_wrapping_key_t **wkey_out)
 {
 	int ret;
+	dsl_wrapping_key_t *wkey;
 
-	ASSERT(crypt < ZIO_CRYPT_FUNCTIONS);
-	ASSERT(wkey->wk_key.ck_format == CRYPTO_KEY_RAW);
+	/* allocate the wrapping key */
+	wkey = kmem_alloc(sizeof (dsl_wrapping_key_t), KM_SLEEP);
+	if (!wkey)
+		return (SET_ERROR(ENOMEM));
 
-	/* copy the crypt and iv data into the dsl_crypto_key_phys_t */
-	dckp->dk_crypt_alg = crypt;
-	bzero(dckp->dk_padding, sizeof (dckp->dk_padding));
-	bzero(dckp->dk_keybuf, sizeof (dckp->dk_keybuf));
-
-	/* generate an iv */
-	ret = random_get_bytes(dckp->dk_iv, ZIO_CRYPT_WRAPKEY_IVLEN);
-	if (ret)
+	/* allocate and initialize the underlying crypto key */
+	wkey->wk_key.ck_data = kmem_alloc(WRAPPING_KEY_LEN, KM_SLEEP);
+	if (!wkey->wk_key.ck_data) {
+		ret = ENOMEM;
 		goto error;
+	}
 
-	/* encrypt the key and store the result in dckp->keybuf */
-	ret = zio_encrypt_raw(crypt, &wkey->wk_key, NULL, dckp->dk_iv,
-		keydata, dckp->dk_keybuf, zio_crypt_table[crypt].ci_keylen);
-	if (ret)
-		goto error;
+	wkey->wk_key.ck_format = CRYPTO_KEY_RAW;
+	wkey->wk_key.ck_length = BYTES_TO_BITS(WRAPPING_KEY_LEN);
 
+	/* copy the data */
+	bcopy(wkeydata, wkey->wk_key.ck_data, WRAPPING_KEY_LEN);
+
+	/* initialize the refcount */
+	refcount_create(&wkey->wk_refcnt);
+
+	*wkey_out = wkey;
 	return (0);
+
 error:
-	LOG_ERROR(ret, "");
+	dsl_wrapping_key_free(wkey);
+
+	*wkey_out = NULL;
 	return (ret);
 }
 
-static int
-zio_crypt_key_unwrap(dsl_wrapping_key_t *wkey, uint64_t crypt,
-	dsl_crypto_key_phys_t *dckp, uint8_t *keydata)
+int
+dsl_crypto_params_init_nvlist(nvlist_t *props, dsl_crypto_params_t *dcp)
 {
 	int ret;
+	dsl_wrapping_key_t *wkey = NULL;
+	boolean_t crypt_exists = B_TRUE, wkeydata_exists = B_TRUE;
+	boolean_t keysource_exists = B_TRUE, salt_exists = B_TRUE;
+	boolean_t cmd_exists = B_TRUE;
+	char *keysource = NULL;
+	uint64_t salt = 0, crypt = 0, cmd = ZFS_IOC_CRYPTO_CMD_NONE;
+	uint8_t *wkeydata;
+	uint_t wkeydata_len;
 
-	ASSERT(crypt < ZIO_CRYPT_FUNCTIONS);
-	ASSERT(wkey->wk_key.ck_format == CRYPTO_KEY_RAW);
-
-	/* encrypt the key and store the result in dckp->keybuf */
-	ret = zio_decrypt_raw(crypt, &wkey->wk_key, NULL, dckp->dk_iv,
-		keydata, dckp->dk_keybuf, zio_crypt_table[crypt].ci_keylen);
+	/* get relevent properties from the nvlist */
+	ret = nvlist_lookup_uint64(props,
+		zfs_prop_to_name(ZFS_PROP_ENCRYPTION), &crypt);
 	if (ret)
-		goto error;
+		crypt_exists = B_FALSE;
 
+	ret = nvlist_lookup_string(props,
+		zfs_prop_to_name(ZFS_PROP_KEYSOURCE), &keysource);
+	if (ret)
+		keysource_exists = B_FALSE;
+
+	ret = nvlist_lookup_uint8_array(props, "wkeydata", &wkeydata,
+		&wkeydata_len);
+	if (ret)
+		wkeydata_exists = B_FALSE;
+
+	ret = nvlist_lookup_uint64(props,
+		zfs_prop_to_name(ZFS_PROP_SALT), &salt);
+	if (ret)
+		salt_exists = B_FALSE;
+
+	ret = nvlist_lookup_uint64(props, "crypto_cmd", &cmd);
+	if (ret)
+		cmd_exists = B_FALSE;
+
+	LOG_DEBUG("%d %d %d %d %d", (int)crypt_exists, (int)keysource_exists,
+		(int)wkeydata_exists, (int)salt_exists, (int)cmd_exists);
+
+	/* no parameters are valid; results in inherited crypto settings */
+	if ((!crypt_exists || crypt == ZIO_CRYPT_OFF) && !keysource_exists &&
+		!wkeydata_exists & !salt_exists) {
+		ret = 0;
+		goto out;
+	}
+
+	/* check wrapping key length */
+	if (wkeydata_len != WRAPPING_KEY_LEN) {
+		ret = SET_ERROR(EINVAL);
+		goto error;
+	}
+
+	/* specifying a keysource requires keydata */
+	if (keysource_exists && !wkeydata_exists) {
+		ret = SET_ERROR(EINVAL);
+		goto error;
+	}
+
+	/* remove crypto_cmd from props since it should not be used again */
+	if (cmd_exists) {
+		ret = nvlist_remove_all(props, "crypto_cmd");
+		if (ret) {
+			ret = SET_ERROR(EIO);
+			goto error;
+		}
+	}
+
+	/* create the wrapping key from the raw data */
+	if (wkeydata_exists) {
+		/* create the wrapping key with the verified parameters */
+		ret = dsl_wrapping_key_create(wkeydata, &wkey);
+		if (ret) goto error;
+
+		/* remove wkeydata from props since it should not be logged */
+		bzero(wkeydata, wkeydata_len);
+		ret = nvlist_remove_all(props, "wkeydata");
+		if (ret) {
+			ret = SET_ERROR(EIO);
+			goto error;
+		}
+	}
+
+	dcp->cp_cmd = cmd;
+	dcp->cp_crypt = crypt;
+	dcp->cp_salt = salt;
+	dcp->cp_keysource = keysource;
+	dcp->cp_wkey = wkey;
 	return (0);
+
 error:
 	LOG_ERROR(ret, "");
+	if (wkey) dsl_wrapping_key_free(wkey);
+
+out:
+	dcp->cp_cmd = ZFS_IOC_CRYPTO_CMD_NONE;
+	dcp->cp_crypt = ZIO_CRYPT_INHERIT;
+	dcp->cp_salt = 0;
+	dcp->cp_keysource = NULL;
+	dcp->cp_wkey = NULL;
 	return (ret);
+}
+
+void
+dsl_crypto_params_destroy(dsl_crypto_params_t *dcp)
+{
+	dsl_wrapping_key_free(dcp->cp_wkey);
 }
 
 static int
@@ -170,7 +296,7 @@ dsl_keychain_entry_sync(dsl_keychain_entry_t *kce,
 	dsl_crypto_key_phys_t key_phys;
 
 	/* wrap the key and store the result in key_phys */
-	ret = zio_crypt_key_wrap(wkey, kce->ke_key.zk_crypt,
+	ret = zio_crypt_key_wrap(&wkey->wk_key, kce->ke_key.zk_crypt,
 		kce->ke_key.zk_key.ck_data, &key_phys);
 	if (ret)
 		goto error;
@@ -256,7 +382,7 @@ error:
 	return (ret);
 }
 
-static int
+int
 dsl_keychain_lookup_entry(dsl_keychain_t *kc, uint64_t txgid,
 	dsl_keychain_entry_t **kce_out)
 {
@@ -441,7 +567,7 @@ dsl_keychain_open(objset_t *mos, dsl_wrapping_key_t *wkey,
 	zap_attribute_t za;
 	uint64_t txgid, crypt = 0;
 	dsl_crypto_key_phys_t dckp;
-	uint8_t keydata[MAX_KEY_LEN + WRAPPING_MAC_LEN];
+	uint8_t keydata[MAX_CRYPT_KEY_LEN + WRAPPING_MAC_LEN];
 	dsl_keychain_t *kc;
 	dsl_keychain_entry_t *cur_kce, *kce = NULL;
 
@@ -482,7 +608,7 @@ dsl_keychain_open(objset_t *mos, dsl_wrapping_key_t *wkey,
 		 * unwrap the key, will return error
 		 * if wkey is incorrect by checking the MAC
 		 */
-		ret = zio_crypt_key_unwrap(wkey, crypt, &dckp, keydata);
+		ret = zio_crypt_key_unwrap(&wkey->wk_key, &dckp, keydata);
 		if (ret) {
 			ret = SET_ERROR(EINVAL);
 			goto error_fini;
@@ -1388,137 +1514,81 @@ dsl_keychain_destroy_sync(uint64_t kcobj, dmu_tx_t *tx)
 	spa_feature_decr(tx->tx_pool->dp_spa, SPA_FEATURE_ENCRYPTION, tx);
 }
 
-static void crypto_destroy_uio(uio_t *uio) {
-	if (uio->uio_iov)
-		kmem_free(uio->uio_iov, uio->uio_iovcnt * sizeof (iovec_t));
-}
-
-static int
-crypto_init_uios(boolean_t encrypt, dmu_object_type_t ot, uint8_t *plainbuf,
-	uint8_t *cipherbuf, uint_t datalen, uint8_t *mac, uio_t *puio,
-	uio_t *cuio)
-{
-	int ret;
-	uint_t nr_iovecs, nr_plain, nr_cipher;
-	iovec_t *plain_iovecs = NULL, *cipher_iovecs = NULL, *mac_iov = NULL;
-
-	/* other encrypted objects will be added later */
-	ASSERT(ot == DMU_OT_PLAIN_FILE_CONTENTS);
-
-	/* allocate the iovecs for the plain and cipher data */
-	nr_iovecs = 1;
-
-	if (encrypt) {
-		nr_plain = nr_iovecs;
-		plain_iovecs = kmem_alloc(nr_plain * sizeof (iovec_t),
-			KM_SLEEP);
-		if (!plain_iovecs) {
-			ret = SET_ERROR(ENOMEM);
-			goto error;
-		}
-
-		nr_cipher = nr_iovecs + 1;
-		cipher_iovecs = kmem_alloc(nr_cipher * sizeof (iovec_t),
-			KM_SLEEP);
-		if (!cipher_iovecs) {
-			ret = SET_ERROR(ENOMEM);
-			goto error;
-		}
-		mac_iov = &cipher_iovecs[nr_iovecs];
-	} else {
-		nr_plain = nr_iovecs + 1;
-		plain_iovecs = kmem_alloc(nr_plain * sizeof (iovec_t),
-			KM_SLEEP);
-		if (!plain_iovecs) {
-			ret = SET_ERROR(ENOMEM);
-			goto error;
-		}
-
-		nr_cipher = nr_iovecs;
-		cipher_iovecs = kmem_alloc(nr_cipher * sizeof (iovec_t),
-			KM_SLEEP);
-		if (!cipher_iovecs) {
-			ret = SET_ERROR(ENOMEM);
-			goto error;
-		}
-		mac_iov = &plain_iovecs[nr_iovecs];
-	}
-
-	plain_iovecs[0].iov_base = plainbuf;
-	plain_iovecs[0].iov_len = datalen;
-	cipher_iovecs[0].iov_base = cipherbuf;
-	cipher_iovecs[0].iov_len = datalen;
-	mac_iov->iov_base = mac;
-	mac_iov->iov_len = DATA_MAC_LEN;
-
-	/* populate the uios */
-#ifdef _KERNEL
-	puio->uio_segflg = UIO_SYSSPACE;
-	cuio->uio_segflg = UIO_SYSSPACE;
-#else
-	puio->uio_segflg = UIO_USERSPACE;
-	cuio->uio_segflg = UIO_USERSPACE;
-#endif
-
-	puio->uio_iov = plain_iovecs;
-	puio->uio_iovcnt = nr_plain;
-	cuio->uio_iov = cipher_iovecs;
-	cuio->uio_iovcnt = nr_cipher;
-	return (0);
-
-error:
-	LOG_ERROR(ret, "");
-	if (plain_iovecs)
-		kmem_free(plain_iovecs, nr_iovecs * sizeof (iovec_t));
-	if (cipher_iovecs)
-		kmem_free(cipher_iovecs, nr_iovecs * sizeof (iovec_t));
-
-	return (ret);
-}
-
 int
-zio_decrypt_data(spa_t *spa, zbookmark_phys_t *bookmark, uint64_t txgid,
-	dmu_object_type_t ot, uint8_t *iv, uint8_t *src, uint_t datalen,
-	uint8_t *mac, uint8_t *dst)
+spa_encrypt_data(spa_t *spa, zbookmark_phys_t *bookmark, uint64_t txgid,
+	dmu_object_type_t ot, blkptr_t *bp, uint_t datalen, boolean_t dedup,
+	uint8_t *plainbuf, uint8_t *cipherbuf)
 {
 	int ret;
 	dsl_keychain_t *kc;
 	dsl_keychain_entry_t *kce;
-	uio_t puio, cuio;
-
-	bzero(&puio, sizeof (uio_t));
-	bzero(&cuio, sizeof (uio_t));
-
-	/* lookup the keychain from the objset id */
-	ret = spa_keystore_lookup_keychain_kr(spa, bookmark->zb_objset,
-		&kc);
+	uint8_t *iv = ((uint8_t *)bp->blk_pad);
+	uint8_t *mac = ((uint8_t *)&bp->blk_cksum);
+	uint_t ivlen;
+	
+	/* lookup the keychain and then the key from the spa's keystore */
+	ret = spa_keystore_lookup_keychain_kr(spa, bookmark->zb_objset, &kc);
 	if (ret)
 		goto error;
-
-	/* lookup the keychain entry for this txgid */
+	
 	ret = dsl_keychain_lookup_entry(kc, txgid, &kce);
 	if (ret)
 		goto error;
-
-	/* create uios for encryption */
-	ret = crypto_init_uios(B_FALSE, ot, dst, src, datalen,
-		mac, &puio, &cuio);
+	
+	/* get ivlen from key's crypt */
+	ivlen = zio_crypt_table[kce->ke_key.zk_crypt].ci_ivlen;
+	
+	/* generate an iv */
+	if (!dedup)
+		ret = zio_crypt_generate_iv(bookmark, txgid, ivlen, iv);
+	else
+		ret = zio_crypt_generate_iv_dd(plainbuf, datalen, ivlen, iv);
+	
 	if (ret)
 		goto error;
-
-	/* perfrom the encryption */
-	zio_decrypt_uio(kce->ke_key.zk_crypt, &kce->ke_key.zk_key,
-		kce->ke_key.zk_ctx_tmpl, iv, datalen, &puio, &cuio);
-
-	crypto_destroy_uio(&puio);
-	crypto_destroy_uio(&cuio);
-
+	
+	/* call lower level function to perform encryption */
+	ret = zio_encrypt_data(&kce->ke_key, ot, iv, mac, datalen, 
+		plainbuf, cipherbuf);
+	if (ret)
+		goto error;
+	
 	return (0);
-
+	
 error:
 	LOG_ERROR(ret, "");
-	crypto_destroy_uio(&puio);
-	crypto_destroy_uio(&cuio);
+	return (ret);
+}
 
+int
+spa_decrypt_data(spa_t *spa, zbookmark_phys_t *bookmark, uint64_t txgid,
+	dmu_object_type_t ot, blkptr_t *bp, uint_t datalen, uint8_t *plainbuf,
+	uint8_t *cipherbuf)
+{
+	int ret;
+	dsl_keychain_t *kc;
+	dsl_keychain_entry_t *kce;
+	uint8_t *iv = ((uint8_t *)bp->blk_pad);
+	uint8_t *mac = ((uint8_t *)&bp->blk_cksum);
+	
+	/* lookup the keychain and then the key from the spa's keystore */
+	ret = spa_keystore_lookup_keychain_kr(spa, bookmark->zb_objset, &kc);
+	if (ret)
+		goto error;
+	
+	ret = dsl_keychain_lookup_entry(kc, txgid, &kce);
+	if (ret)
+		goto error;
+	
+	/* call lower level function to perform decryption */
+	ret = zio_decrypt_data(&kce->ke_key, ot, iv, mac, datalen, 
+		plainbuf, cipherbuf);
+	if (ret)
+		goto error;
+	
+	return (0);
+	
+error:
+	LOG_ERROR(ret, "");
 	return (ret);
 }

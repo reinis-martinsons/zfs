@@ -36,3 +36,29 @@ crypto_decrypt(crypto_mechanism_t *mech, crypto_data_t *ciphertext,
 {
 	return (EOPNOTSUPP);
 }
+
+int
+crypto_digest(crypto_mechanism_t *mech, crypto_data_t *data,
+    crypto_data_t *digest, crypto_call_req_t *cr)
+{
+	return (EOPNOTSUPP);
+}
+
+int
+crypto_digest_init(crypto_mechanism_t *mech, crypto_context_t *ctxp,
+    crypto_call_req_t *cr)
+{
+	return (EOPNOTSUPP);
+}
+
+int crypto_digest_update(crypto_context_t ctx, crypto_data_t *data,
+    crypto_call_req_t *cr)
+{
+	return (EOPNOTSUPP);
+}
+
+int crypto_digest_final(crypto_context_t ctx, crypto_data_t *digest,
+    crypto_call_req_t *cr)
+{
+	return (EOPNOTSUPP);
+}

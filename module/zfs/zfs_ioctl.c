@@ -178,7 +178,7 @@
 #include <sys/dsl_scan.h>
 #include <sharefs/share.h>
 #include <sys/fm/util.h>
-#include <sys/zio_crypt.h>
+#include <sys/dsl_keychain.h>
 
 #include <sys/dmu_send.h>
 #include <sys/dsl_destroy.h>

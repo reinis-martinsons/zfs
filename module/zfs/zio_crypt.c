@@ -24,7 +24,9 @@
  */
 
 #include <sys/zio_crypt.h>
+#include <sys/dmu.h>
 #include <sys/fs/zfs.h>
+#include <sys/zio.h>
 
 void
 zio_crypt_key_destroy(zio_crypt_key_t *key)
@@ -85,185 +87,7 @@ error:
 	return (ret);
 }
 
-void
-dsl_wrapping_key_hold(dsl_wrapping_key_t *wkey, void *tag)
-{
-	(void) refcount_add(&wkey->wk_refcnt, tag);
-	LOG_DEBUG("wkey hold 0x%p: refcount = %d", wkey,
-		(int)refcount_count(&wkey->wk_refcnt));
-}
-
-void
-dsl_wrapping_key_rele(dsl_wrapping_key_t *wkey, void *tag)
-{
-	(void) refcount_remove(&wkey->wk_refcnt, tag);
-	LOG_DEBUG("wkey rele 0x%p: refcount = %d", wkey,
-		(int)refcount_count(&wkey->wk_refcnt));
-}
-
-void
-dsl_wrapping_key_free(dsl_wrapping_key_t *wkey) {
-	VERIFY0(refcount_count(&wkey->wk_refcnt));
-
-	if (wkey->wk_key.ck_data) {
-		bzero(wkey->wk_key.ck_data,
-			BITS_TO_BYTES(wkey->wk_key.ck_length));
-		kmem_free(wkey->wk_key.ck_data,
-			BITS_TO_BYTES(wkey->wk_key.ck_length));
-	}
-
-	refcount_destroy(&wkey->wk_refcnt);
-	kmem_free(wkey, sizeof (dsl_wrapping_key_t));
-}
-
-int
-dsl_wrapping_key_create(uint8_t *wkeydata, dsl_wrapping_key_t **wkey_out)
-{
-	int ret;
-	dsl_wrapping_key_t *wkey;
-
-	/* allocate the wrapping key */
-	wkey = kmem_alloc(sizeof (dsl_wrapping_key_t), KM_SLEEP);
-	if (!wkey)
-		return (SET_ERROR(ENOMEM));
-
-	/* allocate and initialize the underlying crypto key */
-	wkey->wk_key.ck_data = kmem_alloc(WRAPPING_KEY_LEN, KM_SLEEP);
-	if (!wkey->wk_key.ck_data) {
-		ret = ENOMEM;
-		goto error;
-	}
-
-	wkey->wk_key.ck_format = CRYPTO_KEY_RAW;
-	wkey->wk_key.ck_length = BYTES_TO_BITS(WRAPPING_KEY_LEN);
-
-	/* copy the data */
-	bcopy(wkeydata, wkey->wk_key.ck_data, WRAPPING_KEY_LEN);
-
-	/* initialize the refcount */
-	refcount_create(&wkey->wk_refcnt);
-
-	*wkey_out = wkey;
-	return (0);
-
-error:
-	dsl_wrapping_key_free(wkey);
-
-	*wkey_out = NULL;
-	return (ret);
-}
-
-int
-dsl_crypto_params_init_nvlist(nvlist_t *props, dsl_crypto_params_t *dcp)
-{
-	int ret;
-	dsl_wrapping_key_t *wkey = NULL;
-	boolean_t crypt_exists = B_TRUE, wkeydata_exists = B_TRUE;
-	boolean_t keysource_exists = B_TRUE, salt_exists = B_TRUE;
-	boolean_t cmd_exists = B_TRUE;
-	char *keysource = NULL;
-	uint64_t salt = 0, crypt = 0, cmd = ZFS_IOC_CRYPTO_CMD_NONE;
-	uint8_t *wkeydata;
-	uint_t wkeydata_len;
-
-	/* get relevent properties from the nvlist */
-	ret = nvlist_lookup_uint64(props,
-		zfs_prop_to_name(ZFS_PROP_ENCRYPTION), &crypt);
-	if (ret)
-		crypt_exists = B_FALSE;
-
-	ret = nvlist_lookup_string(props,
-		zfs_prop_to_name(ZFS_PROP_KEYSOURCE), &keysource);
-	if (ret)
-		keysource_exists = B_FALSE;
-
-	ret = nvlist_lookup_uint8_array(props, "wkeydata", &wkeydata,
-		&wkeydata_len);
-	if (ret)
-		wkeydata_exists = B_FALSE;
-
-	ret = nvlist_lookup_uint64(props,
-		zfs_prop_to_name(ZFS_PROP_SALT), &salt);
-	if (ret)
-		salt_exists = B_FALSE;
-
-	ret = nvlist_lookup_uint64(props, "crypto_cmd", &cmd);
-	if (ret)
-		cmd_exists = B_FALSE;
-
-	LOG_DEBUG("%d %d %d %d %d", (int)crypt_exists, (int)keysource_exists,
-		(int)wkeydata_exists, (int)salt_exists, (int)cmd_exists);
-
-	/* no parameters are valid; results in inherited crypto settings */
-	if ((!crypt_exists || crypt == ZIO_CRYPT_OFF) && !keysource_exists &&
-		!wkeydata_exists & !salt_exists) {
-		ret = 0;
-		goto out;
-	}
-
-	/* check wrapping key length */
-	if (wkeydata_len != WRAPPING_KEY_LEN) {
-		ret = SET_ERROR(EINVAL);
-		goto error;
-	}
-
-	/* specifying a keysource requires keydata */
-	if (keysource_exists && !wkeydata_exists) {
-		ret = SET_ERROR(EINVAL);
-		goto error;
-	}
-
-	/* remove crypto_cmd from props since it should not be used again */
-	if (cmd_exists) {
-		ret = nvlist_remove_all(props, "crypto_cmd");
-		if (ret) {
-			ret = SET_ERROR(EIO);
-			goto error;
-		}
-	}
-
-	/* create the wrapping key from the raw data */
-	if (wkeydata_exists) {
-		/* create the wrapping key with the verified parameters */
-		ret = dsl_wrapping_key_create(wkeydata, &wkey);
-		if (ret) goto error;
-
-		/* remove wkeydata from props since it should not be logged */
-		bzero(wkeydata, wkeydata_len);
-		ret = nvlist_remove_all(props, "wkeydata");
-		if (ret) {
-			ret = SET_ERROR(EIO);
-			goto error;
-		}
-	}
-
-	dcp->cp_cmd = cmd;
-	dcp->cp_crypt = crypt;
-	dcp->cp_salt = salt;
-	dcp->cp_keysource = keysource;
-	dcp->cp_wkey = wkey;
-	return (0);
-
-error:
-	LOG_ERROR(ret, "");
-	if (wkey) dsl_wrapping_key_free(wkey);
-
-out:
-	dcp->cp_cmd = ZFS_IOC_CRYPTO_CMD_NONE;
-	dcp->cp_crypt = ZIO_CRYPT_INHERIT;
-	dcp->cp_salt = 0;
-	dcp->cp_keysource = NULL;
-	dcp->cp_wkey = NULL;
-	return (ret);
-}
-
-void
-dsl_crypto_params_destroy(dsl_crypto_params_t *dcp)
-{
-	dsl_wrapping_key_free(dcp->cp_wkey);
-}
-
-int
+static int
 zio_do_crypt_raw(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
 	crypto_ctx_template_t tmpl, uint8_t *ivbuf,	uint8_t *plainbuf,
 	uint8_t *cipherbuf, uint_t datalen)
@@ -286,11 +110,11 @@ zio_do_crypt_raw(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
 	mech.cm_type = crypto_mech2id(crypt_info.ci_mechname);
 
 	/* plain length will include the MAC if we are decrypting */
-	if (encrypt)
-		plain_full_len = datalen;
+	if (encrypt) 
+		plain_full_len = datalen;		
 	else
 		plain_full_len = datalen + WRAPPING_MAC_LEN;
-
+	
 	/*
 	 * setup encryption params (currently only AES
 	 * CCM and AES GCM are supported)
@@ -353,8 +177,177 @@ error:
 	LOG_ERROR(ret, "");
 	return (ret);
 }
+#define	zio_encrypt_raw(crypt, key, tmpl, iv, pd, cd, datalen) \
+	zio_do_crypt_raw(B_TRUE, crypt, key, tmpl, iv, pd, cd, datalen)
+#define	zio_decrypt_raw(crypt, key, tmpl, iv, pd, cd, datalen) \
+	zio_do_crypt_raw(B_FALSE, crypt, key, tmpl, iv, pd, cd, datalen)
 
 int
+zio_crypt_key_wrap(crypto_key_t *cwkey, uint64_t crypt,
+	uint8_t *keydata, dsl_crypto_key_phys_t *dckp)
+{
+	int ret;
+
+	ASSERT(crypt < ZIO_CRYPT_FUNCTIONS);
+	ASSERT(cwkey->ck_format == CRYPTO_KEY_RAW);
+
+	/* copy the crypt and iv into the dsl_crypto_key_phys_t */
+	dckp->dk_crypt_alg = crypt;
+	bzero(dckp->dk_padding, sizeof (dckp->dk_padding));
+	bzero(dckp->dk_keybuf, sizeof (dckp->dk_keybuf));
+	
+	/* generate an iv */
+	ret = random_get_bytes(dckp->dk_iv, ZIO_CRYPT_WRAPKEY_IVLEN);
+	if (ret)
+		goto error;
+
+	/* encrypt the key and store the result in dckp->keybuf */
+	ret = zio_encrypt_raw(crypt, cwkey, NULL, dckp->dk_iv,
+		keydata, dckp->dk_keybuf, zio_crypt_table[crypt].ci_keylen);
+	if (ret)
+		goto error;
+
+	return (0);
+error:
+	LOG_ERROR(ret, "");
+	return (ret);
+}
+
+int
+zio_crypt_key_unwrap(crypto_key_t *cwkey, dsl_crypto_key_phys_t *dckp,
+	uint8_t *keydata)
+{
+	int ret;
+
+	ASSERT(dckp->dk_crypt_alg < ZIO_CRYPT_FUNCTIONS);
+	ASSERT(cwkey->ck_format == CRYPTO_KEY_RAW);
+
+	/* encrypt the key and store the result in dckp->keybuf */
+	ret = zio_decrypt_raw(dckp->dk_crypt_alg, cwkey, NULL,
+		dckp->dk_iv, keydata, dckp->dk_keybuf, 
+		zio_crypt_table[dckp->dk_crypt_alg].ci_keylen);
+	if (ret)
+		goto error;
+
+	return (0);
+error:
+	LOG_ERROR(ret, "");
+	return (ret);
+}
+
+int
+zio_crypt_generate_iv(zbookmark_phys_t *bookmark, uint64_t txgid,
+	uint_t ivlen, uint8_t *ivbuf)
+{
+	int ret;
+	crypto_mechanism_t mech;
+	crypto_context_t ctx;
+	crypto_data_t bm_data, txg_data, digest_data;
+	
+	/* initialize sha 256 mechanism */
+	mech.cm_type = crypto_mech2id(SUN_CKM_SHA256);
+	mech.cm_param = NULL;
+	mech.cm_param_len = 0;
+	
+	/* initialize crypto data for the bookmark */
+	bm_data.cd_format = CRYPTO_DATA_RAW;
+	bm_data.cd_offset = 0;
+	bm_data.cd_length = sizeof (zbookmark_phys_t);
+	bm_data.cd_raw.iov_base = (char *)bookmark;
+	bm_data.cd_raw.iov_len = sizeof (zbookmark_phys_t);
+	
+	/* initialize crypto data for the txgid */
+	txg_data.cd_format = CRYPTO_DATA_RAW;
+	txg_data.cd_offset = 0;
+	txg_data.cd_length = sizeof (uint64_t);
+	txg_data.cd_raw.iov_base = (char *)txgid;
+	txg_data.cd_raw.iov_len = sizeof (uint64_t);
+	
+	/* initialize crypto data for the output digest */
+	digest_data.cd_format = CRYPTO_DATA_RAW;
+	digest_data.cd_offset = 0;
+	digest_data.cd_length = ivlen;
+	digest_data.cd_raw.iov_base = (char *)ivbuf;
+	digest_data.cd_raw.iov_len = ivlen;
+	
+	/* perform the sha256 digest */
+	ret = crypto_digest_init(&mech, &ctx, NULL);
+	if (ret != CRYPTO_SUCCESS) {
+		LOG_ERROR(ret, "crypto_digest_init() failed");
+		ret = SET_ERROR(EIO);
+		goto error;
+	}
+	
+	ret = crypto_digest_update(ctx, &bm_data, NULL);
+	if (ret != CRYPTO_SUCCESS) {
+		LOG_ERROR(ret, "crypto_digest_update() failed for bookmark");
+		ret = SET_ERROR(EIO);
+		goto error;
+	}
+	
+	ret = crypto_digest_update(ctx, &txg_data, NULL);
+	if (ret != CRYPTO_SUCCESS) {
+		LOG_ERROR(ret, "crypto_digest_update() failed for txgid");
+		ret = SET_ERROR(EIO);
+		goto error;
+	}
+	
+	ret = crypto_digest_final(ctx, &digest_data, NULL);
+	if (ret != CRYPTO_SUCCESS) {
+		LOG_ERROR(ret, "crypto_digest_update() failed for txgid");
+		ret = SET_ERROR(EIO);
+		goto error;
+	}
+	
+	return (0);
+	
+error:
+	LOG_ERROR(ret, "");
+	return ret;
+}
+
+int
+zio_crypt_generate_iv_dd(uint8_t *plainbuf, uint_t datalen, uint_t ivlen,
+	uint8_t *ivbuf)
+{
+	int ret;
+	crypto_mechanism_t mech;
+	crypto_data_t pb_data, digest_data;
+	
+	/* initialize sha 256 mechanism */
+	mech.cm_type = crypto_mech2id(SUN_CKM_SHA256);
+	mech.cm_param = NULL;
+	mech.cm_param_len = 0;
+	
+	/* initialize crypto data for the plain buffer */
+	pb_data.cd_format = CRYPTO_DATA_RAW;
+	pb_data.cd_offset = 0;
+	pb_data.cd_length = datalen;
+	pb_data.cd_raw.iov_base = (char *)plainbuf;
+	pb_data.cd_raw.iov_len = datalen;
+	
+	/* initialize crypto data for the output digest */
+	digest_data.cd_format = CRYPTO_DATA_RAW;
+	digest_data.cd_offset = 0;
+	digest_data.cd_length = ivlen;
+	digest_data.cd_raw.iov_base = (char *)ivbuf;
+	digest_data.cd_raw.iov_len = ivlen;
+	
+	ret = crypto_digest(&mech, &pb_data, &digest_data, NULL);
+	if (ret != CRYPTO_SUCCESS) {
+		LOG_ERROR(ret, "crypto_digest() failed");
+		ret = SET_ERROR(EIO);
+		goto error;
+	}	
+	
+	return (0);
+	
+error:
+	LOG_ERROR(ret, "");
+	return ret;
+}
+
+static int
 zio_do_crypt_uio(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
 	crypto_ctx_template_t tmpl, uint8_t *ivbuf, uint_t datalen,
 	uio_t *puio, uio_t *cuio)
@@ -441,5 +434,127 @@ zio_do_crypt_uio(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
 
 error:
 	LOG_ERROR(ret, "");
+	return (ret);
+}
+
+static void zio_crypt_destroy_uio(uio_t *uio) {
+	if (uio->uio_iov)
+		kmem_free(uio->uio_iov, uio->uio_iovcnt * sizeof (iovec_t));
+}
+
+static int
+zio_crypt_init_uios(boolean_t encrypt, dmu_object_type_t ot, uint8_t *plainbuf,
+	uint8_t *cipherbuf, uint_t datalen, uint8_t *mac, uio_t *puio,
+	uio_t *cuio)
+{
+	int ret;
+	uint_t nr_iovecs, nr_plain, nr_cipher;
+	iovec_t *plain_iovecs = NULL, *cipher_iovecs = NULL, *mac_iov = NULL;
+
+	/* other encrypted objects will be added later */
+	ASSERT(ot == DMU_OT_PLAIN_FILE_CONTENTS);
+
+	/* allocate the iovecs for the plain and cipher data */
+	nr_iovecs = 1;
+
+	if (encrypt) {
+		nr_plain = nr_iovecs;
+		plain_iovecs = kmem_alloc(nr_plain * sizeof (iovec_t),
+			KM_SLEEP);
+		if (!plain_iovecs) {
+			ret = SET_ERROR(ENOMEM);
+			goto error;
+		}
+
+		nr_cipher = nr_iovecs + 1;
+		cipher_iovecs = kmem_alloc(nr_cipher * sizeof (iovec_t),
+			KM_SLEEP);
+		if (!cipher_iovecs) {
+			ret = SET_ERROR(ENOMEM);
+			goto error;
+		}
+		mac_iov = &cipher_iovecs[nr_iovecs];
+	} else {
+		nr_plain = nr_iovecs + 1;
+		plain_iovecs = kmem_alloc(nr_plain * sizeof (iovec_t),
+			KM_SLEEP);
+		if (!plain_iovecs) {
+			ret = SET_ERROR(ENOMEM);
+			goto error;
+		}
+
+		nr_cipher = nr_iovecs;
+		cipher_iovecs = kmem_alloc(nr_cipher * sizeof (iovec_t),
+			KM_SLEEP);
+		if (!cipher_iovecs) {
+			ret = SET_ERROR(ENOMEM);
+			goto error;
+		}
+		mac_iov = &plain_iovecs[nr_iovecs];
+	}
+
+	plain_iovecs[0].iov_base = plainbuf;
+	plain_iovecs[0].iov_len = datalen;
+	cipher_iovecs[0].iov_base = cipherbuf;
+	cipher_iovecs[0].iov_len = datalen;
+	mac_iov->iov_base = mac;
+	mac_iov->iov_len = DATA_MAC_LEN;
+
+	/* populate the uios */
+#ifdef _KERNEL
+	puio->uio_segflg = UIO_SYSSPACE;
+	cuio->uio_segflg = UIO_SYSSPACE;
+#else
+	puio->uio_segflg = UIO_USERSPACE;
+	cuio->uio_segflg = UIO_USERSPACE;
+#endif
+
+	puio->uio_iov = plain_iovecs;
+	puio->uio_iovcnt = nr_plain;
+	cuio->uio_iov = cipher_iovecs;
+	cuio->uio_iovcnt = nr_cipher;
+	return (0);
+
+error:
+	LOG_ERROR(ret, "");
+	if (plain_iovecs)
+		kmem_free(plain_iovecs, nr_iovecs * sizeof (iovec_t));
+	if (cipher_iovecs)
+		kmem_free(cipher_iovecs, nr_iovecs * sizeof (iovec_t));
+
+	return (ret);
+}
+
+int
+zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key,
+	dmu_object_type_t ot, uint8_t *iv, uint8_t *mac, uint_t datalen,
+	uint8_t *plainbuf, uint8_t *cipherbuf)
+{
+	int ret;
+	uio_t puio, cuio;
+
+	bzero(&puio, sizeof (uio_t));
+	bzero(&cuio, sizeof (uio_t));
+
+	/* create uios for encryption */
+	ret = zio_crypt_init_uios(encrypt, ot, plainbuf, cipherbuf, datalen,
+		mac, &puio, &cuio);
+	if (ret)
+		goto error;
+
+	/* perform the encryption */
+	zio_do_crypt_uio(encrypt, key->zk_crypt, &key->zk_key,
+		key->zk_ctx_tmpl, iv, datalen, &puio, &cuio);
+
+	zio_crypt_destroy_uio(&puio);
+	zio_crypt_destroy_uio(&cuio);
+
+	return (0);
+
+error:
+	LOG_ERROR(ret, "");
+	zio_crypt_destroy_uio(&puio);
+	zio_crypt_destroy_uio(&cuio);
+
 	return (ret);
 }
