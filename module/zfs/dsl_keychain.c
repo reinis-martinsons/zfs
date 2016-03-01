@@ -1301,7 +1301,7 @@ error_unlock:
 }
 
 int
-spa_keystore_lookup_keychain_kr(spa_t *spa, uint64_t dsobj,
+spa_keystore_lookup_keychain_record(spa_t *spa, uint64_t dsobj,
 	dsl_keychain_t **kc_out)
 {
 	int ret;
@@ -1527,7 +1527,7 @@ spa_encrypt_data(spa_t *spa, zbookmark_phys_t *bookmark, uint64_t txgid,
 	uint_t ivlen;
 	
 	/* lookup the keychain and then the key from the spa's keystore */
-	ret = spa_keystore_lookup_keychain_kr(spa, bookmark->zb_objset, &kc);
+	ret = spa_keystore_lookup_keychain_record(spa, bookmark->zb_objset, &kc);
 	if (ret)
 		goto error;
 	
@@ -1572,7 +1572,7 @@ spa_decrypt_data(spa_t *spa, zbookmark_phys_t *bookmark, uint64_t txgid,
 	uint8_t *mac = ((uint8_t *)&bp->blk_cksum);
 	
 	/* lookup the keychain and then the key from the spa's keystore */
-	ret = spa_keystore_lookup_keychain_kr(spa, bookmark->zb_objset, &kc);
+	ret = spa_keystore_lookup_keychain_record(spa, bookmark->zb_objset, &kc);
 	if (ret)
 		goto error;
 	

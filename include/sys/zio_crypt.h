@@ -128,7 +128,7 @@ typedef struct dsl_crypto_key_phys
 typedef struct zio_crypt_key
 {
 	/* encryption algorithm */
-	zio_encrypt_t zk_crypt;
+	enum zio_encrypt zk_crypt;
 
 	/* illumos crypto api key representation */
 	crypto_key_t zk_key;

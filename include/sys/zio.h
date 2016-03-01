@@ -120,7 +120,7 @@ enum zio_compress {
 };
 
 /* supported encryption algorithms */
-typedef enum zio_encrypt {
+enum zio_encrypt {
 	ZIO_CRYPT_INHERIT = 0,
 	ZIO_CRYPT_ON,
 	ZIO_CRYPT_OFF,
@@ -131,7 +131,7 @@ typedef enum zio_encrypt {
 	ZIO_CRYPT_AES_192_GCM,
 	ZIO_CRYPT_AES_256_GCM,
 	ZIO_CRYPT_FUNCTIONS
-} zio_encrypt_t;
+};
 
 #define	ZIO_CRYPT_ON_VALUE	ZIO_CRYPT_AES_256_CCM
 #define	ZIO_CRYPT_DEFAULT	ZIO_CRYPT_OFF

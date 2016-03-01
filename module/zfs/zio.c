@@ -39,6 +39,7 @@
 #include <sys/ddt.h>
 #include <sys/blkptr.h>
 #include <sys/zfeature.h>
+#include <sys/dsl_keychain.h>
 
 /*
  * ==========================================================================
@@ -331,7 +332,7 @@ zio_pop_transforms(zio_t *zio)
 
 /*
  * ==========================================================================
- * I/O transform callbacks for subblocks and decompression
+ * I/O transform callbacks for subblocks, decompression, and encryption
  * ==========================================================================
  */
 static void
@@ -349,6 +350,19 @@ zio_decompress(zio_t *zio, void *data, uint64_t size)
 	if (zio->io_error == 0 &&
 	    zio_decompress_data(BP_GET_COMPRESS(zio->io_bp),
 	    zio->io_data, data, zio->io_size, size) != 0)
+		zio->io_error = SET_ERROR(EIO);
+}
+
+static void
+zio_decrypt(zio_t *zio, void *data, uint64_t size)
+{
+	blkptr_t *bp = zio->io_bp;
+	
+	if (zio->io_error != 0)
+		return;
+	
+	if (spa_decrypt_data(zio->io_spa, &zio->io_bookmark, bp->blk_birth,
+		BP_GET_TYPE(bp), bp, size, data, zio->io_data) != 0)
 		zio->io_error = SET_ERROR(EIO);
 }
 
@@ -1078,15 +1092,22 @@ static int
 zio_read_bp_init(zio_t *zio)
 {
 	blkptr_t *bp = zio->io_bp;
+	uint64_t psize =
+		    BP_IS_EMBEDDED(bp) ? BPE_GET_PSIZE(bp) : BP_GET_PSIZE(bp);
 
 	if (BP_GET_COMPRESS(bp) != ZIO_COMPRESS_OFF &&
 	    zio->io_child_type == ZIO_CHILD_LOGICAL &&
 	    !(zio->io_flags & ZIO_FLAG_RAW)) {
-		uint64_t psize =
-		    BP_IS_EMBEDDED(bp) ? BPE_GET_PSIZE(bp) : BP_GET_PSIZE(bp);
 		void *cbuf = zio_buf_alloc(psize);
 
 		zio_push_transform(zio, cbuf, psize, psize, zio_decompress);
+	}
+	
+	if (BP_IS_ENCRYPTED(bp) && zio->io_child_type == ZIO_CHILD_LOGICAL &&
+		!(zio->io_flags & ZIO_FLAG_RAW)) {
+		void *cbuf = zio_buf_alloc(psize);
+
+		zio_push_transform(zio, cbuf, psize, psize, zio_decrypt);
 	}
 
 	if (BP_IS_EMBEDDED(bp) && BPE_GET_ETYPE(bp) == BP_EMBEDDED_TYPE_DATA) {
@@ -1114,10 +1135,11 @@ zio_write_bp_init(zio_t *zio)
 	spa_t *spa = zio->io_spa;
 	zio_prop_t *zp = &zio->io_prop;
 	enum zio_compress compress = zp->zp_compress;
+	boolean_t encrypt = zp->zp_encrypt;
 	blkptr_t *bp = zio->io_bp;
 	uint64_t lsize = zio->io_size;
 	uint64_t psize = lsize;
-	int pass = 1;
+	int pass = 1, ret = 0;
 
 	/*
 	 * If our children haven't all reached the ready stage,
@@ -1200,7 +1222,8 @@ zio_write_bp_init(zio_t *zio)
 		if (psize == 0 || psize == lsize) {
 			compress = ZIO_COMPRESS_OFF;
 			zio_buf_free(cbuf, lsize);
-		} else if (!zp->zp_dedup && psize <= BPE_PAYLOAD_SIZE &&
+		} else if (!zp->zp_dedup && !encrypt &&
+			psize <= BPE_PAYLOAD_SIZE &&
 		    zp->zp_level == 0 && !DMU_OT_HAS_FILL(zp->zp_type) &&
 		    spa_feature_is_enabled(spa, SPA_FEATURE_EMBEDDED_DATA)) {
 			encode_embedded_bp_compressed(bp,
@@ -1239,6 +1262,24 @@ zio_write_bp_init(zio_t *zio)
 				zio_push_transform(zio, cbuf,
 				    psize, lsize, NULL);
 			}
+		}
+	}
+	
+	if (encrypt && spa_feature_is_enabled(spa, SPA_FEATURE_ENCRYPTION)) {
+		if (psize == 0) {
+			encrypt = B_FALSE;
+		} else {
+			void *enc_buf = zio_buf_alloc(psize);
+			ret = spa_encrypt_data(spa, &zio->io_bookmark,
+				zio->io_txg, zp->zp_type, bp, psize, zp->zp_dedup,
+				zio->io_data, enc_buf);
+			if (ret) {
+				zio->io_error = EIO;
+				zio_buf_free(enc_buf, psize);
+				return (ZIO_PIPELINE_CONTINUE);
+			}
+			
+			zio_push_transform(zio, enc_buf, psize, psize, NULL);
 		}
 	}
 
