@@ -1525,36 +1525,37 @@ spa_encrypt_data(spa_t *spa, zbookmark_phys_t *bookmark, uint64_t txgid,
 	uint8_t *iv = ((uint8_t *)bp->blk_pad);
 	uint8_t *mac = ((uint8_t *)&bp->blk_cksum);
 	uint_t ivlen;
-	
+
 	/* lookup the keychain and then the key from the spa's keystore */
-	ret = spa_keystore_lookup_keychain_record(spa, bookmark->zb_objset, &kc);
+	ret = spa_keystore_lookup_keychain_record(spa,
+		bookmark->zb_objset, &kc);
 	if (ret)
 		goto error;
-	
+
 	ret = dsl_keychain_lookup_entry(kc, txgid, &kce);
 	if (ret)
 		goto error;
-	
+
 	/* get ivlen from key's crypt */
 	ivlen = zio_crypt_table[kce->ke_key.zk_crypt].ci_ivlen;
-	
+
 	/* generate an iv */
 	if (!dedup)
 		ret = zio_crypt_generate_iv(bookmark, txgid, ivlen, iv);
 	else
 		ret = zio_crypt_generate_iv_dd(plainbuf, datalen, ivlen, iv);
-	
+
 	if (ret)
 		goto error;
-	
+
 	/* call lower level function to perform encryption */
-	ret = zio_encrypt_data(&kce->ke_key, ot, iv, mac, datalen, 
+	ret = zio_encrypt_data(&kce->ke_key, ot, iv, mac, datalen,
 		plainbuf, cipherbuf);
 	if (ret)
 		goto error;
-	
+
 	return (0);
-	
+
 error:
 	LOG_ERROR(ret, "");
 	return (ret);
@@ -1570,24 +1571,25 @@ spa_decrypt_data(spa_t *spa, zbookmark_phys_t *bookmark, uint64_t txgid,
 	dsl_keychain_entry_t *kce;
 	uint8_t *iv = ((uint8_t *)bp->blk_pad);
 	uint8_t *mac = ((uint8_t *)&bp->blk_cksum);
-	
+
 	/* lookup the keychain and then the key from the spa's keystore */
-	ret = spa_keystore_lookup_keychain_record(spa, bookmark->zb_objset, &kc);
+	ret = spa_keystore_lookup_keychain_record(spa,
+		bookmark->zb_objset, &kc);
 	if (ret)
 		goto error;
-	
+
 	ret = dsl_keychain_lookup_entry(kc, txgid, &kce);
 	if (ret)
 		goto error;
-	
+
 	/* call lower level function to perform decryption */
-	ret = zio_decrypt_data(&kce->ke_key, ot, iv, mac, datalen, 
+	ret = zio_decrypt_data(&kce->ke_key, ot, iv, mac, datalen,
 		plainbuf, cipherbuf);
 	if (ret)
 		goto error;
-	
+
 	return (0);
-	
+
 error:
 	LOG_ERROR(ret, "");
 	return (ret);

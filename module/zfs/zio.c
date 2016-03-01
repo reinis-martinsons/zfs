@@ -357,10 +357,10 @@ static void
 zio_decrypt(zio_t *zio, void *data, uint64_t size)
 {
 	blkptr_t *bp = zio->io_bp;
-	
+
 	if (zio->io_error != 0)
 		return;
-	
+
 	if (spa_decrypt_data(zio->io_spa, &zio->io_bookmark, bp->blk_birth,
 		BP_GET_TYPE(bp), bp, size, data, zio->io_data) != 0)
 		zio->io_error = SET_ERROR(EIO);
@@ -1102,7 +1102,7 @@ zio_read_bp_init(zio_t *zio)
 
 		zio_push_transform(zio, cbuf, psize, psize, zio_decompress);
 	}
-	
+
 	if (BP_IS_ENCRYPTED(bp) && zio->io_child_type == ZIO_CHILD_LOGICAL &&
 		!(zio->io_flags & ZIO_FLAG_RAW)) {
 		void *cbuf = zio_buf_alloc(psize);
@@ -1264,22 +1264,21 @@ zio_write_bp_init(zio_t *zio)
 			}
 		}
 	}
-	
+
 	if (encrypt && spa_feature_is_enabled(spa, SPA_FEATURE_ENCRYPTION)) {
 		if (psize == 0) {
 			encrypt = B_FALSE;
 		} else {
 			void *enc_buf = zio_buf_alloc(psize);
 			ret = spa_encrypt_data(spa, &zio->io_bookmark,
-				zio->io_txg, zp->zp_type, bp, psize, zp->zp_dedup,
-				zio->io_data, enc_buf);
+				zio->io_txg, zp->zp_type, bp, psize,
+				zp->zp_dedup, zio->io_data, enc_buf);
 			if (ret) {
-				zio->io_error = EIO;
+				zio->io_error = SET_ERROR(EIO);
 				zio_buf_free(enc_buf, psize);
-				return (ZIO_PIPELINE_CONTINUE);
+			} else {
+				zio_push_transform(zio, enc_buf, psize, psize, NULL);
 			}
-			
-			zio_push_transform(zio, enc_buf, psize, psize, NULL);
 		}
 	}
 

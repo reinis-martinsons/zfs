@@ -146,7 +146,7 @@ int zio_crypt_key_wrap(crypto_key_t *cwkey, uint64_t crypt,
 	uint8_t *keydata, dsl_crypto_key_phys_t *dckp);
 int zio_crypt_key_unwrap(crypto_key_t *cwkey, dsl_crypto_key_phys_t *dckp,
 	uint8_t *keydata);
-	
+
 int zio_crypt_generate_iv(zbookmark_phys_t *bookmark, uint64_t txgid,
 	uint_t ivlen, uint8_t *ivbuf);
 int zio_crypt_generate_iv_dd(uint8_t *plainbuf, uint_t datalen, uint_t ivlen,

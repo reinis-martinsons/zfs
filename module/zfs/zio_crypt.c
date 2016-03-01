@@ -28,6 +28,8 @@
 #include <sys/fs/zfs.h>
 #include <sys/zio.h>
 
+#define	SHA_256_DIGEST_LEN 32
+
 void
 zio_crypt_key_destroy(zio_crypt_key_t *key)
 {
@@ -110,11 +112,11 @@ zio_do_crypt_raw(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
 	mech.cm_type = crypto_mech2id(crypt_info.ci_mechname);
 
 	/* plain length will include the MAC if we are decrypting */
-	if (encrypt) 
-		plain_full_len = datalen;		
+	if (encrypt)
+		plain_full_len = datalen;
 	else
 		plain_full_len = datalen + WRAPPING_MAC_LEN;
-	
+
 	/*
 	 * setup encryption params (currently only AES
 	 * CCM and AES GCM are supported)
@@ -195,7 +197,7 @@ zio_crypt_key_wrap(crypto_key_t *cwkey, uint64_t crypt,
 	dckp->dk_crypt_alg = crypt;
 	bzero(dckp->dk_padding, sizeof (dckp->dk_padding));
 	bzero(dckp->dk_keybuf, sizeof (dckp->dk_keybuf));
-	
+
 	/* generate an iv */
 	ret = random_get_bytes(dckp->dk_iv, ZIO_CRYPT_WRAPKEY_IVLEN);
 	if (ret)
@@ -224,7 +226,7 @@ zio_crypt_key_unwrap(crypto_key_t *cwkey, dsl_crypto_key_phys_t *dckp,
 
 	/* encrypt the key and store the result in dckp->keybuf */
 	ret = zio_decrypt_raw(dckp->dk_crypt_alg, cwkey, NULL,
-		dckp->dk_iv, keydata, dckp->dk_keybuf, 
+		dckp->dk_iv, keydata, dckp->dk_keybuf,
 		zio_crypt_table[dckp->dk_crypt_alg].ci_keylen);
 	if (ret)
 		goto error;
@@ -243,33 +245,34 @@ zio_crypt_generate_iv(zbookmark_phys_t *bookmark, uint64_t txgid,
 	crypto_mechanism_t mech;
 	crypto_context_t ctx;
 	crypto_data_t bm_data, txg_data, digest_data;
-	
+	uint8_t digestbuf[SHA_256_DIGEST_LEN];
+
 	/* initialize sha 256 mechanism */
 	mech.cm_type = crypto_mech2id(SUN_CKM_SHA256);
 	mech.cm_param = NULL;
 	mech.cm_param_len = 0;
-	
+
 	/* initialize crypto data for the bookmark */
 	bm_data.cd_format = CRYPTO_DATA_RAW;
 	bm_data.cd_offset = 0;
 	bm_data.cd_length = sizeof (zbookmark_phys_t);
 	bm_data.cd_raw.iov_base = (char *)bookmark;
 	bm_data.cd_raw.iov_len = sizeof (zbookmark_phys_t);
-	
+
 	/* initialize crypto data for the txgid */
 	txg_data.cd_format = CRYPTO_DATA_RAW;
 	txg_data.cd_offset = 0;
 	txg_data.cd_length = sizeof (uint64_t);
-	txg_data.cd_raw.iov_base = (char *)txgid;
+	txg_data.cd_raw.iov_base = (char *)&txgid;
 	txg_data.cd_raw.iov_len = sizeof (uint64_t);
-	
+
 	/* initialize crypto data for the output digest */
 	digest_data.cd_format = CRYPTO_DATA_RAW;
 	digest_data.cd_offset = 0;
-	digest_data.cd_length = ivlen;
-	digest_data.cd_raw.iov_base = (char *)ivbuf;
-	digest_data.cd_raw.iov_len = ivlen;
-	
+	digest_data.cd_length = SHA_256_DIGEST_LEN;
+	digest_data.cd_raw.iov_base = (char *)digestbuf;
+	digest_data.cd_raw.iov_len = SHA_256_DIGEST_LEN;
+
 	/* perform the sha256 digest */
 	ret = crypto_digest_init(&mech, &ctx, NULL);
 	if (ret != CRYPTO_SUCCESS) {
@@ -277,33 +280,36 @@ zio_crypt_generate_iv(zbookmark_phys_t *bookmark, uint64_t txgid,
 		ret = SET_ERROR(EIO);
 		goto error;
 	}
-	
+
 	ret = crypto_digest_update(ctx, &bm_data, NULL);
 	if (ret != CRYPTO_SUCCESS) {
 		LOG_ERROR(ret, "crypto_digest_update() failed for bookmark");
 		ret = SET_ERROR(EIO);
 		goto error;
 	}
-	
+
 	ret = crypto_digest_update(ctx, &txg_data, NULL);
 	if (ret != CRYPTO_SUCCESS) {
 		LOG_ERROR(ret, "crypto_digest_update() failed for txgid");
 		ret = SET_ERROR(EIO);
 		goto error;
 	}
-	
+
 	ret = crypto_digest_final(ctx, &digest_data, NULL);
 	if (ret != CRYPTO_SUCCESS) {
 		LOG_ERROR(ret, "crypto_digest_update() failed for txgid");
 		ret = SET_ERROR(EIO);
 		goto error;
 	}
-	
+
+	/* truncate and copy the digest into the output buffer */
+	bcopy(digestbuf, ivbuf, ivlen);
+
 	return (0);
-	
+
 error:
 	LOG_ERROR(ret, "");
-	return ret;
+	return (ret);
 }
 
 int
@@ -313,38 +319,43 @@ zio_crypt_generate_iv_dd(uint8_t *plainbuf, uint_t datalen, uint_t ivlen,
 	int ret;
 	crypto_mechanism_t mech;
 	crypto_data_t pb_data, digest_data;
-	
+	uint8_t digestbuf[SHA_256_DIGEST_LEN];
+
 	/* initialize sha 256 mechanism */
 	mech.cm_type = crypto_mech2id(SUN_CKM_SHA256);
 	mech.cm_param = NULL;
 	mech.cm_param_len = 0;
-	
+
 	/* initialize crypto data for the plain buffer */
 	pb_data.cd_format = CRYPTO_DATA_RAW;
 	pb_data.cd_offset = 0;
 	pb_data.cd_length = datalen;
 	pb_data.cd_raw.iov_base = (char *)plainbuf;
 	pb_data.cd_raw.iov_len = datalen;
-	
+
 	/* initialize crypto data for the output digest */
 	digest_data.cd_format = CRYPTO_DATA_RAW;
 	digest_data.cd_offset = 0;
-	digest_data.cd_length = ivlen;
+	digest_data.cd_length = SHA_256_DIGEST_LEN;
 	digest_data.cd_raw.iov_base = (char *)ivbuf;
-	digest_data.cd_raw.iov_len = ivlen;
-	
+	digest_data.cd_raw.iov_len = SHA_256_DIGEST_LEN;
+
+	/* generate the digest */
 	ret = crypto_digest(&mech, &pb_data, &digest_data, NULL);
 	if (ret != CRYPTO_SUCCESS) {
 		LOG_ERROR(ret, "crypto_digest() failed");
 		ret = SET_ERROR(EIO);
 		goto error;
-	}	
-	
+	}
+
+	/* truncate and copy the digest into the output buffer */
+	bcopy(digestbuf, ivbuf, ivlen);
+
 	return (0);
-	
+
 error:
 	LOG_ERROR(ret, "");
-	return ret;
+	return (ret);
 }
 
 static int

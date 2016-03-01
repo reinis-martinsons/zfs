@@ -1788,10 +1788,6 @@ dmu_write_policy(objset_t *os, dnode_t *dn, int level, int wp, zio_prop_t *zp)
 		compress = zio_compress_select(os->os_spa, dn->dn_compress,
 		    compress);
 
-		checksum = (dedup_checksum == ZIO_CHECKSUM_OFF) ?
-		    zio_checksum_select(dn->dn_checksum, checksum) :
-		    dedup_checksum;
-
 		/*
 		 * Determine dedup setting.  If we are in dmu_sync(),
 		 * we won't actually dedup now because that's all
