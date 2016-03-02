@@ -1264,15 +1264,15 @@ zio_write_bp_init(zio_t *zio)
 			}
 		}
 	}
-	
+
 	if (encrypt && spa_feature_is_enabled(spa, SPA_FEATURE_ENCRYPTION)) {
 		LOG_DEBUG("encryption should happen");
-		
+
 		if (psize == 0) {
 			encrypt = B_FALSE;
 		} else {
 			void *enc_buf = zio_buf_alloc(psize);
-			
+
 			LOG_DEBUG("encryption performed");
 			ret = spa_encrypt_data(spa, &zio->io_bookmark,
 				zio->io_txg, zp->zp_type, bp, psize,

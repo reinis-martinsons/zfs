@@ -420,7 +420,7 @@ zfs_crypto_clone(libzfs_handle_t *hdl, zfs_handle_t *origin_zhp,
 	char errbuf[1024];
 	char *keysource = NULL;
 	zfs_handle_t *pzhp = NULL;
-	uint64_t crypt, pcrypt, ocrypt;
+	uint64_t crypt, pcrypt, ocrypt, okey_status;
 
 	(void) snprintf(errbuf, sizeof (errbuf),
 		dgettext(TEXT_DOMAIN, "Encryption clone error"));
@@ -479,9 +479,22 @@ zfs_crypto_clone(libzfs_handle_t *hdl, zfs_handle_t *origin_zhp,
 		goto out;
 	}
 
+
 	/*
-	 * by this point this dataset will be encrypted. if the parent doesn't
-	 * have a keysource to inherit we need one provided
+	 * by this point this dataset will be encrypted. The origin's
+	 * wrapping key must be loaded
+	 */
+	okey_status = zfs_prop_get_int(origin_zhp, ZFS_PROP_KEYSTATUS);
+	if (okey_status != ZFS_KEYSTATUS_AVAILABLE) {
+		ret = EPERM;
+		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+			"Origin wrapping key must be loaded."));
+		goto out;
+	}
+
+	/*
+	 * if the parent doesn't have a keysource to inherit we need
+	 * one provided for us
 	 */
 	if (pcrypt == ZIO_CRYPT_OFF && !keysource) {
 		ret = EINVAL;

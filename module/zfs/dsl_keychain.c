@@ -1428,6 +1428,15 @@ dmu_objset_clone_encryption_check(dsl_dir_t *pdd, dsl_dir_t *odd,
 	if (dcp->cp_cmd && dcp->cp_cmd != ZFS_IOC_CRYPTO_ADD_KEY)
 		return (SET_ERROR(EINVAL));
 
+	/* origin wrapping key must be present */
+	ret = spa_keystore_wkey_hold_ddobj(pdd->dd_pool->dp_spa,
+		odd->dd_object, FTAG, &wkey);
+	if (ret)
+		return (SET_ERROR(EPERM));
+
+	dsl_wrapping_key_rele(wkey, FTAG);
+
+	/* parent's wrapping key must be present if a new one isn't specified */
 	if (!dcp->cp_wkey && pcrypt != ZIO_CRYPT_OFF) {
 		ret = spa_keystore_wkey_hold_ddobj(pdd->dd_pool->dp_spa,
 			pdd->dd_object, FTAG, &wkey);
