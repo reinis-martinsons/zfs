@@ -358,6 +358,41 @@ error:
 	return (ret);
 }
 
+void print_iovec(const iovec_t *iov)
+{
+#ifdef _KERNEL
+	printk(KERN_DEBUG "\t\tiov_base = %p, iov_len = %lu\n", iov->iov_base, (unsigned long)iov->iov_len);
+#endif
+}
+
+void print_crypto_data(char *name, crypto_data_t *cd)
+{
+#ifdef _KERNEL
+	int i;
+	
+	printk(KERN_DEBUG "PRINT CRYPTO_DATA: %s\n", name);
+	
+	switch(cd->cd_format) {
+	case CRYPTO_DATA_RAW:
+		printk(KERN_DEBUG "\tRAW CD\n");
+		print_iovec(&cd->cd_raw);
+		break;
+	case CRYPTO_DATA_UIO:
+		printk(KERN_DEBUG "\tUIO CD (%u iovecs)\n", (unsigned)cd->cd_uio->uio_iovcnt);
+		for(i = 0; i < cd->cd_uio->uio_iovcnt; i++){
+			print_iovec(&cd->cd_uio->uio_iov[i]);
+		}
+		
+		break;
+	default:
+		printk(KERN_DEBUG "\tUNRECOGNIZED CD\n");
+		break;
+	}
+	
+	printk("\n");
+#endif
+}
+
 static int
 zio_do_crypt_uio(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
 	crypto_ctx_template_t tmpl, uint8_t *ivbuf, uint_t datalen,
@@ -424,8 +459,11 @@ zio_do_crypt_uio(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
 	cipherdata.cd_format = CRYPTO_DATA_UIO;
 	cipherdata.cd_offset = 0;
 	cipherdata.cd_uio = cuio;
-	plaindata.cd_miscdata = NULL;
+	cipherdata.cd_miscdata = NULL;
 	cipherdata.cd_length = datalen + maclen;
+	
+	print_crypto_data("plaindata", &plaindata);
+	print_crypto_data("cipherdata", &cipherdata);
 
 	/* perform the actual encryption */
 	if (encrypt)
@@ -434,7 +472,7 @@ zio_do_crypt_uio(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
 	else
 		ret = crypto_decrypt(&mech, &cipherdata, key, tmpl, &plaindata,
 			NULL);
-
+	
 	if (ret != CRYPTO_SUCCESS) {
 		LOG_ERROR(ret, "");
 		ret = EIO;
@@ -524,6 +562,7 @@ zio_crypt_init_uios(boolean_t encrypt, dmu_object_type_t ot, uint8_t *plainbuf,
 	puio->uio_iovcnt = nr_plain;
 	cuio->uio_iov = cipher_iovecs;
 	cuio->uio_iovcnt = nr_cipher;
+	
 	return (0);
 
 error:

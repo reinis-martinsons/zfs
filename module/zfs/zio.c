@@ -1264,12 +1264,16 @@ zio_write_bp_init(zio_t *zio)
 			}
 		}
 	}
-
+	
 	if (encrypt && spa_feature_is_enabled(spa, SPA_FEATURE_ENCRYPTION)) {
+		LOG_DEBUG("encryption should happen");
+		
 		if (psize == 0) {
 			encrypt = B_FALSE;
 		} else {
 			void *enc_buf = zio_buf_alloc(psize);
+			
+			LOG_DEBUG("encryption performed");
 			ret = spa_encrypt_data(spa, &zio->io_bookmark,
 				zio->io_txg, zp->zp_type, bp, psize,
 				zp->zp_dedup, zio->io_data, enc_buf);
@@ -1278,6 +1282,7 @@ zio_write_bp_init(zio_t *zio)
 				zio_buf_free(enc_buf, psize);
 			} else {
 				zio_push_transform(zio, enc_buf, psize, psize, NULL);
+				LOG_DEBUG("transform performed");
 			}
 		}
 	}
@@ -1320,6 +1325,7 @@ zio_write_bp_init(zio_t *zio)
 		BP_SET_COMPRESS(bp, compress);
 		BP_SET_CHECKSUM(bp, zp->zp_checksum);
 		BP_SET_DEDUP(bp, zp->zp_dedup);
+		BP_SET_ENCRYPTED(bp, encrypt);
 		BP_SET_BYTEORDER(bp, ZFS_HOST_BYTEORDER);
 		if (zp->zp_dedup) {
 			ASSERT(zio->io_child_type == ZIO_CHILD_LOGICAL);
