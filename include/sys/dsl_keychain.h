@@ -174,7 +174,7 @@ zfs_keystatus_t dsl_dataset_keystore_keystatus(dsl_dataset_t *ds);
 
 int spa_encrypt_data(spa_t *spa, zbookmark_phys_t *bookmark, uint64_t txgid,
 	dmu_object_type_t ot, blkptr_t *bp, uint_t datalen, boolean_t dedup,
-	uint8_t *plainbuf, uint8_t *cipherbuf);
+	uint8_t *iv, uint8_t *mac, uint8_t *plainbuf, uint8_t *cipherbuf);
 int spa_decrypt_data(spa_t *spa, zbookmark_phys_t *bookmark, uint64_t txgid,
 	dmu_object_type_t ot, blkptr_t *bp, uint_t datalen, uint8_t *plainbuf,
 	uint8_t *cipherbuf);

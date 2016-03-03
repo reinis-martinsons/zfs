@@ -1526,14 +1526,16 @@ dsl_keychain_destroy_sync(uint64_t kcobj, dmu_tx_t *tx)
 int
 spa_encrypt_data(spa_t *spa, zbookmark_phys_t *bookmark, uint64_t txgid,
 	dmu_object_type_t ot, blkptr_t *bp, uint_t datalen, boolean_t dedup,
-	uint8_t *plainbuf, uint8_t *cipherbuf)
+	uint8_t *iv, uint8_t *mac, uint8_t *plainbuf, uint8_t *cipherbuf)
 {
 	int ret;
 	dsl_keychain_t *kc;
 	dsl_keychain_entry_t *kce;
-	uint8_t *iv = ((uint8_t *)bp->blk_pad);
-	uint8_t *mac = ((uint8_t *)&bp->blk_cksum);
 	uint_t ivlen;
+	char buf[320];
+	
+	snprintf_blkptr(buf, sizeof (buf), bp);
+	LOG_DEBUG("%s", buf);
 
 	/* lookup the keychain and then the key from the spa's keystore */
 	ret = spa_keystore_lookup_keychain_record(spa,
@@ -1578,8 +1580,12 @@ spa_decrypt_data(spa_t *spa, zbookmark_phys_t *bookmark, uint64_t txgid,
 	int ret;
 	dsl_keychain_t *kc;
 	dsl_keychain_entry_t *kce;
+	char buf[320];
 	uint8_t *iv = ((uint8_t *)bp->blk_pad);
-	uint8_t *mac = ((uint8_t *)&bp->blk_cksum);
+	uint8_t *mac = ((uint8_t *)&bp->blk_cksum.zc_word[2]);
+	
+	snprintf_blkptr(buf, sizeof (buf), bp);
+	LOG_DEBUG("%s", buf);
 
 	/* lookup the keychain and then the key from the spa's keystore */
 	ret = spa_keystore_lookup_keychain_record(spa,

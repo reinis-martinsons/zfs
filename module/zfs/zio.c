@@ -361,6 +361,7 @@ zio_decrypt(zio_t *zio, void *data, uint64_t size)
 	if (zio->io_error != 0)
 		return;
 
+	LOG_DEBUG("decrypting");
 	if (spa_decrypt_data(zio->io_spa, &zio->io_bookmark, bp->blk_birth,
 		BP_GET_TYPE(bp), bp, size, data, zio->io_data) != 0)
 		zio->io_error = SET_ERROR(EIO);
@@ -1140,6 +1141,9 @@ zio_write_bp_init(zio_t *zio)
 	uint64_t lsize = zio->io_size;
 	uint64_t psize = lsize;
 	int pass = 1, ret = 0;
+	uint8_t iv[MAX_DATA_IV_LEN];
+	uint8_t mac[MAX_DATA_MAC_LEN];
+	char buf[320];
 
 	/*
 	 * If our children haven't all reached the ready stage,
@@ -1266,23 +1270,24 @@ zio_write_bp_init(zio_t *zio)
 	}
 
 	if (encrypt && spa_feature_is_enabled(spa, SPA_FEATURE_ENCRYPTION)) {
-		LOG_DEBUG("encryption should happen");
-
 		if (psize == 0) {
 			encrypt = B_FALSE;
 		} else {
 			void *enc_buf = zio_buf_alloc(psize);
 
-			LOG_DEBUG("encryption performed");
 			ret = spa_encrypt_data(spa, &zio->io_bookmark,
 				zio->io_txg, zp->zp_type, bp, psize,
-				zp->zp_dedup, zio->io_data, enc_buf);
+				zp->zp_dedup, iv, mac, zio->io_data, enc_buf);
 			if (ret) {
 				zio->io_error = SET_ERROR(EIO);
 				zio_buf_free(enc_buf, psize);
 			} else {
 				zio_push_transform(zio, enc_buf, psize, psize, NULL);
-				LOG_DEBUG("transform performed");
+				LOG_DEBUG("encrypted");
+
+				snprintf_blkptr(buf, sizeof (buf), bp);
+				LOG_DEBUG("zio_write_bp_init pre");
+				LOG_DEBUG("%s", buf);
 			}
 		}
 	}
@@ -1325,8 +1330,14 @@ zio_write_bp_init(zio_t *zio)
 		BP_SET_COMPRESS(bp, compress);
 		BP_SET_CHECKSUM(bp, zp->zp_checksum);
 		BP_SET_DEDUP(bp, zp->zp_dedup);
-		BP_SET_ENCRYPTED(bp, encrypt);
 		BP_SET_BYTEORDER(bp, ZFS_HOST_BYTEORDER);
+		BP_SET_ENCRYPTED(bp, encrypt);
+		
+		if (encrypt) {
+			ZIO_SET_MAC(bp, mac);
+			ZIO_SET_IV(bp, iv);
+		}
+		
 		if (zp->zp_dedup) {
 			ASSERT(zio->io_child_type == ZIO_CHILD_LOGICAL);
 			ASSERT(!(zio->io_flags & ZIO_FLAG_IO_REWRITE));
@@ -1336,6 +1347,12 @@ zio_write_bp_init(zio_t *zio)
 			ASSERT(zio->io_child_type == ZIO_CHILD_LOGICAL);
 			ASSERT(!(zio->io_flags & ZIO_FLAG_IO_REWRITE));
 			zio->io_pipeline |= ZIO_STAGE_NOP_WRITE;
+		}
+
+		if (encrypt) {
+			snprintf_blkptr(buf, sizeof (buf), bp);
+			LOG_DEBUG("zio_write_bp_init post");
+			LOG_DEBUG("%s", buf);
 		}
 	}
 
@@ -3023,6 +3040,7 @@ zio_checksum_generate(zio_t *zio)
 {
 	blkptr_t *bp = zio->io_bp;
 	enum zio_checksum checksum;
+	char buf[320];
 
 	if (bp == NULL) {
 		/*
@@ -3046,6 +3064,12 @@ zio_checksum_generate(zio_t *zio)
 
 	zio_checksum_compute(zio, checksum, zio->io_data, zio->io_size);
 
+	if (bp && BP_IS_ENCRYPTED(bp)) {
+		snprintf_blkptr(buf, sizeof (buf), bp);
+		LOG_DEBUG("zio_checksum_generate");
+		LOG_DEBUG("%s", buf);
+	}
+
 	return (ZIO_PIPELINE_CONTINUE);
 }
 
@@ -3055,6 +3079,7 @@ zio_checksum_verify(zio_t *zio)
 	zio_bad_cksum_t info;
 	blkptr_t *bp = zio->io_bp;
 	int error;
+	char buf[320];
 
 	ASSERT(zio->io_vd != NULL);
 
@@ -3069,6 +3094,12 @@ zio_checksum_verify(zio_t *zio)
 		ASSERT(zio->io_prop.zp_checksum == ZIO_CHECKSUM_LABEL);
 	}
 
+	if (bp && BP_IS_ENCRYPTED(bp)){
+		snprintf_blkptr(buf, sizeof (buf), bp);
+		LOG_DEBUG("zio_checksum_verify");
+		LOG_DEBUG("%s", buf);
+	}
+
 	if ((error = zio_checksum_error(zio, &info)) != 0) {
 		zio->io_error = error;
 		if (error == ECKSUM &&
@@ -3078,6 +3109,8 @@ zio_checksum_verify(zio_t *zio)
 			    zio->io_size, NULL, &info);
 		}
 	}
+
+	LOG_DEBUG("error = %d", error);
 
 	return (ZIO_PIPELINE_CONTINUE);
 }
@@ -3201,8 +3234,11 @@ zio_done(zio_t *zio)
 			ASSERT(zio->io_children[c][w] == 0);
 
 	if (zio->io_bp != NULL && !BP_IS_EMBEDDED(zio->io_bp)) {
-		ASSERT(zio->io_bp->blk_pad[0] == 0);
-		ASSERT(zio->io_bp->blk_pad[1] == 0);
+		if (!BP_IS_ENCRYPTED(zio->io_bp)) {		
+			ASSERT(zio->io_bp->blk_pad[0] == 0);
+			ASSERT(zio->io_bp->blk_pad[1] == 0);
+		}
+		
 		ASSERT(bcmp(zio->io_bp, &zio->io_bp_copy,
 		    sizeof (blkptr_t)) == 0 ||
 		    (zio->io_bp == zio_unique_parent(zio)->io_bp));

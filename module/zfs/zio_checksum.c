@@ -187,6 +187,16 @@ zio_checksum_compute(zio_t *zio, enum zio_checksum checksum,
 	}
 }
 
+
+#ifdef _KERNEL
+
+#define	LOG_DEBUG(fmt, args...) \
+	printk(KERN_DEBUG "debug: %s: %s %d: " \
+	fmt "\n", __FILE__, __FUNCTION__, __LINE__, ## args)
+#else
+#define	LOG_DEBUG(fmt, args...)
+#endif
+
 int
 zio_checksum_error(zio_t *zio, zio_bad_cksum_t *info)
 {
@@ -262,8 +272,13 @@ zio_checksum_error(zio_t *zio, zio_bad_cksum_t *info)
 	info->zbc_injected = 0;
 	info->zbc_has_cksum = 1;
 
+	LOG_DEBUG("---------> checksum = %u", checksum);
+	LOG_DEBUG("%0llx:%0llx:%0llx:%0llx", (unsigned long long)actual_cksum.zc_word[0], (unsigned long long)actual_cksum.zc_word[1], (unsigned long long)actual_cksum.zc_word[2], (unsigned long long)actual_cksum.zc_word[3]);
+	LOG_DEBUG("%0llx:%0llx:%0llx:%0llx", (unsigned long long)expected_cksum.zc_word[0], (unsigned long long)expected_cksum.zc_word[1], (unsigned long long)expected_cksum.zc_word[2], (unsigned long long)expected_cksum.zc_word[3]);
+
+
 	if (checksum == ZIO_CHECKSUM_SHA256_MAC) {
-		if (ZIO_CHECKSUM_MAC_EQUAL(actual_cksum, expected_cksum))
+		if (!ZIO_CHECKSUM_MAC_EQUAL(actual_cksum, expected_cksum))
 			return (SET_ERROR(ECKSUM));
 	} else {
 		if (!ZIO_CHECKSUM_EQUAL(actual_cksum, expected_cksum))

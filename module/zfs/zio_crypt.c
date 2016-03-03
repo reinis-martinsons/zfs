@@ -30,6 +30,60 @@
 
 #define	SHA_256_DIGEST_LEN 32
 
+void print_iovec(const iovec_t *iov)
+{
+#ifdef _KERNEL
+	int i;
+	uint8_t *buf = ((uint8_t *)iov->iov_base);
+	uint8_t c;
+
+	printk(KERN_DEBUG "\t\tiov_base = %p, iov_len = %lu\n", iov->iov_base, (unsigned long)iov->iov_len);
+	
+	for (i = 0; i < 32 && i < iov->iov_len; i++) {
+		
+		
+		if((buf[i] >= 'a' && buf[i] <= 'z') || (buf[i] >= 'A' && buf[i] <= 'Z') || (buf[i] >= '0' && buf[i] <= '9'))
+			c = buf[i];
+		else	
+			c = '.';
+		
+		printk(KERN_DEBUG "\t\t\t%d:\t%02x\t%c\n", i, buf[i], c);
+	}
+	
+#endif
+}
+
+void print_crypto_data(char *name, crypto_data_t *cd)
+{
+#ifdef _KERNEL
+	int i;
+	
+	printk(KERN_DEBUG "PRINT CRYPTO_DATA: %s\n", name);
+	
+	switch(cd->cd_format) {
+	case CRYPTO_DATA_RAW:
+		printk(KERN_DEBUG "\tRAW CD\n");
+		print_iovec(&cd->cd_raw);
+
+		break;
+	case CRYPTO_DATA_UIO:
+		printk(KERN_DEBUG "\tUIO CD (%u iovecs)\n", (unsigned)cd->cd_uio->uio_iovcnt);
+		for(i = 0; i < cd->cd_uio->uio_iovcnt; i++){
+			print_iovec(&cd->cd_uio->uio_iov[i]);
+		}
+		
+		break;
+	default:
+		printk(KERN_DEBUG "\tUNRECOGNIZED CD\n");
+		break;
+	}
+	
+	
+	
+	printk("\n");
+#endif
+}
+
 void
 zio_crypt_key_destroy(zio_crypt_key_t *key)
 {
@@ -122,7 +176,7 @@ zio_do_crypt_raw(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
 	 * CCM and AES GCM are supported)
 	 */
 	if (crypt_info.ci_crypt_type == ZC_TYPE_CCM) {
-		ccmp.ulNonceSize = ZIO_CRYPT_WRAPKEY_IVLEN;
+		ccmp.ulNonceSize = WRAPPING_IV_LEN;
 		ccmp.ulAuthDataSize = 0;
 		ccmp.authData = NULL;
 		ccmp.ulMACSize = WRAPPING_MAC_LEN;
@@ -132,8 +186,8 @@ zio_do_crypt_raw(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
 		mech.cm_param = (char *)(&ccmp);
 		mech.cm_param_len = sizeof (CK_AES_CCM_PARAMS);
 	} else {
-		gcmp.ulIvLen = ZIO_CRYPT_WRAPKEY_IVLEN;
-		gcmp.ulIvBits = BYTES_TO_BITS(ZIO_CRYPT_WRAPKEY_IVLEN);
+		gcmp.ulIvLen = WRAPPING_IV_LEN;
+		gcmp.ulIvBits = BYTES_TO_BITS(WRAPPING_IV_LEN);
 		gcmp.ulAADLen = 0;
 		gcmp.pAAD = NULL;
 		gcmp.ulTagBits = BYTES_TO_BITS(WRAPPING_MAC_LEN);
@@ -167,6 +221,9 @@ zio_do_crypt_raw(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
 		ret = crypto_decrypt(&mech, &cipherdata, key, tmpl, &plaindata,
 			NULL);
 
+	print_crypto_data("plaindata", &plaindata);
+	print_crypto_data("cipherdata", &cipherdata);
+
 	if (ret != CRYPTO_SUCCESS) {
 		LOG_ERROR(ret, "");
 		ret = EIO;
@@ -199,7 +256,7 @@ zio_crypt_key_wrap(crypto_key_t *cwkey, uint64_t crypt,
 	bzero(dckp->dk_keybuf, sizeof (dckp->dk_keybuf));
 
 	/* generate an iv */
-	ret = random_get_bytes(dckp->dk_iv, ZIO_CRYPT_WRAPKEY_IVLEN);
+	ret = random_get_bytes(dckp->dk_iv, WRAPPING_IV_LEN);
 	if (ret)
 		goto error;
 
@@ -358,41 +415,6 @@ error:
 	return (ret);
 }
 
-void print_iovec(const iovec_t *iov)
-{
-#ifdef _KERNEL
-	printk(KERN_DEBUG "\t\tiov_base = %p, iov_len = %lu\n", iov->iov_base, (unsigned long)iov->iov_len);
-#endif
-}
-
-void print_crypto_data(char *name, crypto_data_t *cd)
-{
-#ifdef _KERNEL
-	int i;
-	
-	printk(KERN_DEBUG "PRINT CRYPTO_DATA: %s\n", name);
-	
-	switch(cd->cd_format) {
-	case CRYPTO_DATA_RAW:
-		printk(KERN_DEBUG "\tRAW CD\n");
-		print_iovec(&cd->cd_raw);
-		break;
-	case CRYPTO_DATA_UIO:
-		printk(KERN_DEBUG "\tUIO CD (%u iovecs)\n", (unsigned)cd->cd_uio->uio_iovcnt);
-		for(i = 0; i < cd->cd_uio->uio_iovcnt; i++){
-			print_iovec(&cd->cd_uio->uio_iov[i]);
-		}
-		
-		break;
-	default:
-		printk(KERN_DEBUG "\tUNRECOGNIZED CD\n");
-		break;
-	}
-	
-	printk("\n");
-#endif
-}
-
 static int
 zio_do_crypt_uio(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
 	crypto_ctx_template_t tmpl, uint8_t *ivbuf, uint_t datalen,
@@ -464,9 +486,6 @@ zio_do_crypt_uio(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
 	cipherdata.cd_uio = cuio;
 	cipherdata.cd_miscdata = NULL;
 	cipherdata.cd_length = datalen + maclen;
-	
-	print_crypto_data("plaindata", &plaindata);
-	print_crypto_data("cipherdata", &cipherdata);
 
 	/* perform the actual encryption */
 	if (encrypt)
@@ -475,6 +494,9 @@ zio_do_crypt_uio(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
 	else
 		ret = crypto_decrypt(&mech, &cipherdata, key, tmpl, &plaindata,
 			NULL);
+			
+	print_crypto_data("plaindata", &plaindata);
+	print_crypto_data("cipherdata", &cipherdata);
 	
 	if (ret != CRYPTO_SUCCESS) {
 		LOG_ERROR(ret, "");
@@ -496,8 +518,8 @@ static void zio_crypt_destroy_uio(uio_t *uio) {
 
 static int
 zio_crypt_init_uios(boolean_t encrypt, dmu_object_type_t ot, uint8_t *plainbuf,
-	uint8_t *cipherbuf, uint_t datalen, uint8_t *mac, uio_t *puio,
-	uio_t *cuio)
+	uint8_t *cipherbuf, uint_t datalen, uint8_t *mac, uint8_t *out_mac,
+	uio_t *puio, uio_t *cuio)
 {
 	int ret;
 	uint_t nr_iovecs, nr_plain, nr_cipher;
@@ -525,7 +547,9 @@ zio_crypt_init_uios(boolean_t encrypt, dmu_object_type_t ot, uint8_t *plainbuf,
 			ret = SET_ERROR(ENOMEM);
 			goto error;
 		}
-		mac_iov = &cipher_iovecs[nr_iovecs];
+
+		cipher_iovecs[nr_iovecs].iov_base = mac;
+		cipher_iovecs[nr_iovecs].iov_len = MAX_DATA_MAC_LEN;
 	} else {
 		nr_plain = nr_iovecs + 1;
 		plain_iovecs = kmem_alloc(nr_plain * sizeof (iovec_t),
@@ -535,7 +559,7 @@ zio_crypt_init_uios(boolean_t encrypt, dmu_object_type_t ot, uint8_t *plainbuf,
 			goto error;
 		}
 
-		nr_cipher = nr_iovecs;
+		nr_cipher = nr_iovecs + 1;
 		cipher_iovecs = kmem_alloc(nr_cipher * sizeof (iovec_t),
 			KM_SLEEP);
 		if (!cipher_iovecs) {
@@ -543,14 +567,17 @@ zio_crypt_init_uios(boolean_t encrypt, dmu_object_type_t ot, uint8_t *plainbuf,
 			goto error;
 		}
 		mac_iov = &plain_iovecs[nr_iovecs];
+		
+		plain_iovecs[nr_iovecs].iov_base = out_mac;
+		plain_iovecs[nr_iovecs].iov_len = MAX_DATA_MAC_LEN;
+		cipher_iovecs[nr_iovecs].iov_base = mac;
+		cipher_iovecs[nr_iovecs].iov_len = MAX_DATA_MAC_LEN;
 	}
 
 	plain_iovecs[0].iov_base = plainbuf;
 	plain_iovecs[0].iov_len = datalen;
 	cipher_iovecs[0].iov_base = cipherbuf;
 	cipher_iovecs[0].iov_len = datalen;
-	mac_iov->iov_base = mac;
-	mac_iov->iov_len = MAX_DATA_MAC_LEN;
 
 	/* populate the uios */
 #ifdef _KERNEL
@@ -585,13 +612,14 @@ zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key,
 {
 	int ret;
 	uio_t puio, cuio;
+	uint8_t out_mac[MAX_DATA_MAC_LEN];
 
 	bzero(&puio, sizeof (uio_t));
 	bzero(&cuio, sizeof (uio_t));
 
 	/* create uios for encryption */
 	ret = zio_crypt_init_uios(encrypt, ot, plainbuf, cipherbuf, datalen,
-		mac, &puio, &cuio);
+		mac, out_mac, &puio, &cuio);
 	if (ret)
 		goto error;
 

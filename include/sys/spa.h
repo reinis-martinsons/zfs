@@ -451,8 +451,7 @@ _NOTE(CONSTCOND) } while (0)
 
 #define	ZIO_CHECKSUM_MAC_EQUAL(zc1, zc2) \
 	(0 == (((zc1).zc_word[0] - (zc2).zc_word[0]) | \
-	((zc1).zc_word[1] - (zc2).zc_word[1]) | \
-	(((zc1).zc_word[2] & 0xffff) - ((zc2).zc_word[2] & 0xffff))))
+	((zc1).zc_word[1] - (zc2).zc_word[1])))
 
 #define	ZIO_CHECKSUM_IS_ZERO(zc) \
 	(0 == ((zc)->zc_word[0] | (zc)->zc_word[1] | \
@@ -476,6 +475,15 @@ _NOTE(CONSTCOND) } while (0)
 	(zcp)->zc_word[2] = w2;			\
 	(zcp)->zc_word[3] = w3;			\
 }
+
+#define	MAX_DATA_MAC_LEN 16
+#define	MAX_DATA_IV_LEN 12
+
+#define	ZIO_SET_MAC(bp, mac)	\
+	bcopy((mac), &(bp)->blk_cksum.zc_word[2], MAX_DATA_MAC_LEN);
+
+#define	ZIO_SET_IV(bp, iv)	\
+	bcopy((iv), (bp)->blk_pad, MAX_DATA_IV_LEN);
 
 #define	BP_IDENTITY(bp)		(ASSERT(!BP_IS_EMBEDDED(bp)), &(bp)->blk_dva[0])
 #define	BP_IS_GANG(bp)		\
@@ -531,7 +539,7 @@ _NOTE(CONSTCOND) } while (0)
 									\
 	if (bp == NULL) {						\
 		len += func(buf + len, size - len, "<NULL>");		\
-	} else if (BP_IS_HOLE(bp)) {					\
+	}/* else if (BP_IS_HOLE(bp)) {					\
 		len += func(buf + len, size - len,			\
 		    "HOLE [L%llu %s] "					\
 		    "size=%llxL birth=%lluL",				\
@@ -539,7 +547,7 @@ _NOTE(CONSTCOND) } while (0)
 		    type,						\
 		    (u_longlong_t)BP_GET_LSIZE(bp),			\
 		    (u_longlong_t)bp->blk_birth);			\
-	} else if (BP_IS_EMBEDDED(bp)) {				\
+	}*/ else if (BP_IS_EMBEDDED(bp)) {				\
 		len = func(buf + len, size - len,			\
 		    "EMBEDDED [L%llu %s] et=%u %s "			\
 		    "size=%llxL/%llxP birth=%lluL",			\

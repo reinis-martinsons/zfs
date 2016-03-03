@@ -8,9 +8,9 @@
 #include <sys/modhash_impl.h>
 #include <sys/crypto/algs.h>
 
-#define	ZIO_CRYPT_WRAPKEY_IVLEN 13
+#define	WRAPPING_IV_LEN 13
 #define	WRAPPING_MAC_LEN 16
-#define	CTBUF_LEN(len) ((len) + ZIO_CRYPT_WRAPKEY_IVLEN + WRAPPING_MAC_LEN)
+#define	CTBUF_LEN(len) ((len) + WRAPPING_IV_LEN + WRAPPING_MAC_LEN)
 
 #define	SET_CRYPTO_DATA(cd, buf, len)	\
 	(cd).cd_format = CRYPTO_DATA_RAW;\

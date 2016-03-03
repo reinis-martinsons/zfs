@@ -125,9 +125,6 @@ zio_checksum_SHA256_common(const void *buf, uint64_t size, zio_cksum_t *zcp,
 	if (!truncate) {
 		zcp->zc_word[2] = (uint64_t)H[4] << 32 | H[5];
 		zcp->zc_word[3] = (uint64_t)H[6] << 32 | H[7];
-	} else {
-		zcp->zc_word[2] = (uint64_t)H[4] << 32 |
-			(zcp->zc_word[2] & 0xffff);
 	}
 }
 
