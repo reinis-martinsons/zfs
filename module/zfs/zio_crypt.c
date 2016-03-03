@@ -413,6 +413,9 @@ zio_do_crypt_uio(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
 	crypt_info = zio_crypt_table[crypt];
 	ivlen = crypt_info.ci_ivlen;
 	maclen = crypt_info.ci_maclen;
+	
+	ASSERT(ivlen <= MAX_DATA_IV_LEN);
+	ASSERT(maclen <= MAX_DATA_MAC_LEN);
 
 	/* setup encryption mechanism (same as crypt) */
 	mech.cm_type = crypto_mech2id(crypt_info.ci_mechname);
@@ -547,7 +550,7 @@ zio_crypt_init_uios(boolean_t encrypt, dmu_object_type_t ot, uint8_t *plainbuf,
 	cipher_iovecs[0].iov_base = cipherbuf;
 	cipher_iovecs[0].iov_len = datalen;
 	mac_iov->iov_base = mac;
-	mac_iov->iov_len = DATA_MAC_LEN;
+	mac_iov->iov_len = MAX_DATA_MAC_LEN;
 
 	/* populate the uios */
 #ifdef _KERNEL

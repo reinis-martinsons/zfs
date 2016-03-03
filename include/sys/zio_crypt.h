@@ -63,7 +63,8 @@
 #define	WRAPPING_KEY_LEN 32
 #define	ZIO_CRYPT_WRAPKEY_IVLEN 13
 #define	WRAPPING_MAC_LEN 16
-#define	DATA_MAC_LEN 12
+#define	MAX_DATA_MAC_LEN 12
+#define	MAX_DATA_IV_LEN 12
 
 /* utility macros */
 #define	BITS_TO_BYTES(x) (((x) + 7) >> 3)
