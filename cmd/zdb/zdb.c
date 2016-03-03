@@ -1824,7 +1824,7 @@ dump_keychain_zap(objset_t *os, uint64_t object, void *data, size_t size)
 	zap_cursor_t zc;
 	zap_attribute_t attr;
 	dsl_crypto_key_phys_t dckp;
-	uint64_t txgid;
+	uint64_t *txgid;
 	size_t keylen;
 
 	dump_zap_stats(os, object);
@@ -1833,15 +1833,16 @@ dump_keychain_zap(objset_t *os, uint64_t object, void *data, size_t size)
 	for (zap_cursor_init(&zc, os, object);
 		zap_cursor_retrieve(&zc, &attr) == 0; zap_cursor_advance(&zc)) {
 
-		txgid = ((uint64_t)*attr.za_name);
-		VERIFY0(zap_lookup_uint64(os, object, &txgid, 1, 1,
+		txgid = ((uint64_t *)attr.za_name);
+		
+		VERIFY0(zap_lookup_uint64(os, object, txgid, 1, 1,
 			sizeof (dsl_crypto_key_phys_t), &dckp));
 
 		keylen = BYTES_TO_BITS(
 			zio_crypt_table[dckp.dk_crypt_alg].ci_keylen);
 
 		(void) printf("\t\ttxg %llu : wkeylen = %u\n",
-			(u_longlong_t)txgid, (uint_t)keylen);
+			(u_longlong_t)*txgid, (uint_t)keylen);
 	}
 	zap_cursor_fini(&zc);
 }

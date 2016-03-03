@@ -565,7 +565,7 @@ dsl_keychain_open(objset_t *mos, dsl_wrapping_key_t *wkey,
 	boolean_t need_crypt = B_TRUE;
 	zap_cursor_t zc;
 	zap_attribute_t za;
-	uint64_t txgid, crypt = 0;
+	uint64_t *txgid = NULL, crypt = 0;
 	dsl_crypto_key_phys_t dckp;
 	uint8_t keydata[MAX_CRYPT_KEY_LEN + WRAPPING_MAC_LEN];
 	dsl_keychain_t *kc;
@@ -586,10 +586,10 @@ dsl_keychain_open(objset_t *mos, dsl_wrapping_key_t *wkey,
 		zap_cursor_retrieve(&zc, &za) == 0;
 		zap_cursor_advance(&zc)) {
 		/* get the txgid from the name */
-		txgid = ((uint64_t) *za.za_name);
+		txgid = ((uint64_t *) za.za_name);
 
 		/* lookup the physical encryption key entry */
-		ret = zap_lookup_uint64(mos, kcobj, &txgid, 1, 1,
+		ret = zap_lookup_uint64(mos, kcobj, txgid, 1, 1,
 			sizeof (dsl_crypto_key_phys_t), &dckp);
 		if (ret) {
 			ret = SET_ERROR(EIO);
@@ -621,7 +621,7 @@ dsl_keychain_open(objset_t *mos, dsl_wrapping_key_t *wkey,
 			goto error_fini;
 		}
 		list_link_init(&kce->ke_link);
-		kce->ke_txgid = txgid;
+		kce->ke_txgid = *txgid;
 
 		ret = zio_crypt_key_init(crypt, keydata, &kce->ke_key);
 		if (ret)
