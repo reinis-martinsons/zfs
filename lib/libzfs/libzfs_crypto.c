@@ -116,8 +116,8 @@ get_key_material(libzfs_handle_t *hdl, key_format_t format,
 	key_locator_t locator, const char *fsname, uint8_t **key_material_out,
 	size_t *key_material_len)
 {
-	int ret;
-	int rbytes;
+	int ret, rbytes;
+	char c;
 	uint8_t *key_material = NULL;
 
 	*key_material_out = NULL;
@@ -148,7 +148,7 @@ get_key_material(libzfs_handle_t *hdl, key_format_t format,
 			*key_material_len = WRAPPING_KEY_LEN;
 			
 			/* clean off the newline from stdin if it exists */
-			while (getchar() != '\n');
+			while ((c = getchar()) != '\n' && c != EOF);
 
 		} else {
 			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
