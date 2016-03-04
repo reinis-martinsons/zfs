@@ -539,7 +539,7 @@ _NOTE(CONSTCOND) } while (0)
 									\
 	if (bp == NULL) {						\
 		len += func(buf + len, size - len, "<NULL>");		\
-	}/* else if (BP_IS_HOLE(bp)) {					\
+	} else if (BP_IS_HOLE(bp)) {					\
 		len += func(buf + len, size - len,			\
 		    "HOLE [L%llu %s] "					\
 		    "size=%llxL birth=%lluL",				\
@@ -547,7 +547,7 @@ _NOTE(CONSTCOND) } while (0)
 		    type,						\
 		    (u_longlong_t)BP_GET_LSIZE(bp),			\
 		    (u_longlong_t)bp->blk_birth);			\
-	}*/ else if (BP_IS_EMBEDDED(bp)) {				\
+	} else if (BP_IS_EMBEDDED(bp)) {				\
 		len = func(buf + len, size - len,			\
 		    "EMBEDDED [L%llu %s] et=%u %s "			\
 		    "size=%llxL/%llxP birth=%lluL",			\

@@ -113,7 +113,7 @@ keysource_prop_parser(char *keysource, key_format_t *format,
 
 static int
 get_key_material(libzfs_handle_t *hdl, key_format_t format,
-	key_locator_t locator, uint8_t **key_material_out,
+	key_locator_t locator, const char *fsname, uint8_t **key_material_out,
 	size_t *key_material_len)
 {
 	int ret;
@@ -126,10 +126,18 @@ get_key_material(libzfs_handle_t *hdl, key_format_t format,
 	switch (locator) {
 	case KEY_LOCATOR_PROMPT:
 		if (format == KEY_FORMAT_RAW) {
+			/* allocate a buffer for key material */
 			key_material = zfs_alloc(hdl, WRAPPING_KEY_LEN);
 			if (!key_material)
 				return (ENOMEM);
+			
+			/* prompt for the raw key */
+			if (fsname) {
+				(void) printf("Enter raw key for '%s': ", fsname);
+				(void) fflush(stdout);
+			}
 
+			/* read the raw key from stdin */
 			errno = 0;
 			rbytes = read(STDIN_FILENO, key_material,
 				WRAPPING_KEY_LEN);
@@ -138,6 +146,9 @@ get_key_material(libzfs_handle_t *hdl, key_format_t format,
 				goto error;
 			}
 			*key_material_len = WRAPPING_KEY_LEN;
+			
+			/* clean off the newline from stdin if it exists */
+			while (getchar() != '\n');
 
 		} else {
 			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
@@ -234,7 +245,7 @@ encryption_feature_is_enabled(zpool_handle_t *zph)
 
 static int
 populate_create_encryption_params_nvlist(libzfs_handle_t *hdl,
-	char *keysource, nvlist_t *props)
+	char *keysource, const char *fsname, nvlist_t *props)
 {
 	int ret;
 	uint64_t salt = 0;
@@ -254,8 +265,8 @@ populate_create_encryption_params_nvlist(libzfs_handle_t *hdl,
 	}
 
 	/* get key material from keysource */
-	ret = get_key_material(hdl, keyformat, keylocator, &key_material,
-		&key_material_len);
+	ret = get_key_material(hdl, keyformat, keylocator, fsname,
+		&key_material, &key_material_len);
 	if (ret)
 		goto error;
 
@@ -396,7 +407,7 @@ zfs_crypto_create(libzfs_handle_t *hdl, nvlist_t *props, char *parent_name)
 	 */
 	if (keysource) {
 		ret = populate_create_encryption_params_nvlist(hdl,
-			keysource, props);
+			keysource, NULL, props);
 		if (ret)
 			goto out;
 	}
@@ -479,7 +490,6 @@ zfs_crypto_clone(libzfs_handle_t *hdl, zfs_handle_t *origin_zhp,
 		goto out;
 	}
 
-
 	/*
 	 * by this point this dataset will be encrypted. The origin's
 	 * wrapping key must be loaded
@@ -506,7 +516,7 @@ zfs_crypto_clone(libzfs_handle_t *hdl, zfs_handle_t *origin_zhp,
 	/* prepare the keysource if needed */
 	if (keysource) {
 		ret = populate_create_encryption_params_nvlist(hdl,
-			keysource, props);
+			keysource, NULL, props);
 		if (ret)
 			goto out;
 	}
@@ -600,8 +610,8 @@ zfs_crypto_load_key(zfs_handle_t *zhp)
 	}
 
 	/* get key material from keysource */
-	ret = get_key_material(zhp->zfs_hdl, format, locator, &key_material,
-		&key_material_len);
+	ret = get_key_material(zhp->zfs_hdl, format, locator,
+		zfs_get_name(zhp), &key_material, &key_material_len);
 	if (ret)
 		goto error;
 
@@ -835,7 +845,7 @@ zfs_crypto_rewrap(zfs_handle_t *zhp, nvlist_t *props)
 
 	/* populate the nvlist with the encryption params */
 	ret = populate_create_encryption_params_nvlist(zhp->zfs_hdl, keysource,
-		props);
+		zfs_get_name(zhp), props);
 	if (ret)
 		goto error;
 
