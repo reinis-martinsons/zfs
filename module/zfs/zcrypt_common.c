@@ -26,22 +26,13 @@
 #include <sys/zio_crypt.h>
 
 zio_crypt_info_t zio_crypt_table[ZIO_CRYPT_FUNCTIONS] = {
-	{"",				ZC_TYPE_NONE,	0,	0,	0,
-		"inherit"},
-	{SUN_CKM_AES_CCM,	ZC_TYPE_CCM,	32,	12,	16,
-		"on"},
-	{"",				ZC_TYPE_NONE,	0,	0,	0,
-		"off"},
-	{SUN_CKM_AES_CCM,	ZC_TYPE_CCM,	16,	12,	16,
-		"aes-128-ccm"},
-	{SUN_CKM_AES_CCM,	ZC_TYPE_CCM,	24,	12,	16,
-		"aes-192-ccm"},
-	{SUN_CKM_AES_CCM,	ZC_TYPE_CCM,	32,	12,	16,
-		"aes-256-ccm"},
-	{SUN_CKM_AES_GCM,	ZC_TYPE_GCM,	16,	12,	16,
-		"aes-128-gcm"},
-	{SUN_CKM_AES_GCM,	ZC_TYPE_GCM,	24,	12,	16,
-		"aes-192-gcm"},
-	{SUN_CKM_AES_GCM,	ZC_TYPE_GCM,	32,	12,	16,
-		"aes-256-gcm"}
+	{"",			ZC_TYPE_NONE,	0,  0,  0,  "inherit"},
+	{SUN_CKM_AES_CCM,	ZC_TYPE_CCM,	32, 12, 16, "on"},
+	{"",			ZC_TYPE_NONE,	0,  0,  0,  "off"},
+	{SUN_CKM_AES_CCM,	ZC_TYPE_CCM,	16, 12, 16, "aes-128-ccm"},
+	{SUN_CKM_AES_CCM,	ZC_TYPE_CCM,	24, 12, 16, "aes-192-ccm"},
+	{SUN_CKM_AES_CCM,	ZC_TYPE_CCM,	32, 12, 16, "aes-256-ccm"},
+	{SUN_CKM_AES_GCM,	ZC_TYPE_GCM,	16, 12, 16, "aes-128-gcm"},
+	{SUN_CKM_AES_GCM,	ZC_TYPE_GCM,	24, 12, 16, "aes-192-gcm"},
+	{SUN_CKM_AES_GCM,	ZC_TYPE_GCM,	32, 12, 16, "aes-256-gcm"}
 };
