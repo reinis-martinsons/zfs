@@ -128,9 +128,8 @@ zio_crypt_key_init(uint64_t crypt, uint8_t *keydata, zio_crypt_key_t *key)
 	ret = crypto_create_ctx_template(&mech, &key->zk_key, &key->zk_ctx_tmpl,
 		KM_SLEEP);
 	if (ret != CRYPTO_SUCCESS) {
-		ret = EIO;
+		LOG_DEBUG("Failed to create context, consider CCM encryption");
 		key->zk_ctx_tmpl = NULL;
-		goto error;
 	}
 
 	return (0);
