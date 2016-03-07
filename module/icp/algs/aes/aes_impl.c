@@ -29,7 +29,7 @@
 #include <sys/sysmacros.h>
 #include <sys/crypto/spi.h>
 #include <modes/modes.h>
-#include "aes_impl.h"
+#include <aes/aes_impl.h>
 #ifndef	_KERNEL
 #include <strings.h>
 #include <stdlib.h>

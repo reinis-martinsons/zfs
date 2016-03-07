@@ -68,7 +68,7 @@ extern "C" {
 
 #include <sys/types.h>
 #include <sys/byteorder.h>
-#include "../aes_impl.h"
+#include <aes/aes_impl.h>
 
 /*  SUPPORT FEATURES */
 #define	AES_ENCRYPT /* if support for encryption is needed */

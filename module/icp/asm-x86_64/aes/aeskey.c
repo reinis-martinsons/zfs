@@ -25,7 +25,7 @@
  * Issue Date: 20/12/2007
  */
 
-#include "../aes_impl.h"
+#include <aes/aes_impl.h>
 #include "aesopt.h"
 #include "aestab.h"
 #include "aestab2.h"

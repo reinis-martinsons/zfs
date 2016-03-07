@@ -125,11 +125,6 @@ AC_CONFIG_FILES([
 	module/zpios/Makefile
 	module/icp/Makefile
 	include/Makefile
-	include/arch/Makefile
-	include/arch/intel/Makefile
-	include/arch/intel/ia32/Makefile
-	include/arch/intel/ia32/sys/Makefile
-	include/arch/intel/sys/Makefile
 	include/linux/Makefile
 	include/sys/Makefile
 	include/sys/fs/Makefile

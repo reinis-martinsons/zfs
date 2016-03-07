@@ -3,9 +3,21 @@ obj = @abs_builddir@
 
 MODULE := icp
 
+TARGET_ASM_DIR = @TARGET_ASM_DIR@
+
+asm-x86_64_OBJS := $(TARGET_ASM_DIR)/aes/aeskey.o 
+asm-x86_64_OBJS += $(TARGET_ASM_DIR)/aes/aes_amd64.o
+asm-i386_OBJS :=
+asm-generic_OBJS :=
+
 EXTRA_CFLAGS = $(ZFS_MODULE_CFLAGS) @KERNELCPPFLAGS@
 
 obj-$(CONFIG_ZFS) := $(MODULE).o
+
+ccflags-y += -I$(src)/include
+asflags-y += -I$(src)/include
+asflags-y += -D_ASM
+asflags-y += $(ZFS_MODULE_CFLAGS)
 
 $(MODULE)-objs += illumos-crypto.o
 $(MODULE)-objs += api/kcf_cipher.o
@@ -31,12 +43,5 @@ $(MODULE)-objs += algs/modes/ecb.o
 $(MODULE)-objs += algs/modes/gcm.o
 $(MODULE)-objs += algs/modes/modes.o
 $(MODULE)-objs += algs/aes/aes_impl.o
-$(MODULE)-objs += algs/aes/amd64/aeskey.o
-$(MODULE)-objs += algs/aes/amd64/aes_amd64.o
 $(MODULE)-objs += algs/sha2/sha2.o
-
-ccflags-y += -I$(src)/algs
-
-asflags-y += -I@abs_top_srcdir@/include/arch/intel
-asflags-y += -D_ASM
-asflags-y += $(ZFS_MODULE_CFLAGS)
+$(MODULE)-objs += $($(TARGET_ASM_DIR)_OBJS)

@@ -24,13 +24,13 @@
  * Use is subject to license terms.
  */
 
-#ifndef _SYS_ASM_LINKAGE_H
-#define	_SYS_ASM_LINKAGE_H
+#ifndef _SYS_TRAP_H
+#define	_SYS_TRAP_H
 
 #if defined(__i386) || defined(__amd64)
 
-#include <ia32/sys/asm_linkage.h>	/* XX64	x86/sys/asm_linkage.h */
+#include <sys/ia32/trap.h>	/* XX64	x86/sys/trap.h */
 
 #endif
 
-#endif	/* _SYS_ASM_LINKAGE_H */
+#endif	/* _SYS_TRAP_H */

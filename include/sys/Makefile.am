@@ -3,10 +3,8 @@ SUBDIRS = fm fs crypto
 COMMON_H = \
 	$(top_srcdir)/include/sys/arc.h \
 	$(top_srcdir)/include/sys/arc_impl.h \
-	$(top_srcdir)/include/sys/asm_linkage.h \
 	$(top_srcdir)/include/sys/avl.h \
 	$(top_srcdir)/include/sys/avl_impl.h \
-	$(top_srcdir)/include/sys/bitmap.h \
 	$(top_srcdir)/include/sys/blkptr.h \
 	$(top_srcdir)/include/sys/bplist.h \
 	$(top_srcdir)/include/sys/bpobj.h \
@@ -38,9 +36,6 @@ COMMON_H = \
 	$(top_srcdir)/include/sys/metaslab.h \
 	$(top_srcdir)/include/sys/metaslab_impl.h \
 	$(top_srcdir)/include/sys/mntent.h \
-	$(top_srcdir)/include/sys/modctl.h \
-	$(top_srcdir)/include/sys/modhash.h \
-	$(top_srcdir)/include/sys/modhash_impl.h \
 	$(top_srcdir)/include/sys/multilist.h \
 	$(top_srcdir)/include/sys/nvpair.h \
 	$(top_srcdir)/include/sys/nvpair_impl.h \

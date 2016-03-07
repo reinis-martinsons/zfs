@@ -42,7 +42,7 @@ extern "C" {
  * 6. Cstyle and hdrchk this file
  */
 
-#include "../aes_impl.h"
+#include <aes/aes_impl.h>
 
 static const uint32_t t_rc[RC_LENGTH] =
 {

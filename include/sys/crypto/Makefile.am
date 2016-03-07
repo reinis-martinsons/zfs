@@ -1,15 +1,6 @@
 COMMON_H = \
-	$(top_srcdir)/include/sys/crypto/algs.h \
 	$(top_srcdir)/include/sys/crypto/api.h \
-	$(top_srcdir)/include/sys/crypto/common.h \
-	$(top_srcdir)/include/sys/crypto/dca.h \
-	$(top_srcdir)/include/sys/crypto/elfsign.h \
-	$(top_srcdir)/include/sys/crypto/impl.h \
-	$(top_srcdir)/include/sys/crypto/ioctl.h \
-	$(top_srcdir)/include/sys/crypto/ioctladmin.h \
-	$(top_srcdir)/include/sys/crypto/ops_impl.h \
-	$(top_srcdir)/include/sys/crypto/sched_impl.h \
-	$(top_srcdir)/include/sys/crypto/spi.h
+	$(top_srcdir)/include/sys/crypto/common.h
 
 KERNEL_H =
 

@@ -24,13 +24,13 @@
  * Use is subject to license terms.
  */
 
-#ifndef _SYS_STACK_H
-#define	_SYS_STACK_H
+#ifndef _SYS_ASM_LINKAGE_H
+#define	_SYS_ASM_LINKAGE_H
 
 #if defined(__i386) || defined(__amd64)
 
-#include <ia32/sys/stack.h>	/* XX64 x86/sys/stack.h */
+#include <sys/ia32/asm_linkage.h>	/* XX64	x86/sys/asm_linkage.h */
 
 #endif
 
-#endif	/* _SYS_STACK_H */
+#endif	/* _SYS_ASM_LINKAGE_H */
