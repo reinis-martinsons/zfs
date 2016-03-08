@@ -75,33 +75,33 @@ const dmu_object_type_info_t dmu_ot[DMU_OT_NUMTYPES] = {
 	{ DMU_BSWAP_ZAP,	TRUE,	FALSE,	"DSL props"		},
 	{ DMU_BSWAP_UINT64,	TRUE,	FALSE,	"DSL dataset"		},
 	{ DMU_BSWAP_ZNODE,	TRUE,	FALSE,	"ZFS znode"		},
-	{ DMU_BSWAP_OLDACL,	TRUE,	FALSE,	"ZFS V0 ACL"		},
+	{ DMU_BSWAP_OLDACL,	TRUE,	TRUE,	"ZFS V0 ACL"		},
 	{ DMU_BSWAP_UINT8,	FALSE,	TRUE,	"ZFS plain file"	},
-	{ DMU_BSWAP_ZAP,	TRUE,	FALSE,	"ZFS directory"		},
+	{ DMU_BSWAP_ZAP,	TRUE,	TRUE,	"ZFS directory"		},
 	{ DMU_BSWAP_ZAP,	TRUE,	FALSE,	"ZFS master node"	},
 	{ DMU_BSWAP_ZAP,	TRUE,	FALSE,	"ZFS delete queue"	},
 	{ DMU_BSWAP_UINT8,	FALSE,	TRUE,	"zvol object"		},
 	{ DMU_BSWAP_ZAP,	TRUE,	FALSE,	"zvol prop"		},
-	{ DMU_BSWAP_UINT8,	FALSE,	FALSE,	"other uint8[]"		},
-	{ DMU_BSWAP_UINT64,	FALSE,	FALSE,	"other uint64[]"	},
+	{ DMU_BSWAP_UINT8,	FALSE,	TRUE,	"other uint8[]"		},
+	{ DMU_BSWAP_UINT64,	FALSE,	TRUE,	"other uint64[]"	},
 	{ DMU_BSWAP_ZAP,	TRUE,	FALSE,	"other ZAP"		},
 	{ DMU_BSWAP_ZAP,	TRUE,	FALSE,	"persistent error log"	},
 	{ DMU_BSWAP_UINT8,	TRUE,	FALSE,	"SPA history"		},
 	{ DMU_BSWAP_UINT64,	TRUE,	FALSE,	"SPA history offsets"	},
 	{ DMU_BSWAP_ZAP,	TRUE,	FALSE,	"Pool properties"	},
 	{ DMU_BSWAP_ZAP,	TRUE,	FALSE,	"DSL permissions"	},
-	{ DMU_BSWAP_ACL,	TRUE,	FALSE,	"ZFS ACL"		},
-	{ DMU_BSWAP_UINT8,	TRUE,	FALSE,	"ZFS SYSACL"		},
-	{ DMU_BSWAP_UINT8,	TRUE,	FALSE,	"FUID table"		},
+	{ DMU_BSWAP_ACL,	TRUE,	TRUE,	"ZFS ACL"		},
+	{ DMU_BSWAP_UINT8,	TRUE,	TRUE,	"ZFS SYSACL"		},
+	{ DMU_BSWAP_UINT8,	TRUE,	TRUE,	"FUID table"		},
 	{ DMU_BSWAP_UINT64,	TRUE,	FALSE,	"FUID table size"	},
 	{ DMU_BSWAP_ZAP,	TRUE,	FALSE,	"DSL dataset next clones"},
 	{ DMU_BSWAP_ZAP,	TRUE,	FALSE,	"scan work queue"	},
-	{ DMU_BSWAP_ZAP,	TRUE,	FALSE,	"ZFS user/group used"	},
-	{ DMU_BSWAP_ZAP,	TRUE,	FALSE,	"ZFS user/group quota"	},
+	{ DMU_BSWAP_ZAP,	TRUE,	TRUE,	"ZFS user/group used"	},
+	{ DMU_BSWAP_ZAP,	TRUE,	TRUE,	"ZFS user/group quota"	},
 	{ DMU_BSWAP_ZAP,	TRUE,	FALSE,	"snapshot refcount tags"},
 	{ DMU_BSWAP_ZAP,	TRUE,	FALSE,	"DDT ZAP algorithm"	},
 	{ DMU_BSWAP_ZAP,	TRUE,	FALSE,	"DDT statistics"	},
-	{ DMU_BSWAP_UINT8,	TRUE,	FALSE,	"System attributes"	},
+	{ DMU_BSWAP_UINT8,	TRUE,	TRUE,	"System attributes"	},
 	{ DMU_BSWAP_ZAP,	TRUE,	FALSE,	"SA master node"	},
 	{ DMU_BSWAP_ZAP,	TRUE,	FALSE,	"SA attr registration"	},
 	{ DMU_BSWAP_ZAP,	TRUE,	FALSE,	"SA attr layouts"	},
@@ -1769,24 +1769,12 @@ dmu_write_policy(objset_t *os, dnode_t *dn, int level, int wp, zio_prop_t *zp)
 		compress = ZIO_COMPRESS_OFF;
 		checksum = ZIO_CHECKSUM_OFF;
 	} else {
-		if (DMU_OT_IS_ENCRYPTED(type))
-			encrypt = os->os_encrypted;
-
-		/*
-		 * Encryption requires sha256 + mac checksum, regardless of
-		 * other settings.
-		 */
-		if (encrypt) {
-			checksum = ZIO_CHECKSUM_SHA256_MAC;
-		} else if (dedup_checksum == ZIO_CHECKSUM_OFF) {
-			checksum = zio_checksum_select(dn->dn_checksum,
-				checksum);
-		} else {
-			checksum = dedup_checksum;
-		}
-
 		compress = zio_compress_select(os->os_spa, dn->dn_compress,
 		    compress);
+		
+		checksum = (dedup_checksum == ZIO_CHECKSUM_OFF) ?
+		    zio_checksum_select(dn->dn_checksum, checksum) :
+		    dedup_checksum;
 
 		/*
 		 * Determine dedup setting.  If we are in dmu_sync(),
@@ -1811,6 +1799,20 @@ dmu_write_policy(objset_t *os, dnode_t *dn, int level, int wp, zio_prop_t *zp)
 		nopwrite = (!dedup && zio_checksum_table[checksum].ci_dedup &&
 		    compress != ZIO_COMPRESS_OFF && zfs_nopwrite_enabled);
 	}
+	
+	/*
+	 * Encrypted objects override the checksum type with sha256-mac (which
+	 * is dedupable). In addition, encyrpted dnodes may not be compressed
+	 * so that we can read the plaintext pieces of it without the
+	 * decryption key loaded.
+	 */
+	if (os->os_encrypted && DMU_OT_IS_ENCRYPTED(type) && level <= 0) {
+		encrypt = B_TRUE;
+		checksum = ZIO_CHECKSUM_SHA256_MAC;
+		
+		if(type == DMU_OT_DNODE)
+			compress = ZIO_COMPRESS_OFF;
+	}	
 
 	zp->zp_checksum = checksum;
 	zp->zp_compress = compress;

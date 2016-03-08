@@ -529,8 +529,7 @@ zio_crypt_init_uios(boolean_t encrypt, dmu_object_type_t ot, uint8_t *plainbuf,
 	uint_t nr_iovecs, nr_plain, nr_cipher;
 	iovec_t *plain_iovecs = NULL, *cipher_iovecs = NULL, *mac_iov = NULL;
 
-	/* other encrypted objects will be added later */
-	ASSERT(ot == DMU_OT_PLAIN_FILE_CONTENTS || ot == DMU_OT_ZVOL);
+	ASSERT(DMU_OT_IS_ENCRYPTED(ot));
 
 	/* allocate the iovecs for the plain and cipher data */
 	nr_iovecs = 1;
