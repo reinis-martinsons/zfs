@@ -1223,8 +1223,6 @@ spa_keystore_create_keychain_record(spa_t *spa, dsl_dataset_t *ds)
 	avl_index_t where;
 	dsl_keychain_record_t *kr = NULL, *found_kr;
 
-	LOG_DEBUG("creating record for ddobj = %u", (unsigned)ds->ds_object);
-
 	/* allocate the record */
 	kr = kmem_alloc(sizeof (dsl_keychain_record_t), KM_SLEEP);
 	if (!kr)
@@ -1249,6 +1247,8 @@ spa_keystore_create_keychain_record(spa_t *spa, dsl_dataset_t *ds)
 	avl_insert(&spa->spa_keystore.sk_keychain_recs, kr, where);
 
 	rw_exit(&spa->spa_keystore.sk_kr_lock);
+
+	LOG_DEBUG("created record for ddobj = %u", (unsigned)ds->ds_object);
 
 	return (0);
 
@@ -1324,14 +1324,16 @@ spa_keystore_lookup_keychain_record(spa_t *spa, uint64_t dsobj,
 
 	rw_exit(&spa->spa_keystore.sk_kr_lock);
 
-	*kc_out = found_kr->kr_keychain;
+	if (*kc_out)
+		*kc_out = found_kr->kr_keychain;
 	return (0);
 
 error_unlock:
 	LOG_ERROR(ret, "");
 	rw_exit(&spa->spa_keystore.sk_kr_lock);
 
-	*kc_out = NULL;
+	if (*kc_out)
+		*kc_out = NULL;
 	return (ret);
 }
 
@@ -1533,10 +1535,6 @@ spa_encrypt_data(spa_t *spa, zbookmark_phys_t *bookmark, uint64_t txgid,
 	dsl_keychain_t *kc;
 	dsl_keychain_entry_t *kce;
 	uint_t ivlen;
-	char buf[320];
-
-	snprintf_blkptr(buf, sizeof (buf), bp);
-	LOG_DEBUG("%s", buf);
 
 	/* lookup the keychain and then the key from the spa's keystore */
 	ret = spa_keystore_lookup_keychain_record(spa,

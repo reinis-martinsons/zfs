@@ -34,6 +34,7 @@
 #include <sys/avl.h>
 #include <sys/zio.h>
 
+#define ENCRYPT_DEBUG
 #if defined(_KERNEL) && defined(ENCRYPT_DEBUG)
 
 #define	LOG_DEBUG(fmt, args...) \

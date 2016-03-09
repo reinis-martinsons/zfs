@@ -3095,6 +3095,22 @@ zfs_fill_zplprops_root(uint64_t spa_vers, nvlist_t *createprops,
 	return (error);
 }
 
+static void
+zfs_destroy_temp_keychain_record(const char *dsname) {
+	int error;
+	objset_t *os;
+
+	error = dmu_objset_hold(dsname, FTAG, &os);
+	if (error != 0)
+		return;
+
+	if(os->os_encrypted)
+		(void) spa_keystore_remove_keychain_record(os->os_spa,
+		    os->os_dsl_dataset);
+
+	dmu_objset_rele(os, FTAG);
+}
+
 /*
  * innvl: {
  *     "type" -> dmu_objset_type_t (int32)
@@ -3190,14 +3206,18 @@ zfs_ioc_create(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 		return (error);
 	}
 
-	LOG_CRYPTO_PARAMS(&dcp);
-
 	error = dmu_objset_create(fsname, type,
 	    is_insensitive ? DS_FLAG_CI_DATASET : 0, &dcp, cbfunc, &zct);
 
 	nvlist_free(zct.zct_zplprops);
 	if (dcp.cp_wkey && error != 0)
 		dsl_crypto_params_destroy(&dcp);
+
+	/*
+	 * See comment in zfs_create_fs() for details
+	 */
+	if (type == DMU_OST_ZFS && error == 0)
+		zfs_destroy_temp_keychain_record(fsname);
 
 	/*
 	 * It would be nice to do this atomically.

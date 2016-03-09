@@ -1771,7 +1771,7 @@ dmu_write_policy(objset_t *os, dnode_t *dn, int level, int wp, zio_prop_t *zp)
 	} else {
 		compress = zio_compress_select(os->os_spa, dn->dn_compress,
 		    compress);
-		
+
 		checksum = (dedup_checksum == ZIO_CHECKSUM_OFF) ?
 		    zio_checksum_select(dn->dn_checksum, checksum) :
 		    dedup_checksum;
@@ -1799,20 +1799,21 @@ dmu_write_policy(objset_t *os, dnode_t *dn, int level, int wp, zio_prop_t *zp)
 		nopwrite = (!dedup && zio_checksum_table[checksum].ci_dedup &&
 		    compress != ZIO_COMPRESS_OFF && zfs_nopwrite_enabled);
 	}
-	
+
 	/*
 	 * Encrypted objects override the checksum type with sha256-mac (which
-	 * is dedupable). In addition, encyrpted dnodes may not be compressed
+	 * is dedupable). In addition, encrypted dnodes may not be compressed
 	 * so that we can read the plaintext pieces of it without the
 	 * decryption key loaded.
 	 */
-	if (os->os_encrypted && DMU_OT_IS_ENCRYPTED(type) && level <= 0) {
+	if (os->os_encrypted && DMU_OT_IS_ENCRYPTED(type) &&
+	    !(wp & WP_NOFILL) && level <= 0) {
 		encrypt = B_TRUE;
 		checksum = ZIO_CHECKSUM_SHA256_MAC;
-		
+
 		if(type == DMU_OT_DNODE)
 			compress = ZIO_COMPRESS_OFF;
-	}	
+	}
 
 	zp->zp_checksum = checksum;
 	zp->zp_compress = compress;
