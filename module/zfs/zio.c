@@ -1139,7 +1139,7 @@ zio_write_bp_init(zio_t *zio)
 	blkptr_t *bp = zio->io_bp;
 	uint64_t lsize = zio->io_size;
 	uint64_t psize = lsize;
-	int pass = 1, ret = 0;
+	int pass = 1;
 	uint8_t iv[MAX_DATA_IV_LEN];
 	uint8_t mac[MAX_DATA_MAC_LEN];
 
@@ -1273,16 +1273,11 @@ zio_write_bp_init(zio_t *zio)
 		} else {
 			void *enc_buf = zio_buf_alloc(psize);
 
-			ret = spa_encrypt_data(spa, &zio->io_bookmark,
+			(void) spa_encrypt_data(spa, &zio->io_bookmark,
 				zio->io_txg, zp->zp_type, bp, psize,
 				zp->zp_dedup, iv, mac, zio->io_data, enc_buf);
-			if (ret) {
-				zio->io_error = SET_ERROR(EIO);
-				zio_buf_free(enc_buf, psize);
-			} else {
-				zio_push_transform(zio, enc_buf, psize,
-				    psize, NULL);
-			}
+			zio_push_transform(zio, enc_buf, psize, psize, NULL);
+			
 		}
 	}
 

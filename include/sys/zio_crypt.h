@@ -49,6 +49,11 @@
 	LOG_DEBUG("cp: crypt = %llu, wkey = 0x%p", \
 	(unsigned long long)(dcp)->cp_crypt, (dcp)->cp_wkey)
 
+#define	LOG_BOOKMARK(bm) \
+	LOG_DEBUG("bookmark: os = %u, obj = %u, level = %d, blkid = %u", \
+	(unsigned)(bm)->zb_objset, (unsigned)(bm)->zb_object, \
+	(int)(bm)->zb_level, (unsigned)(bm)->zb_blkid)
+
 #define	dump_stack() spl_dumpstack()
 
 #else
@@ -56,6 +61,7 @@
 #define	LOG_DEBUG(fmt, args...)
 #define	LOG_ERROR(error, fmt, args...)
 #define	LOG_CRYPTO_PARAMS(dcp)
+#define	LOG_BOOKMARK(bm)
 #define	dump_stack()
 
 #endif
