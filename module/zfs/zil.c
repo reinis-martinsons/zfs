@@ -670,7 +670,7 @@ zil_claim(dsl_pool_t *dp, dsl_dataset_t *ds, void *txarg)
 	int error;
 
 	error = dmu_objset_own_obj(dp, ds->ds_object,
-	    DMU_OST_ANY, B_FALSE, FTAG, &os);
+	    DMU_OST_ANY, B_FALSE, B_FALSE, FTAG, &os);
 	if (error != 0) {
 		/*
 		 * EBUSY indicates that the objset is inconsistent, in which

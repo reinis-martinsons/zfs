@@ -76,6 +76,9 @@
 #define	BITS_TO_BYTES(x) (((x) + 7) >> 3)
 #define	BYTES_TO_BITS(x) (x << 3)
 
+/* special return value indicating no encryption was necessary */
+#define	ZIO_CRYPT_NO_ENCRYPTION_DONE -1
+
 /* supported commands for zfs_ioc_crypto() */
 typedef enum zfs_ioc_crypto_cmd {
 	ZFS_IOC_CRYPTO_CMD_NONE = 0,

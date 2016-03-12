@@ -597,13 +597,13 @@ dsl_dataset_hold(dsl_pool_t *dp, const char *name,
 
 int
 dsl_dataset_own_obj(dsl_pool_t *dp, uint64_t dsobj,
-    void *tag, dsl_dataset_t **dsp)
+    void *tag, boolean_t key_required, dsl_dataset_t **dsp)
 {
 	int err = dsl_dataset_hold_obj(dp, dsobj, tag, dsp);
 	if (err != 0)
 		return (err);
 
-	err = dsl_dataset_tryown(*dsp, tag);
+	err = dsl_dataset_tryown(*dsp, tag, key_required);
 	if (err != 0) {
 		dsl_dataset_rele(*dsp, tag);
 		*dsp = NULL;
@@ -614,13 +614,13 @@ dsl_dataset_own_obj(dsl_pool_t *dp, uint64_t dsobj,
 
 int
 dsl_dataset_own(dsl_pool_t *dp, const char *name,
-    void *tag, dsl_dataset_t **dsp)
+    void *tag, boolean_t key_required, dsl_dataset_t **dsp)
 {
 	int err = dsl_dataset_hold(dp, name, tag, dsp);
 	if (err != 0)
 		return (err);
 
-	err = dsl_dataset_tryown(*dsp, tag);
+	err = dsl_dataset_tryown(*dsp, tag, key_required);
 	if (err != 0) {
 		dsl_dataset_rele(*dsp, tag);
 		return (err);
@@ -695,8 +695,8 @@ dsl_dataset_disown(dsl_dataset_t *ds, void *tag)
 	ASSERT(ds->ds_dbuf != NULL);
 
 	if (dsl_dir_phys(ds->ds_dir)->dd_keychain_obj) {
-		VERIFY0(spa_keystore_remove_keychain_record(
-			ds->ds_dir->dd_pool->dp_spa, ds));
+		(void) spa_keystore_remove_keychain_record(
+			ds->ds_dir->dd_pool->dp_spa, ds);
 	}
 
 	mutex_enter(&ds->ds_lock);
@@ -707,7 +707,7 @@ dsl_dataset_disown(dsl_dataset_t *ds, void *tag)
 }
 
 int
-dsl_dataset_tryown(dsl_dataset_t *ds, void *tag)
+dsl_dataset_tryown(dsl_dataset_t *ds, void *tag, boolean_t key_required)
 {
 	int ret = 0;
 	spa_t *spa = ds->ds_dir->dd_pool->dp_spa;
@@ -718,7 +718,7 @@ dsl_dataset_tryown(dsl_dataset_t *ds, void *tag)
 		ds->ds_owner = tag;
 		dsl_dataset_long_hold(ds, tag);
 
-		if (kcobj != 0) {
+		if (kcobj != 0 && key_required) {
 			ret = spa_keystore_create_keychain_record(spa, ds);
 			if (ret) {
 				dsl_dataset_long_rele(ds, tag);

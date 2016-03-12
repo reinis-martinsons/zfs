@@ -701,7 +701,6 @@ spa_keystore_keychain_hold_impl(spa_t *spa, uint64_t kcobj,
 	return (0);
 
 error:
-	LOG_ERROR(ret, "");
 	*kc_out = NULL;
 	return (ret);
 }
@@ -1561,7 +1560,9 @@ spa_encrypt_data(spa_t *spa, zbookmark_phys_t *bookmark, uint64_t txgid,
 	/* call lower level function to perform encryption */
 	ret = zio_encrypt_data(&kce->ke_key, ot, iv, mac, datalen,
 		plainbuf, cipherbuf);
-	if (ret)
+	if (ret == ZIO_CRYPT_NO_ENCRYPTION_DONE)
+		return (ret);
+	else if (ret)
 		goto error;
 
 	return (0);
@@ -1599,7 +1600,9 @@ spa_decrypt_data(spa_t *spa, zbookmark_phys_t *bookmark, uint64_t txgid,
 	/* call lower level function to perform decryption */
 	ret = zio_decrypt_data(&kce->ke_key, ot, iv, mac, datalen,
 		plainbuf, cipherbuf);
-	if (ret)
+	if (ret == ZIO_CRYPT_NO_ENCRYPTION_DONE)
+		return (ret);
+	else if (ret)
 		goto error;
 
 	return (0);

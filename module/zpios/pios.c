@@ -217,7 +217,7 @@ zpios_dmu_setup(run_args_t *run_args)
 		goto out;
 	}
 
-	rc = dmu_objset_own(name, DMU_OST_OTHER, 0, zpios_tag, &os);
+	rc = dmu_objset_own(name, DMU_OST_OTHER, 0, 1, zpios_tag, &os);
 	if (rc) {
 		zpios_print(run_args->file, "Error dmu_objset_own(%s, ...) "
 			    "failed: %d\n", name, rc);

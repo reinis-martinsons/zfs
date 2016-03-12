@@ -924,7 +924,7 @@ dmu_send(const char *tosnap, const char *fromsnap,
 		 * We are sending a filesystem or volume.  Ensure
 		 * that it doesn't change by owning the dataset.
 		 */
-		err = dsl_dataset_own(dp, tosnap, FTAG, &ds);
+		err = dsl_dataset_own(dp, tosnap, FTAG, B_TRUE, &ds);
 		owned = B_TRUE;
 	} else {
 		err = dsl_dataset_hold(dp, tosnap, FTAG, &ds);
@@ -1374,7 +1374,7 @@ dmu_recv_begin_sync(void *arg, dmu_tx_t *tx)
 		dsl_dir_rele(dd, FTAG);
 		drba->drba_cookie->drc_newfs = B_TRUE;
 	}
-	VERIFY0(dsl_dataset_own_obj(dp, dsobj, dmu_recv_tag, &newds));
+	VERIFY0(dsl_dataset_own_obj(dp, dsobj, dmu_recv_tag, B_TRUE, &newds));
 
 	dmu_buf_will_dirty(newds->ds_dbuf, tx);
 	dsl_dataset_phys(newds)->ds_flags |= DS_FLAG_INCONSISTENT;

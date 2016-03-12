@@ -560,7 +560,9 @@ zio_crypt_init_uios_dnode(boolean_t encrypt, uint8_t *plainbuf,
 		nr_dst = 1;
 	}
 	
-	/* copy the source buffer into the destination */
+	/* copy the source buffer into the destination.
+	 * encrypted parts will be overwritten.
+	 */
 	bcopy(src, dst, datalen);
 	
 	/* calculate the number of encrypted iovecs we will need */
@@ -569,18 +571,22 @@ zio_crypt_init_uios_dnode(boolean_t encrypt, uint8_t *plainbuf,
 		
 		if (src_dn->dn_type != DMU_OT_NONE &&
 		    src_dn->dn_bonuslen != 0 &&
-		    DMU_OT_IS_ENCRYPTED(src_dn->dn_bonustype))
+		    DMU_OT_IS_ENCRYPTED(src_dn->dn_bonustype)) {
 			nr_iovecs++;
+			LOG_DEBUG("bonus type = %u", (unsigned)src_dn->dn_bonustype);
+		}
 	}
 	
 	/* early exit case if there is nothing to encrypt */
 	if (nr_iovecs == 0) {
+		LOG_DEBUG("nothing to encrypt / decrypt");
+		
 		*enc_len = 0;
 		puio->uio_iov = NULL;
 		puio->uio_iovcnt = 0;
 		cuio->uio_iov = NULL;
 		cuio->uio_iovcnt = 0;
-		return 0;
+		return (ZIO_CRYPT_NO_ENCRYPTION_DONE);
 	}
 	
 	nr_src += nr_iovecs;
@@ -749,14 +755,11 @@ zio_crypt_init_uios(boolean_t encrypt, dmu_object_type_t ot, uint8_t *plainbuf,
 			datalen, puio, cuio, enc_len);
 	}
 	
-	if (ret)
+	if (ret == ZIO_CRYPT_NO_ENCRYPTION_DONE)
+		return (ret);
+	else if (ret)
 		goto error;
 	
-	
-	/* nothing to encrypt, just return */
-	if (puio->uio_iovcnt == 0)
-		return (0);
-
 	/* populate the uios */
 #ifdef _KERNEL
 	puio->uio_segflg = UIO_SYSSPACE;
@@ -801,16 +804,12 @@ zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key,
 	/* create uios for encryption */
 	ret = zio_crypt_init_uios(encrypt, ot, plainbuf, cipherbuf, datalen,
 		mac, out_mac, &puio, &cuio, &enc_len);
-	if (ret)
+		
+	if (ret == ZIO_CRYPT_NO_ENCRYPTION_DONE)
+		return (ret);
+	else if (ret)
 		goto error;
 	
-	/*
-	 * we might not need to encrypt / decrypt if this block
-	 * didn't have any encryptable pieces
-	 */
-	if (puio.uio_iovcnt == 0)
-		return (0);
-
 	/* perform the encryption */
 	ret = zio_do_crypt_uio(encrypt, key->zk_crypt, &key->zk_key,
 		key->zk_ctx_tmpl, iv, enc_len, &puio, &cuio);

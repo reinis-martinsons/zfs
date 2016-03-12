@@ -2321,7 +2321,7 @@ dump_one_dir(const char *dsname, void *arg)
 	objset_t *os;
 	spa_feature_t f;
 
-	error = dmu_objset_own(dsname, DMU_OST_ANY, B_TRUE, FTAG, &os);
+	error = dmu_objset_own(dsname, DMU_OST_ANY, B_TRUE, B_FALSE, FTAG, &os);
 	if (error) {
 		(void) printf("Could not open %s, error %d\n", dsname, error);
 		return (0);
@@ -3880,7 +3880,7 @@ main(int argc, char **argv)
 			}
 		} else {
 			error = dmu_objset_own(target, DMU_OST_ANY,
-			    B_TRUE, FTAG, &os);
+			    B_TRUE, B_FALSE, FTAG, &os);
 		}
 	}
 	nvlist_free(policy);
