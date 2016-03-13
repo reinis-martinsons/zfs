@@ -950,7 +950,7 @@ dsl_destroy_head(const char *name)
 		 * remove the objects from open context so that the txg sync
 		 * is not too long.
 		 */
-		error = dmu_objset_own(name, DMU_OST_ANY, B_FALSE, B_TRUE,
+		error = dmu_objset_own(name, DMU_OST_ANY, B_FALSE, B_FALSE,
 		    FTAG, &os);
 		if (error == 0) {
 			uint64_t obj;

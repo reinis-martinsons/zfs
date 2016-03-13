@@ -1104,7 +1104,7 @@ zio_read_bp_init(zio_t *zio)
 	}
 
 	if (BP_IS_ENCRYPTED(bp) && zio->io_child_type == ZIO_CHILD_LOGICAL &&
-		!(zio->io_flags & ZIO_FLAG_RAW)) {
+		!(zio->io_flags & (ZIO_FLAG_RAW | ZIO_FLAG_NO_DECRYPT))) {
 		void *cbuf = zio_buf_alloc(psize);
 
 		zio_push_transform(zio, cbuf, psize, psize, zio_decrypt);
@@ -1276,7 +1276,7 @@ zio_write_bp_init(zio_t *zio)
 			ret = spa_encrypt_data(spa, &zio->io_bookmark,
 				zio->io_txg, zp->zp_type, bp, psize,
 				zp->zp_dedup, iv, mac, zio->io_data, enc_buf);
-				
+
 			if (ret == ZIO_CRYPT_NO_ENCRYPTION_DONE) {
 				encrypt = B_FALSE;
 				zio_buf_free(enc_buf, psize);

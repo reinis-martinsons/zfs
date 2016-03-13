@@ -267,7 +267,7 @@ calculate_range(const char *dataset, err_type_t type, int level, char *range,
 	 * size.
 	 */
 	if ((err = dmu_objset_own(dataset, DMU_OST_ANY,
-	    B_TRUE, B_FALSE, FTAG, &os)) != 0) {
+	    B_TRUE, B_TRUE, FTAG, &os)) != 0) {
 		(void) fprintf(stderr, "cannot open dataset '%s': %s\n",
 		    dataset, strerror(err));
 		goto out;
