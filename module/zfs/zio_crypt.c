@@ -805,10 +805,10 @@ zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key,
 	ret = zio_crypt_init_uios(encrypt, ot, plainbuf, cipherbuf, datalen,
 		mac, out_mac, &puio, &cuio, &enc_len);
 		
-	if (ret == ZIO_CRYPT_NO_ENCRYPTION_DONE)
+	if (ret == ZIO_CRYPT_NO_ENCRYPTION_DONE && encrypt)
 		return (ret);
-	else if (ret)
-		goto error;
+	else if (ret == ZIO_CRYPT_NO_ENCRYPTION_DONE)
+		return SET_ERROR(EIO);
 	
 	/* perform the encryption */
 	ret = zio_do_crypt_uio(encrypt, key->zk_crypt, &key->zk_key,

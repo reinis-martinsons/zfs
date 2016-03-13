@@ -1976,9 +1976,11 @@ spa_load_verify(spa_t *spa)
 	    ZIO_FLAG_CANFAIL | ZIO_FLAG_SPECULATIVE);
 
 	if (spa_load_verify_metadata) {
+		LOG_DEBUG("here");
 		error = traverse_pool(spa, spa->spa_verify_min_txg,
 		    TRAVERSE_PRE | TRAVERSE_PREFETCH_METADATA,
 		    spa_load_verify_cb, rio);
+		LOG_DEBUG("here 2");
 	}
 
 	(void) zio_wait(rio);

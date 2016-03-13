@@ -715,17 +715,15 @@ dsl_dataset_tryown(dsl_dataset_t *ds, void *tag, boolean_t key_required)
 
 	mutex_enter(&ds->ds_lock);
 	if (ds->ds_owner == NULL && !DS_IS_INCONSISTENT(ds)) {
-		ds->ds_owner = tag;
-		dsl_dataset_long_hold(ds, tag);
-
 		if (kcobj != 0 && key_required) {
 			ret = spa_keystore_create_keychain_record(spa, ds);
 			if (ret) {
-				dsl_dataset_long_rele(ds, tag);
-				ds->ds_owner = NULL;
-				ret = SET_ERROR(EPERM);
+				mutex_exit(&ds->ds_lock);
+				return SET_ERROR(EPERM);
 			}
 		}
+		ds->ds_owner = tag;
+		dsl_dataset_long_hold(ds, tag);
 	} else {
 		ret = SET_ERROR(EBUSY);
 	}
