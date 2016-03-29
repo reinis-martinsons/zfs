@@ -365,8 +365,7 @@ zio_decrypt(zio_t *zio, void *data, uint64_t size)
 	ret = spa_decrypt_data(zio->io_spa, &zio->io_bookmark, bp->blk_birth,
 		BP_GET_TYPE(bp), bp, size, data, zio->io_data);
 
-	if (ret == EPERM && (BP_GET_TYPE(bp) == DMU_OT_DNODE ||
-	    BP_GET_TYPE(bp) == DMU_OT_INTENT_LOG)) {
+	if (ret == EPERM && BP_GET_TYPE(bp) == DMU_OT_INTENT_LOG) {
 		LOG_DEBUG("partial read");
 		bcopy(zio->io_data, data, size);
 	} else if (ret) {
@@ -1289,7 +1288,8 @@ zio_write_bp_init(zio_t *zio)
 				encrypt = B_FALSE;
 				zio_buf_free(enc_buf, psize);
 			} else {
-				zio_push_transform(zio, enc_buf, psize, psize, NULL);
+				zio_push_transform(zio, enc_buf, psize,
+				    psize, NULL);
 			}
 		}
 	}

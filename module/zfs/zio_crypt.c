@@ -536,132 +536,6 @@ zio_crypt_init_uios_zil(boolean_t encrypt, uint8_t *plainbuf,
 }
 
 static int
-zio_crypt_init_uios_dnode(boolean_t encrypt, uint8_t *plainbuf,
-	uint8_t *cipherbuf, uint_t datalen,	uio_t *puio, uio_t *cuio,
-	uint_t *enc_len)
-{
-	int ret;
-	uint_t nr_src, nr_dst, off, len, nr_iovecs, total_len = 0;
-	uint_t i, nr_dnodes = datalen >> DNODE_SHIFT;
-	iovec_t *src_iovecs = NULL, *dst_iovecs = NULL;
-	dnode_phys_t *src_dn, *dst_dn;
-	uint8_t *src, *dst; 
-
-	/* if we are decrypting, the plainbuffer needs an extra iovec */
-	if (encrypt) {
-		src = plainbuf;
-		dst = cipherbuf;
-		nr_src = 0;
-		nr_dst = 1;
-	} else {
-		src = cipherbuf;
-		dst = plainbuf;
-		nr_src = 1;
-		nr_dst = 1;
-	}
-	
-	/* copy the source buffer into the destination.
-	 * encrypted parts will be overwritten.
-	 */
-	bcopy(src, dst, datalen);
-	
-	/* calculate the number of encrypted iovecs we will need */
-	for (i = 0, nr_iovecs = 0; i < nr_dnodes; i++) {
-		src_dn = &((dnode_phys_t *)src)[i];
-		
-		if (src_dn->dn_type != DMU_OT_NONE &&
-		    src_dn->dn_bonuslen != 0 &&
-		    DMU_OT_IS_ENCRYPTED(src_dn->dn_bonustype)) {
-			nr_iovecs++;
-			LOG_DEBUG("bonus type = %u", (unsigned)src_dn->dn_bonustype);
-		}
-	}
-	
-	/* early exit case if there is nothing to encrypt */
-	if (nr_iovecs == 0) {
-		LOG_DEBUG("nothing to encrypt / decrypt");
-		
-		*enc_len = 0;
-		puio->uio_iov = NULL;
-		puio->uio_iovcnt = 0;
-		cuio->uio_iov = NULL;
-		cuio->uio_iovcnt = 0;
-		return (ZIO_CRYPT_NO_ENCRYPTION_DONE);
-	}
-	
-	nr_src += nr_iovecs;
-	nr_dst += nr_iovecs;
-	
-	/* allocate the iovecs */
-	src_iovecs = kmem_alloc(nr_src * sizeof (iovec_t),
-		KM_SLEEP);
-	if (!src_iovecs) {
-		ret = SET_ERROR(ENOMEM);
-		goto error;
-	}
-
-	dst_iovecs = kmem_alloc(nr_dst * sizeof (iovec_t),
-		KM_SLEEP);
-	if (!dst_iovecs) {
-		ret = SET_ERROR(ENOMEM);
-		goto error;
-	}
-	
-	/* add the encrypted bnous buffers to the iovecs */
-	for (i = 0, nr_iovecs = 0; i < nr_dnodes; i++) {
-		src_dn = &((dnode_phys_t *)src)[i];
-		dst_dn = &((dnode_phys_t *)dst)[i];
-		
-		if (src_dn->dn_type != DMU_OT_NONE &&
-		    src_dn->dn_bonuslen != 0 &&
-		    DMU_OT_IS_ENCRYPTED(src_dn->dn_bonustype)) {
-			off = (src_dn->dn_nblkptr - 1) * sizeof (blkptr_t);
-			len = DN_MAX_BONUSLEN - off;
-			
-			src_iovecs[nr_iovecs].iov_base = 
-			    (uint8_t *)src_dn->dn_bonus + off;
-			dst_iovecs[nr_iovecs].iov_base = 
-			    (uint8_t *)dst_dn->dn_bonus + off;
-			src_iovecs[nr_iovecs].iov_len = len;
-			dst_iovecs[nr_iovecs].iov_len = len;
-			total_len += len;
-			nr_iovecs++;
-		}
-	}
-	
-	*enc_len = total_len;
-	
-	/* add the iovecs to the uios */
-	if (encrypt) {
-		puio->uio_iov = src_iovecs;
-		puio->uio_iovcnt = nr_src;
-		cuio->uio_iov = dst_iovecs;
-		cuio->uio_iovcnt = nr_dst;
-	} else {
-		puio->uio_iov = dst_iovecs;
-		puio->uio_iovcnt = nr_dst;
-		cuio->uio_iov = src_iovecs;
-		cuio->uio_iovcnt = nr_src;
-	}
-	
-	return (0);
-	
-error:
-	LOG_ERROR(ret, "");
-	if (src_iovecs)
-		kmem_free(src_iovecs, nr_src * sizeof (iovec_t));
-	if (dst_iovecs)
-		kmem_free(dst_iovecs, nr_dst * sizeof (iovec_t));
-	
-	*enc_len = 0;
-	puio->uio_iov = NULL;
-	puio->uio_iovcnt = 0;
-	cuio->uio_iov = NULL;
-	cuio->uio_iovcnt = 0;
-	return (ret);
-}
-
-static int
 zio_crypt_init_uios_normal(boolean_t encrypt, uint8_t *plainbuf,
 	uint8_t *cipherbuf, uint_t datalen, uio_t *puio, uio_t *cuio,
 	uint_t *enc_len)
@@ -669,7 +543,7 @@ zio_crypt_init_uios_normal(boolean_t encrypt, uint8_t *plainbuf,
 	int ret;
 	uint_t nr_plain, nr_cipher;
 	iovec_t *plain_iovecs = NULL, *cipher_iovecs = NULL;
-	
+
 	/* allocate the iovecs for the plain and cipher data */
 	if (encrypt) {
 		nr_plain = 1;
@@ -709,22 +583,22 @@ zio_crypt_init_uios_normal(boolean_t encrypt, uint8_t *plainbuf,
 	plain_iovecs[0].iov_len = datalen;
 	cipher_iovecs[0].iov_base = cipherbuf;
 	cipher_iovecs[0].iov_len = datalen;
-	
+
 	*enc_len = datalen;
 	puio->uio_iov = plain_iovecs;
 	puio->uio_iovcnt = nr_plain;
 	cuio->uio_iov = cipher_iovecs;
 	cuio->uio_iovcnt = nr_cipher;
-	
+
 	return (0);
-	
+
 error:
 	LOG_ERROR(ret, "");
 	if (plain_iovecs)
 		kmem_free(plain_iovecs, nr_plain * sizeof (iovec_t));
 	if (cipher_iovecs)
 		kmem_free(cipher_iovecs, nr_cipher * sizeof (iovec_t));
-	
+
 	*enc_len = 0;
 	puio->uio_iov = NULL;
 	puio->uio_iovcnt = 0;
@@ -740,26 +614,23 @@ zio_crypt_init_uios(boolean_t encrypt, dmu_object_type_t ot, uint8_t *plainbuf,
 {
 	int ret;
 	iovec_t *mac_iov, *mac_out_iov;
-	
+
 	ASSERT(DMU_OT_IS_ENCRYPTED(ot));
-	
+
 	/* route to handler */
 	if (ot == DMU_OT_INTENT_LOG) {
 		ret = zio_crypt_init_uios_zil(encrypt, plainbuf, cipherbuf,
-			datalen, puio, cuio, enc_len);
-	} else if (ot == DMU_OT_DNODE) {
-		ret = zio_crypt_init_uios_dnode(encrypt, plainbuf, cipherbuf,
 			datalen, puio, cuio, enc_len);
 	} else {
 		ret = zio_crypt_init_uios_normal(encrypt, plainbuf, cipherbuf,
 			datalen, puio, cuio, enc_len);
 	}
-	
+
 	if (ret == ZIO_CRYPT_NO_ENCRYPTION_DONE)
 		return (ret);
 	else if (ret)
 		goto error;
-	
+
 	/* populate the uios */
 #ifdef _KERNEL
 	puio->uio_segflg = UIO_SYSSPACE;
@@ -772,7 +643,7 @@ zio_crypt_init_uios(boolean_t encrypt, dmu_object_type_t ot, uint8_t *plainbuf,
 	mac_iov = ((iovec_t*)&cuio->uio_iov[cuio->uio_iovcnt - 1]);
 	mac_iov->iov_base = mac;
 	mac_iov->iov_len = MAX_DATA_MAC_LEN;
-	
+
 	if (!encrypt) {
 		mac_out_iov = ((iovec_t*)&puio->uio_iov[puio->uio_iovcnt - 1]);
 		mac_out_iov->iov_base = out_mac;
@@ -780,7 +651,7 @@ zio_crypt_init_uios(boolean_t encrypt, dmu_object_type_t ot, uint8_t *plainbuf,
 	}
 
 	return (0);
-	
+
 error:
 	LOG_ERROR(ret, "");
 	return (ret);
@@ -798,18 +669,18 @@ zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key,
 
 	bzero(&puio, sizeof (uio_t));
 	bzero(&cuio, sizeof (uio_t));
-	
+
 	LOG_DEBUG("ot = %u", (unsigned)ot);
 
 	/* create uios for encryption */
 	ret = zio_crypt_init_uios(encrypt, ot, plainbuf, cipherbuf, datalen,
 		mac, out_mac, &puio, &cuio, &enc_len);
-		
+
 	if (ret == ZIO_CRYPT_NO_ENCRYPTION_DONE && encrypt)
 		return (ret);
 	else if (ret == ZIO_CRYPT_NO_ENCRYPTION_DONE)
 		return SET_ERROR(EIO);
-	
+
 	/* perform the encryption */
 	ret = zio_do_crypt_uio(encrypt, key->zk_crypt, &key->zk_key,
 		key->zk_ctx_tmpl, iv, enc_len, &puio, &cuio);
