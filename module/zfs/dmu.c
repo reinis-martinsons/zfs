@@ -101,7 +101,7 @@ const dmu_object_type_info_t dmu_ot[DMU_OT_NUMTYPES] = {
 	{ DMU_BSWAP_ZAP,	TRUE,	FALSE,	"snapshot refcount tags"},
 	{ DMU_BSWAP_ZAP,	TRUE,	FALSE,	"DDT ZAP algorithm"	},
 	{ DMU_BSWAP_ZAP,	TRUE,	FALSE,	"DDT statistics"	},
-	{ DMU_BSWAP_UINT8,	TRUE,	FALSE,	"System attributes"	},
+	{ DMU_BSWAP_UINT8,	TRUE,	TRUE,	"System attributes"	},
 	{ DMU_BSWAP_ZAP,	TRUE,	FALSE,	"SA master node"	},
 	{ DMU_BSWAP_ZAP,	TRUE,	FALSE,	"SA attr registration"	},
 	{ DMU_BSWAP_ZAP,	TRUE,	FALSE,	"SA attr layouts"	},

@@ -5589,7 +5589,7 @@ zfs_ioctl_init(void)
 
 	zfs_ioctl_register("cypto", ZFS_IOC_CRYPTO,
 	    zfs_ioc_crypto, zfs_secpolicy_crypto,
-	    DATASET_NAME, POOL_CHECK_SUSPENDED, B_TRUE, B_FALSE);
+	    DATASET_NAME, POOL_CHECK_SUSPENDED, B_TRUE, B_TRUE);
 
 	/* IOCTLS that use the legacy function signature */
 
