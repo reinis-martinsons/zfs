@@ -1098,7 +1098,7 @@ dmu_send_estimate_from_txg(dsl_dataset_t *ds, uint64_t from_txg,
 	 * traverse the blocks of the snapshot with birth times after
 	 * from_txg, summing their uncompressed size
 	 */
-	err = traverse_dataset(ds, from_txg, TRAVERSE_POST,
+	err = traverse_dataset(ds, from_txg, TRAVERSE_POST|TRAVERSE_NO_DECRYPT,
 	    dmu_calculate_send_traversal, &size);
 	if (err)
 		return (err);

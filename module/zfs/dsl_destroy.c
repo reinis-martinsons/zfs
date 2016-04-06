@@ -595,8 +595,8 @@ old_synchronous_dataset_destroy(dsl_dataset_t *ds, dmu_tx_t *tx)
 	ka.ds = ds;
 	ka.tx = tx;
 	VERIFY0(traverse_dataset(ds,
-	    dsl_dataset_phys(ds)->ds_prev_snap_txg, TRAVERSE_POST,
-	    kill_blkptr, &ka));
+	    dsl_dataset_phys(ds)->ds_prev_snap_txg, TRAVERSE_POST |
+	    TRAVERSE_NO_DECRYPT, kill_blkptr, &ka));
 	ASSERT(!DS_UNIQUE_IS_ACCURATE(ds) ||
 	    dsl_dataset_phys(ds)->ds_unique_bytes == 0);
 }

@@ -524,7 +524,7 @@ static void zio_crypt_destroy_uio(uio_t *uio) {
 
 static int
 zio_crypt_init_uios_zil(boolean_t encrypt, uint8_t *plainbuf,
-	uint8_t *cipherbuf, uint_t datalen,	uio_t *puio, uio_t *cuio,
+	uint8_t *cipherbuf, uint_t datalen, uio_t *puio, uio_t *cuio,
 	uint_t *enc_len)
 {
 	*enc_len = 0;
@@ -626,9 +626,7 @@ zio_crypt_init_uios(boolean_t encrypt, dmu_object_type_t ot, uint8_t *plainbuf,
 			datalen, puio, cuio, enc_len);
 	}
 
-	if (ret == ZIO_CRYPT_NO_ENCRYPTION_DONE)
-		return (ret);
-	else if (ret)
+	if (ret)
 		goto error;
 
 	/* populate the uios */
@@ -675,11 +673,8 @@ zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key,
 	/* create uios for encryption */
 	ret = zio_crypt_init_uios(encrypt, ot, plainbuf, cipherbuf, datalen,
 		mac, out_mac, &puio, &cuio, &enc_len);
-
-	if (ret == ZIO_CRYPT_NO_ENCRYPTION_DONE && encrypt)
+	if (ret)
 		return (ret);
-	else if (ret == ZIO_CRYPT_NO_ENCRYPTION_DONE)
-		return SET_ERROR(EIO);
 
 	/* perform the encryption */
 	ret = zio_do_crypt_uio(encrypt, key->zk_crypt, &key->zk_key,
