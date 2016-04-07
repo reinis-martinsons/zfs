@@ -1279,13 +1279,8 @@ zio_write_bp_init(zio_t *zio)
 				zio->io_txg, zp->zp_type, bp, psize,
 				zp->zp_dedup, iv, mac, zio->io_data, enc_buf);
 
-			if (ret == ZIO_CRYPT_NO_ENCRYPTION_DONE) {
-				encrypt = B_FALSE;
-				zio_buf_free(enc_buf, psize);
-			} else {
-				zio_push_transform(zio, enc_buf, psize,
-				    psize, NULL);
-			}
+			zio_push_transform(zio, enc_buf, psize,
+			    psize, NULL);
 		}
 	}
 

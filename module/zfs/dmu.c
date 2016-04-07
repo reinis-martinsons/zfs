@@ -66,7 +66,7 @@ const dmu_object_type_info_t dmu_ot[DMU_OT_NUMTYPES] = {
 	{ DMU_BSWAP_UINT64,	TRUE,	FALSE,	"bpobj header"		},
 	{ DMU_BSWAP_UINT64,	TRUE,	FALSE,	"SPA space map header"	},
 	{ DMU_BSWAP_UINT64,	TRUE,	FALSE,	"SPA space map"		},
-	{ DMU_BSWAP_UINT64,	TRUE,	FALSE,	"ZIL intent log"	},
+	{ DMU_BSWAP_UINT64,	TRUE,	TRUE,	"ZIL intent log"	},
 	{ DMU_BSWAP_DNODE,	TRUE,	FALSE,	"DMU dnode"		},
 	{ DMU_BSWAP_OBJSET,	TRUE,	FALSE,	"DMU objset"		},
 	{ DMU_BSWAP_UINT64,	TRUE,	FALSE,	"DSL directory"		},
@@ -1802,17 +1802,12 @@ dmu_write_policy(objset_t *os, dnode_t *dn, int level, int wp, zio_prop_t *zp)
 
 	/*
 	 * Encrypted objects override the checksum type with sha256-mac (which
-	 * is dedupable). In addition, encrypted dnodes may not be compressed
-	 * so that we can read the plaintext pieces of it without the
-	 * decryption key loaded.
+	 * is dedupable).
 	 */
 	if (os->os_encrypted && DMU_OT_IS_ENCRYPTED(type) &&
 	    !(wp & WP_NOFILL) && level <= 0) {
 		encrypt = B_TRUE;
 		checksum = ZIO_CHECKSUM_SHA256_MAC;
-
-		if(type == DMU_OT_DNODE)
-			compress = ZIO_COMPRESS_OFF;
 	}
 
 	zp->zp_checksum = checksum;

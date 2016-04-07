@@ -29,6 +29,7 @@
 #include <sys/dnode.h>
 #include <sys/fs/zfs.h>
 #include <sys/zio.h>
+#include <sys/zil.h>
 
 #define	SHA_256_DIGEST_LEN 32
 
@@ -501,8 +502,8 @@ zio_do_crypt_uio(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
 			NULL);
 
 	LOG_DEBUG("encrypt = %d", encrypt);
-	print_crypto_data("plaindata", &plaindata);
-	print_crypto_data("cipherdata", &cipherdata);
+	//print_crypto_data("plaindata", &plaindata);
+	//print_crypto_data("cipherdata", &cipherdata);
 
 	if (ret != CRYPTO_SUCCESS) {
 		LOG_ERROR(ret, "");
@@ -522,17 +523,144 @@ static void zio_crypt_destroy_uio(uio_t *uio) {
 		kmem_free(uio->uio_iov, uio->uio_iovcnt * sizeof (iovec_t));
 }
 
+/*
+ * We do not check for older zil chain because this feature was not
+ * available before the newer zil chain was introduced. The goal here
+ * is to encrypt everything except the blkptr_t of a lr_write_t and
+ * the zil_chain_t header
+ */
 static int
 zio_crypt_init_uios_zil(boolean_t encrypt, uint8_t *plainbuf,
 	uint8_t *cipherbuf, uint_t datalen, uio_t *puio, uio_t *cuio,
 	uint_t *enc_len)
 {
+	int ret;
+	uint_t nr_src, nr_dst, lr_len, crypt_len, nr_iovecs = 0, total_len = 0;
+	iovec_t *src_iovecs = NULL, *dst_iovecs = NULL;
+	uint8_t *src, *dst, *slrp, *dlrp, *end;
+	zil_chain_t *zilc;
+	lr_t *lr;
+
+	/* if we are decrypting, the plainbuffer needs an extra iovec */
+	if (encrypt) {
+		src = plainbuf;
+		dst = cipherbuf;
+		nr_src = 0;
+		nr_dst = 1;
+	} else {
+		src = cipherbuf;
+		dst = plainbuf;
+		nr_src = 1;
+		nr_dst = 1;
+	}
+	
+	/* find the start and end record of the log block */
+	zilc = (zil_chain_t *) src;
+	end = src + zilc->zc_nused;
+	slrp = src + sizeof (zil_chain_t);
+
+	/* calculate the number of encrypted iovecs we will need */
+	for (; slrp < end; slrp += lr_len) {
+		lr = (lr_t *) slrp;
+		lr_len = lr->lrc_reclen;
+		
+		nr_iovecs++;
+		if (lr->lrc_txtype == TX_WRITE &&
+		    lr_len != sizeof (lr_write_t))
+			nr_iovecs++;
+	}
+	
+	nr_src += nr_iovecs;
+	nr_dst += nr_iovecs;
+	
+	/* allocate the iovec arrays */
+	src_iovecs = kmem_alloc(nr_src * sizeof (iovec_t), KM_SLEEP);
+	if (!src_iovecs) {
+		ret = SET_ERROR(ENOMEM);
+		goto error;
+	}
+	
+	dst_iovecs = kmem_alloc(nr_dst * sizeof (iovec_t), KM_SLEEP);
+	if (!dst_iovecs) {
+		ret = SET_ERROR(ENOMEM);
+		goto error;
+	}
+		
+	/* loop over records again, filling in iovecs */
+	nr_iovecs = 0;
+	slrp = src + sizeof (zil_chain_t);
+	dlrp = dst + sizeof (zil_chain_t);
+	
+	for (; slrp < end; slrp += lr_len, dlrp += lr_len) {
+		lr = (lr_t *) slrp;
+		lr_len = lr->lrc_reclen;
+		
+		if (lr->lrc_txtype == TX_WRITE) {
+			crypt_len = lr_len - sizeof (lr_t) - sizeof (blkptr_t);
+			src_iovecs[nr_iovecs].iov_base = slrp + sizeof (lr_t);
+			src_iovecs[nr_iovecs].iov_len = crypt_len;
+			dst_iovecs[nr_iovecs].iov_base = dlrp + sizeof (lr_t);
+			dst_iovecs[nr_iovecs].iov_len = crypt_len;
+			
+			/* copy the bp now since it will not be encrypted */
+			bcopy(slrp + sizeof (lr_write_t) - sizeof (blkptr_t),
+			    dlrp + sizeof (lr_write_t) - sizeof (blkptr_t),
+			    sizeof (blkptr_t));
+			nr_iovecs++;
+			total_len += crypt_len;
+			
+			if (lr_len != sizeof (lr_write_t)) {
+				crypt_len = lr_len - sizeof (lr_write_t);
+				src_iovecs[nr_iovecs].iov_base = slrp + sizeof (lr_write_t);
+				src_iovecs[nr_iovecs].iov_len = crypt_len;
+				dst_iovecs[nr_iovecs].iov_base = dlrp + sizeof (lr_write_t);
+				dst_iovecs[nr_iovecs].iov_len = crypt_len;
+				nr_iovecs++;
+				total_len += crypt_len;
+			}
+		} else {
+			crypt_len = lr_len - sizeof (lr_t);
+			src_iovecs[nr_iovecs].iov_base = slrp + sizeof (lr_t);
+			src_iovecs[nr_iovecs].iov_len = crypt_len;
+			dst_iovecs[nr_iovecs].iov_base = dlrp + sizeof (lr_t);
+			dst_iovecs[nr_iovecs].iov_len = crypt_len;
+			nr_iovecs++;
+			total_len += crypt_len;
+		}
+	}
+	
+	/* copy the plain zil header over */
+	bcopy(src, dst, sizeof (zil_chain_t));
+	
+	*enc_len = total_len;
+	
+	if (encrypt) {
+		puio->uio_iov = src_iovecs;
+		puio->uio_iovcnt = nr_src;
+		cuio->uio_iov = dst_iovecs;
+		cuio->uio_iovcnt = nr_dst;
+	} else {
+		puio->uio_iov = dst_iovecs;
+		puio->uio_iovcnt = nr_dst;
+		cuio->uio_iov = src_iovecs;
+		cuio->uio_iovcnt = nr_src;
+	}
+	
+	return (0);
+	
+error:
+	LOG_ERROR(ret, "");
+	if (src_iovecs)
+		kmem_free(src_iovecs, nr_src * sizeof (iovec_t));
+	if (dst_iovecs)
+		kmem_free(dst_iovecs, nr_dst * sizeof (iovec_t));
+	
 	*enc_len = 0;
 	puio->uio_iov = NULL;
 	puio->uio_iovcnt = 0;
 	cuio->uio_iov = NULL;
 	cuio->uio_iovcnt = 0;
-	return SET_ERROR(EOPNOTSUPP);
+	return (ret);
 }
 
 static int
