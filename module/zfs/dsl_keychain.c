@@ -36,16 +36,12 @@ void
 dsl_wrapping_key_hold(dsl_wrapping_key_t *wkey, void *tag)
 {
 	(void) refcount_add(&wkey->wk_refcnt, tag);
-	LOG_DEBUG("wkey hold 0x%p: refcount = %d", wkey,
-		(int)refcount_count(&wkey->wk_refcnt));
 }
 
 void
 dsl_wrapping_key_rele(dsl_wrapping_key_t *wkey, void *tag)
 {
 	(void) refcount_remove(&wkey->wk_refcnt, tag);
-	LOG_DEBUG("wkey rele 0x%p: refcount = %d", wkey,
-		(int)refcount_count(&wkey->wk_refcnt));
 }
 
 void
@@ -446,7 +442,6 @@ spa_keystore_wkey_hold_ddobj_impl(spa_t *spa, uint64_t ddobj,
 	dsl_wrapping_key_t *found_wkey;
 
 	ASSERT(RW_LOCK_HELD(&spa->spa_keystore.sk_wkeys_lock));
-	LOG_DEBUG("looking up wkey directly %d", (int)ddobj);
 
 	/* init the search wrapping key */
 	search_wkey.wk_ddobj = ddobj;
@@ -480,8 +475,6 @@ spa_keystore_wkey_hold_ddobj(spa_t *spa, uint64_t ddobj, void *tag,
 	dsl_wrapping_key_t *wkey;
 	boolean_t locked = B_FALSE;
 
-	LOG_DEBUG("looking up wkey %u", (unsigned)ddobj);
-
 	/* hold the dsl dir */
 	ret = dsl_dir_hold_obj(dp, ddobj, NULL, FTAG, &dd);
 	if (ret)
@@ -505,8 +498,6 @@ spa_keystore_wkey_hold_ddobj(spa_t *spa, uint64_t ddobj, void *tag,
 
 	if (locked)
 		rw_exit(&spa->spa_keystore.sk_wkeys_lock);
-
-	LOG_DEBUG("found wkey %u", (unsigned)ddobj);
 
 	dsl_dir_rele(inherit_dd, FTAG);
 	dsl_dir_rele(dd, FTAG);
@@ -840,8 +831,6 @@ spa_keystore_load_wkey(const char *dsname, dsl_crypto_params_t *dcp)
 	if (ret)
 		goto error;
 
-	LOG_DEBUG("loading key ddobj = %u", (unsigned)dd->dd_object);
-
 	/* initialize the wkey's ddobj */
 	wkey->wk_ddobj = dd->dd_object;
 
@@ -879,8 +868,6 @@ spa_keystore_unload_wkey_impl(spa_t *spa, uint64_t ddobj) {
 	int ret;
 	dsl_wrapping_key_t search_wkey;
 	dsl_wrapping_key_t *found_wkey;
-
-	LOG_DEBUG("unloading key ddobj = %u", (unsigned)ddobj);
 
 	/* init the search wrapping key */
 	search_wkey.wk_ddobj = ddobj;
@@ -1081,14 +1068,10 @@ spa_keystore_rewrap_sync_impl(uint64_t root_ddobj, uint64_t ddobj,
 		return (0);
 	}
 
-	LOG_DEBUG("rewrapping keychain ddobj = %u", (unsigned)ddobj);
-
 	/* get the keychain object for this dsl dir */
 	ret = spa_keystore_keychain_hold_dd(dp->dp_spa, dd, FTAG, &kc);
 	if (ret)
 		goto error;
-
-	LOG_DEBUG("rewrapping keychain kcobj = %u", (unsigned)kc->kc_obj);
 
 	rw_enter(&kc->kc_lock, RW_READER);
 
@@ -1105,14 +1088,10 @@ spa_keystore_rewrap_sync_impl(uint64_t root_ddobj, uint64_t ddobj,
 
 	rw_exit(&kc->kc_lock);
 
-	LOG_DEBUG("replacing wkey ddobj = %u", (unsigned)wkey->wk_ddobj);
-
 	/* replace the wrapping key */
 	dsl_wrapping_key_hold(wkey, kc);
 	dsl_wrapping_key_rele(kc->kc_wkey, kc);
 	kc->kc_wkey = wkey;
-
-	LOG_DEBUG("recursing");
 
 	/* recurse into all children */
 	for (zap_cursor_init(&zc, dp->dp_meta_objset,
@@ -1125,8 +1104,6 @@ spa_keystore_rewrap_sync_impl(uint64_t root_ddobj, uint64_t ddobj,
 			goto error;
 	}
 	zap_cursor_fini(&zc);
-
-	LOG_DEBUG("done recursing");
 
 	spa_keystore_keychain_rele(dp->dp_spa, kc, FTAG);
 	dsl_dir_rele(inherit_dd, FTAG);
@@ -1170,9 +1147,6 @@ spa_keystore_rewrap_sync(void *arg, dmu_tx_t *tx)
 	VERIFY0(spa_keystore_rewrap_sync_impl(ds->ds_dir->dd_object,
 		ds->ds_dir->dd_object, wkey, tx));
 
-	LOG_DEBUG("searching for key to replace ddobj = %u",
-		(unsigned) ds->ds_dir->dd_object);
-
 	/*
 	 * all references to the old wkey should be released now,
 	 * replace the wrapping key
@@ -1180,13 +1154,8 @@ spa_keystore_rewrap_sync(void *arg, dmu_tx_t *tx)
 	found_wkey = avl_find(&spa->spa_keystore.sk_wkeys, wkey, NULL);
 	avl_remove(&spa->spa_keystore.sk_wkeys, found_wkey);
 
-	LOG_DEBUG("removed wkey from keystore ddobj = %u",
-		(unsigned) found_wkey->wk_ddobj);
-
 	avl_find(&spa->spa_keystore.sk_wkeys, wkey, &where);
 	avl_insert(&spa->spa_keystore.sk_wkeys, wkey, where);
-
-	LOG_DEBUG("inserted new wkey ddobj = %u", (unsigned) wkey->wk_ddobj);
 
 	rw_exit(&spa->spa_keystore.sk_wkeys_lock);
 
@@ -1248,8 +1217,6 @@ spa_keystore_create_keychain_record(spa_t *spa, dsl_dataset_t *ds)
 
 	rw_exit(&spa->spa_keystore.sk_kr_lock);
 
-	LOG_DEBUG("created record for ddobj = %u", (unsigned)ds->ds_object);
-
 	return (0);
 
 error_unlock:
@@ -1285,8 +1252,6 @@ spa_keystore_remove_keychain_record(spa_t *spa, dsl_dataset_t *ds)
 	avl_remove(&spa->spa_keystore.sk_keychain_recs, found_kr);
 
 	rw_exit(&spa->spa_keystore.sk_kr_lock);
-
-	LOG_DEBUG("removed record for ddobj = %u", (unsigned)ds->ds_object);
 
 	/* destroy the keychain record */
 	spa_keystore_keychain_rele(spa, found_kr->kr_keychain, found_kr);

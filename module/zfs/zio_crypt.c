@@ -227,8 +227,8 @@ zio_do_crypt_raw(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
 		ret = crypto_decrypt(&mech, &cipherdata, key, tmpl, &plaindata,
 			NULL);
 
-	print_crypto_data("plaindata", &plaindata);
-	print_crypto_data("cipherdata", &cipherdata);
+	//print_crypto_data("plaindata", &plaindata);
+	//print_crypto_data("cipherdata", &cipherdata);
 
 	if (ret != CRYPTO_SUCCESS) {
 		LOG_ERROR(ret, "");
