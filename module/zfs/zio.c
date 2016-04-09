@@ -1286,9 +1286,11 @@ zio_write_bp_init(zio_t *zio)
 			encrypt = B_FALSE;
 		} else {
 			void *enc_buf = zio_buf_alloc(psize);
+			dmu_object_type_t ot = IO_IS_ALLOCATING(zio) ?
+			    zp->zp_type : BP_GET_TYPE(bp);
 
 			VERIFY0(spa_encrypt_data(spa, &zio->io_bookmark,
-				zio->io_txg, zp->zp_type, bp, psize,
+				zio->io_txg, ot, bp, psize,
 				zp->zp_dedup, iv, mac, zio->io_data, enc_buf));
 
 			zio_push_transform(zio, enc_buf, psize,
@@ -1317,16 +1319,19 @@ zio_write_bp_init(zio_t *zio)
 	 * spa_sync() to allocate new blocks, but force rewrites after that.
 	 * There should only be a handful of blocks after pass 1 in any case.
 	 */
-	if (IO_IS_ALLOCATING(zio) && !BP_IS_HOLE(bp) &&
-	    bp->blk_birth == zio->io_txg && BP_GET_PSIZE(bp) == psize &&
-	    pass >= zfs_sync_pass_rewrite) {
-		enum zio_stage gang_stages = zio->io_pipeline & ZIO_GANG_STAGES;
-		ASSERT(psize != 0);
-		zio->io_pipeline = ZIO_REWRITE_PIPELINE | gang_stages;
-		zio->io_flags |= ZIO_FLAG_IO_REWRITE;
-	} else {
-		BP_ZERO(bp);
-		zio->io_pipeline = ZIO_WRITE_PIPELINE;
+	if (IO_IS_ALLOCATING(zio)) {
+		if (!BP_IS_HOLE(bp) && bp->blk_birth == zio->io_txg &&
+		    BP_GET_PSIZE(bp) == psize &&
+		    pass >= zfs_sync_pass_rewrite) {
+			enum zio_stage gang_stages =
+			    zio->io_pipeline & ZIO_GANG_STAGES;
+			ASSERT(psize != 0);
+			zio->io_pipeline = ZIO_REWRITE_PIPELINE | gang_stages;
+			zio->io_flags |= ZIO_FLAG_IO_REWRITE;
+		} else {
+			BP_ZERO(bp);
+			zio->io_pipeline = ZIO_WRITE_PIPELINE;
+		}
 	}
 
 	if (psize == 0) {

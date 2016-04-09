@@ -1429,8 +1429,11 @@ dsl_keychain_create_sync(uint64_t crypt, dsl_wrapping_key_t *wkey,
 		ZAP_FLAG_UINT64_KEY, DMU_OT_DSL_KEYCHAIN, SPA_MINBLOCKSHIFT,
 		SPA_MINBLOCKSHIFT, DMU_OT_NONE, 0, tx);
 
-	/* initialize a keychain entry and sync it to disk */
-	VERIFY0(dsl_keychain_entry_init(&kce, crypt, tx->tx_txg));
+	/*
+	 * initialize a keychain entry and sync it to disk. The first txgid
+	 * must be 0 to accommodate ZIL blocks (which don't have a txgid)
+	 */
+	VERIFY0(dsl_keychain_entry_init(&kce, crypt, 0));
 	VERIFY0(dsl_keychain_entry_sync(&kce, wkey, kcobj, tx));
 
 	/* increment the encryption feature count */
