@@ -423,8 +423,8 @@ error:
 
 static int
 zio_do_crypt_uio(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
-	crypto_ctx_template_t tmpl, uint8_t *ivbuf, uint_t datalen,
-	uio_t *puio, uio_t *cuio)
+    crypto_ctx_template_t tmpl, uint8_t *ivbuf, uint_t datalen,
+    uio_t *puio, uio_t *cuio)
 {
 	int ret;
 	crypto_data_t plaindata, cipherdata;
@@ -432,34 +432,35 @@ zio_do_crypt_uio(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
 	CK_AES_GCM_PARAMS gcmp;
 	crypto_mechanism_t mech;
 	zio_crypt_info_t crypt_info;
-	uint_t plain_full_len, ivlen, maclen;
+	uint_t plain_full_len, maclen;
 
 	ASSERT(crypt < ZIO_CRYPT_FUNCTIONS);
 	ASSERT(key->ck_format == CRYPTO_KEY_RAW);
 
 	/* lookup the encryption info */
 	crypt_info = zio_crypt_table[crypt];
-	ivlen = crypt_info.ci_ivlen;
-	maclen = crypt_info.ci_maclen;
 
-	ASSERT(ivlen <= MAX_DATA_IV_LEN);
+	/* the mac will always be the last iovec_t in the cipher uio */
+	maclen = cuio->uio_iov[cuio->uio_iovcnt - 1].iov_len;
+
 	ASSERT(maclen <= MAX_DATA_MAC_LEN);
 
 	/* setup encryption mechanism (same as crypt) */
 	mech.cm_type = crypto_mech2id(crypt_info.ci_mechname);
 
 	/* plain length will include the MAC if we are decrypting */
-	if (encrypt)
+	if (encrypt) {
 		plain_full_len = datalen;
-	else
+	} else {
 		plain_full_len = datalen + maclen;
+	}
 
 	/*
-	 * setup encryption params (currently only AES
-	 * CCM and AES GCM are supported)
+	 * setup encryption params (currently only AES CCM and AES GCM
+	 * are supported)
 	 */
 	if (crypt_info.ci_crypt_type == ZC_TYPE_CCM) {
-		ccmp.ulNonceSize = ivlen;
+		ccmp.ulNonceSize = MAX_DATA_IV_LEN;
 		ccmp.ulAuthDataSize = 0;
 		ccmp.authData = NULL;
 		ccmp.ulMACSize = maclen;
@@ -469,8 +470,8 @@ zio_do_crypt_uio(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
 		mech.cm_param = (char *)(&ccmp);
 		mech.cm_param_len = sizeof (CK_AES_CCM_PARAMS);
 	} else {
-		gcmp.ulIvLen = ivlen;
-		gcmp.ulIvBits = BYTES_TO_BITS(ivlen);
+		gcmp.ulIvLen = MAX_DATA_IV_LEN;
+		gcmp.ulIvBits = BYTES_TO_BITS(MAX_DATA_IV_LEN);
 		gcmp.ulAADLen = 0;
 		gcmp.pAAD = NULL;
 		gcmp.ulTagBits = BYTES_TO_BITS(maclen);
@@ -494,12 +495,13 @@ zio_do_crypt_uio(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
 	cipherdata.cd_length = datalen + maclen;
 
 	/* perform the actual encryption */
-	if (encrypt)
+	if (encrypt) {
 		ret = crypto_encrypt(&mech, &plaindata, key, tmpl, &cipherdata,
-			NULL);
-	else
+		    NULL);
+	} else {
 		ret = crypto_decrypt(&mech, &cipherdata, key, tmpl, &plaindata,
-			NULL);
+		    NULL);
+	}
 
 	LOG_DEBUG("encrypt = %d", encrypt);
 	//print_crypto_data("plaindata", &plaindata);
@@ -553,7 +555,7 @@ zio_crypt_init_uios_zil(boolean_t encrypt, uint8_t *plainbuf,
 		nr_src = 1;
 		nr_dst = 1;
 	}
-	
+
 	/* find the start and end record of the log block */
 	zilc = (zil_chain_t *) src;
 	end = src + zilc->zc_nused;
@@ -563,52 +565,52 @@ zio_crypt_init_uios_zil(boolean_t encrypt, uint8_t *plainbuf,
 	for (; slrp < end; slrp += lr_len) {
 		lr = (lr_t *) slrp;
 		lr_len = lr->lrc_reclen;
-		
+
 		nr_iovecs++;
 		if (lr->lrc_txtype == TX_WRITE &&
 		    lr_len != sizeof (lr_write_t))
 			nr_iovecs++;
 	}
-	
+
 	nr_src += nr_iovecs;
 	nr_dst += nr_iovecs;
-	
+
 	/* allocate the iovec arrays */
 	src_iovecs = kmem_alloc(nr_src * sizeof (iovec_t), KM_SLEEP);
 	if (!src_iovecs) {
 		ret = SET_ERROR(ENOMEM);
 		goto error;
 	}
-	
+
 	dst_iovecs = kmem_alloc(nr_dst * sizeof (iovec_t), KM_SLEEP);
 	if (!dst_iovecs) {
 		ret = SET_ERROR(ENOMEM);
 		goto error;
 	}
-		
+
 	/* loop over records again, filling in iovecs */
 	nr_iovecs = 0;
 	slrp = src + sizeof (zil_chain_t);
 	dlrp = dst + sizeof (zil_chain_t);
-	
+
 	for (; slrp < end; slrp += lr_len, dlrp += lr_len) {
 		lr = (lr_t *) slrp;
 		lr_len = lr->lrc_reclen;
-		
+
 		if (lr->lrc_txtype == TX_WRITE) {
 			crypt_len = lr_len - sizeof (lr_t) - sizeof (blkptr_t);
 			src_iovecs[nr_iovecs].iov_base = slrp + sizeof (lr_t);
 			src_iovecs[nr_iovecs].iov_len = crypt_len;
 			dst_iovecs[nr_iovecs].iov_base = dlrp + sizeof (lr_t);
 			dst_iovecs[nr_iovecs].iov_len = crypt_len;
-			
+
 			/* copy the bp now since it will not be encrypted */
 			bcopy(slrp + sizeof (lr_write_t) - sizeof (blkptr_t),
 			    dlrp + sizeof (lr_write_t) - sizeof (blkptr_t),
 			    sizeof (blkptr_t));
 			nr_iovecs++;
 			total_len += crypt_len;
-			
+
 			if (lr_len != sizeof (lr_write_t)) {
 				crypt_len = lr_len - sizeof (lr_write_t);
 				src_iovecs[nr_iovecs].iov_base = slrp + sizeof (lr_write_t);
@@ -628,12 +630,12 @@ zio_crypt_init_uios_zil(boolean_t encrypt, uint8_t *plainbuf,
 			total_len += crypt_len;
 		}
 	}
-	
+
 	/* copy the plain zil header over */
 	bcopy(src, dst, sizeof (zil_chain_t));
-	
+
 	*enc_len = total_len;
-	
+
 	if (encrypt) {
 		puio->uio_iov = src_iovecs;
 		puio->uio_iovcnt = nr_src;
@@ -645,16 +647,16 @@ zio_crypt_init_uios_zil(boolean_t encrypt, uint8_t *plainbuf,
 		cuio->uio_iov = src_iovecs;
 		cuio->uio_iovcnt = nr_src;
 	}
-	
+
 	return (0);
-	
+
 error:
 	LOG_ERROR(ret, "");
 	if (src_iovecs)
 		kmem_free(src_iovecs, nr_src * sizeof (iovec_t));
 	if (dst_iovecs)
 		kmem_free(dst_iovecs, nr_dst * sizeof (iovec_t));
-	
+
 	*enc_len = 0;
 	puio->uio_iov = NULL;
 	puio->uio_iovcnt = 0;
@@ -741,6 +743,7 @@ zio_crypt_init_uios(boolean_t encrypt, dmu_object_type_t ot, uint8_t *plainbuf,
 	uio_t *puio, uio_t *cuio, uint_t *enc_len)
 {
 	int ret;
+	uint_t maclen;
 	iovec_t *mac_iov, *mac_out_iov;
 
 	ASSERT(DMU_OT_IS_ENCRYPTED(ot));
@@ -749,9 +752,11 @@ zio_crypt_init_uios(boolean_t encrypt, dmu_object_type_t ot, uint8_t *plainbuf,
 	if (ot == DMU_OT_INTENT_LOG) {
 		ret = zio_crypt_init_uios_zil(encrypt, plainbuf, cipherbuf,
 			datalen, puio, cuio, enc_len);
+		maclen = ZIL_MAC_LEN;
 	} else {
 		ret = zio_crypt_init_uios_normal(encrypt, plainbuf, cipherbuf,
 			datalen, puio, cuio, enc_len);
+		maclen = MAX_DATA_MAC_LEN;
 	}
 
 	if (ret)
@@ -768,12 +773,12 @@ zio_crypt_init_uios(boolean_t encrypt, dmu_object_type_t ot, uint8_t *plainbuf,
 
 	mac_iov = ((iovec_t*)&cuio->uio_iov[cuio->uio_iovcnt - 1]);
 	mac_iov->iov_base = mac;
-	mac_iov->iov_len = MAX_DATA_MAC_LEN;
+	mac_iov->iov_len = maclen;
 
 	if (!encrypt) {
 		mac_out_iov = ((iovec_t*)&puio->uio_iov[puio->uio_iovcnt - 1]);
 		mac_out_iov->iov_base = out_mac;
-		mac_out_iov->iov_len = MAX_DATA_MAC_LEN;
+		mac_out_iov->iov_len = maclen;
 	}
 
 	return (0);
@@ -785,8 +790,8 @@ error:
 
 int
 zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key,
-	dmu_object_type_t ot, uint8_t *iv, uint8_t *mac, uint_t datalen,
-	uint8_t *plainbuf, uint8_t *cipherbuf)
+    dmu_object_type_t ot, uint8_t *iv, uint8_t *mac, uint_t datalen,
+    uint8_t *plainbuf, uint8_t *cipherbuf)
 {
 	int ret;
 	uint_t enc_len;

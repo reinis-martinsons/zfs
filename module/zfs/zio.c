@@ -1141,7 +1141,7 @@ zio_write_bp_init(zio_t *zio)
 	blkptr_t *bp = zio->io_bp;
 	uint64_t lsize = zio->io_size;
 	uint64_t psize = lsize;
-	int pass = 1, ret = 0;
+	int pass = 1;
 	uint8_t iv[MAX_DATA_IV_LEN];
 	uint8_t mac[MAX_DATA_MAC_LEN];
 
@@ -1153,12 +1153,23 @@ zio_write_bp_init(zio_t *zio)
 	    zio_wait_for_children(zio, ZIO_CHILD_LOGICAL, ZIO_WAIT_READY))
 		return (ZIO_PIPELINE_STOP);
 
-	if (!IO_IS_ALLOCATING(zio))
-		return (ZIO_PIPELINE_CONTINUE);
+	if (!IO_IS_ALLOCATING(zio)) {
+
+		/*
+		 * encrypted ZIL blocks still need to have their encryption
+		 * parameters setup, even though the block is pre-allocated
+		 */
+		if (BP_GET_TYPE(bp) == DMU_OT_INTENT_LOG &&
+		    BP_IS_ENCRYPTED(bp)) {
+			encrypt = B_TRUE;
+		} else {
+			return (ZIO_PIPELINE_CONTINUE);
+		}
+	}
 
 	ASSERT(zio->io_child_type != ZIO_CHILD_DDT);
 
-	if (zio->io_bp_override) {
+	if (IO_IS_ALLOCATING(zio) && zio->io_bp_override) {
 		ASSERT(bp->blk_birth != zio->io_txg);
 		ASSERT(BP_GET_DEDUP(zio->io_bp_override) == 0);
 
@@ -1196,7 +1207,8 @@ zio_write_bp_init(zio_t *zio)
 		BP_ZERO(bp);
 	}
 
-	if (!BP_IS_HOLE(bp) && bp->blk_birth == zio->io_txg) {
+	if (IO_IS_ALLOCATING(zio) && !BP_IS_HOLE(bp) &&
+	    bp->blk_birth == zio->io_txg) {
 		/*
 		 * We're rewriting an existing block, which means we're
 		 * working on behalf of spa_sync().  For spa_sync() to
@@ -1220,7 +1232,7 @@ zio_write_bp_init(zio_t *zio)
 		    spa_max_replication(spa)) == BP_GET_NDVAS(bp));
 	}
 
-	if (compress != ZIO_COMPRESS_OFF) {
+	if (IO_IS_ALLOCATING(zio) && compress != ZIO_COMPRESS_OFF) {
 		void *cbuf = zio_buf_alloc(lsize);
 		psize = zio_compress_data(compress, zio->io_data, cbuf, lsize);
 		if (psize == 0 || psize == lsize) {
@@ -1275,12 +1287,25 @@ zio_write_bp_init(zio_t *zio)
 		} else {
 			void *enc_buf = zio_buf_alloc(psize);
 
-			ret = spa_encrypt_data(spa, &zio->io_bookmark,
+			VERIFY0(spa_encrypt_data(spa, &zio->io_bookmark,
 				zio->io_txg, zp->zp_type, bp, psize,
-				zp->zp_dedup, iv, mac, zio->io_data, enc_buf);
+				zp->zp_dedup, iv, mac, zio->io_data, enc_buf));
 
 			zio_push_transform(zio, enc_buf, psize,
 			    psize, NULL);
+
+			/*
+			 * ZIL blocks are preallocated and so cannot store their
+			 * MAC / IV in the blkptr_t. Instead, the MAC is
+			 * stored in the zil_chain_t and the IV is determined
+			 * from the bookmark. We can safely determine the IV
+			 * using the bookmark because snapshots can not have a
+			 * ZIL.
+			 */
+			if (BP_GET_TYPE(bp) == DMU_OT_INTENT_LOG) {
+				zil_chain_t *zc = enc_buf;
+				bcopy(mac, zc->zc_mac, ZIL_MAC_LEN);
+			}
 		}
 	}
 
@@ -1292,8 +1317,8 @@ zio_write_bp_init(zio_t *zio)
 	 * spa_sync() to allocate new blocks, but force rewrites after that.
 	 * There should only be a handful of blocks after pass 1 in any case.
 	 */
-	if (!BP_IS_HOLE(bp) && bp->blk_birth == zio->io_txg &&
-	    BP_GET_PSIZE(bp) == psize &&
+	if (IO_IS_ALLOCATING(zio) && !BP_IS_HOLE(bp) &&
+	    bp->blk_birth == zio->io_txg && BP_GET_PSIZE(bp) == psize &&
 	    pass >= zfs_sync_pass_rewrite) {
 		enum zio_stage gang_stages = zio->io_pipeline & ZIO_GANG_STAGES;
 		ASSERT(psize != 0);
@@ -1314,31 +1339,33 @@ zio_write_bp_init(zio_t *zio)
 		}
 		zio->io_pipeline = ZIO_INTERLOCK_PIPELINE;
 	} else {
-		ASSERT(zp->zp_checksum != ZIO_CHECKSUM_GANG_HEADER);
-		BP_SET_LSIZE(bp, lsize);
-		BP_SET_TYPE(bp, zp->zp_type);
-		BP_SET_LEVEL(bp, zp->zp_level);
-		BP_SET_PSIZE(bp, psize);
-		BP_SET_COMPRESS(bp, compress);
-		BP_SET_CHECKSUM(bp, zp->zp_checksum);
-		BP_SET_DEDUP(bp, zp->zp_dedup);
-		BP_SET_BYTEORDER(bp, ZFS_HOST_BYTEORDER);
-		BP_SET_ENCRYPTED(bp, encrypt);
+		if(IO_IS_ALLOCATING(zio)) {
+			ASSERT(zp->zp_checksum != ZIO_CHECKSUM_GANG_HEADER);
+			BP_SET_LSIZE(bp, lsize);
+			BP_SET_TYPE(bp, zp->zp_type);
+			BP_SET_LEVEL(bp, zp->zp_level);
+			BP_SET_PSIZE(bp, psize);
+			BP_SET_COMPRESS(bp, compress);
+			BP_SET_CHECKSUM(bp, zp->zp_checksum);
+			BP_SET_DEDUP(bp, zp->zp_dedup);
+			BP_SET_BYTEORDER(bp, ZFS_HOST_BYTEORDER);
+			BP_SET_ENCRYPTED(bp, encrypt);
 
-		if (encrypt) {
+			if (zp->zp_dedup) {
+				ASSERT(zio->io_child_type == ZIO_CHILD_LOGICAL);
+				ASSERT(!(zio->io_flags & ZIO_FLAG_IO_REWRITE));
+				zio->io_pipeline = ZIO_DDT_WRITE_PIPELINE;
+			}
+			if (zp->zp_nopwrite) {
+				ASSERT(zio->io_child_type == ZIO_CHILD_LOGICAL);
+				ASSERT(!(zio->io_flags & ZIO_FLAG_IO_REWRITE));
+				zio->io_pipeline |= ZIO_STAGE_NOP_WRITE;
+			}
+		}
+
+		if (encrypt && BP_GET_TYPE(bp) != DMU_OT_INTENT_LOG) {
 			ZIO_SET_MAC(bp, mac);
 			ZIO_SET_IV(bp, iv);
-		}
-
-		if (zp->zp_dedup) {
-			ASSERT(zio->io_child_type == ZIO_CHILD_LOGICAL);
-			ASSERT(!(zio->io_flags & ZIO_FLAG_IO_REWRITE));
-			zio->io_pipeline = ZIO_DDT_WRITE_PIPELINE;
-		}
-		if (zp->zp_nopwrite) {
-			ASSERT(zio->io_child_type == ZIO_CHILD_LOGICAL);
-			ASSERT(!(zio->io_flags & ZIO_FLAG_IO_REWRITE));
-			zio->io_pipeline |= ZIO_STAGE_NOP_WRITE;
 		}
 	}
 
@@ -2669,7 +2696,7 @@ zio_dva_unallocate(zio_t *zio, zio_gang_node_t *gn, blkptr_t *bp)
  */
 int
 zio_alloc_zil(spa_t *spa, uint64_t txg, blkptr_t *new_bp, uint64_t size,
-    boolean_t use_slog)
+    boolean_t encrypt, boolean_t use_slog)
 {
 	int error = 1;
 
@@ -2696,6 +2723,7 @@ zio_alloc_zil(spa_t *spa, uint64_t txg, blkptr_t *new_bp, uint64_t size,
 		BP_SET_LSIZE(new_bp, size);
 		BP_SET_PSIZE(new_bp, size);
 		BP_SET_COMPRESS(new_bp, ZIO_COMPRESS_OFF);
+		BP_SET_ENCRYPTED(new_bp, encrypt);
 		BP_SET_CHECKSUM(new_bp,
 		    spa_version(spa) >= SPA_VERSION_SLIM_ZIL
 		    ? ZIO_CHECKSUM_ZILOG2 : ZIO_CHECKSUM_ZILOG);

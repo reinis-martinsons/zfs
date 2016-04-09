@@ -104,12 +104,6 @@ typedef struct zio_crypt_info
 	/* length of the encryption key */
 	size_t ci_keylen;
 
-	/* length of the IV paramter */
-	size_t ci_ivlen;
-
-	/* length of the output MAC parameter */
-	size_t ci_maclen;
-
 	/* human-readable name of the encryption alforithm */
 	char *ci_name;
 } zio_crypt_info_t;

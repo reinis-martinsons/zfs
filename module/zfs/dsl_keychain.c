@@ -27,6 +27,7 @@
 #include <sys/dsl_keychain.h>
 #include <sys/dsl_pool.h>
 #include <sys/zap.h>
+#include <sys/zil.h>
 #include <sys/dsl_dir.h>
 #include <sys/dsl_prop.h>
 #include <sys/spa_impl.h>
@@ -1533,7 +1534,6 @@ spa_encrypt_data(spa_t *spa, zbookmark_phys_t *bookmark, uint64_t txgid,
 	int ret;
 	dsl_keychain_t *kc;
 	dsl_keychain_entry_t *kce;
-	uint_t ivlen;
 
 	/* lookup the keychain and then the key from the spa's keystore */
 	ret = spa_keystore_lookup_keychain_record(spa,
@@ -1545,14 +1545,14 @@ spa_encrypt_data(spa_t *spa, zbookmark_phys_t *bookmark, uint64_t txgid,
 	if (ret)
 		goto error;
 
-	/* get ivlen from key's crypt */
-	ivlen = zio_crypt_table[kce->ke_key.zk_crypt].ci_ivlen;
-
 	/* generate an iv */
-	if (!dedup)
-		ret = zio_crypt_generate_iv(bookmark, txgid, ivlen, iv);
-	else
-		ret = zio_crypt_generate_iv_dd(plainbuf, datalen, ivlen, iv);
+	if (!dedup) {
+		ret = zio_crypt_generate_iv(bookmark, txgid,
+		    MAX_DATA_IV_LEN, iv);
+	} else {
+		ret = zio_crypt_generate_iv_dd(plainbuf, datalen,
+		    MAX_DATA_IV_LEN, iv);
+	}
 
 	if (ret)
 		goto error;
@@ -1578,12 +1578,27 @@ spa_decrypt_data(spa_t *spa, zbookmark_phys_t *bookmark, uint64_t txgid,
 	int ret;
 	dsl_keychain_t *kc;
 	dsl_keychain_entry_t *kce;
-	char buf[320];
-	uint8_t *iv = ((uint8_t *)bp->blk_pad);
-	uint8_t *mac = ((uint8_t *)&bp->blk_cksum.zc_word[2]);
+	uint8_t zil_iv_buf[MAX_DATA_IV_LEN];
+	uint8_t *mac, *iv;
+	zil_chain_t *zc;
 
-	snprintf_blkptr(buf, sizeof (buf), bp);
-	LOG_DEBUG("%s", buf);
+	/*
+	 * ZIL blocks dont have their IV stored anywhere, so it must be
+	 * redetermined. See comment in zio_write_bp_init()
+	 */
+	if (ot == DMU_OT_INTENT_LOG) {
+		ret = zio_crypt_generate_iv(bookmark, txgid,
+		    MAX_DATA_IV_LEN, zil_iv_buf);
+		if(ret)
+			goto error;
+
+		zc = (zil_chain_t *) cipherbuf;
+		mac = zc->zc_mac;
+		iv = zil_iv_buf;
+	} else {
+		mac = ((uint8_t *)&bp->blk_cksum.zc_word[2]);
+		iv = ((uint8_t *)bp->blk_pad);
+	}
 
 	/* lookup the keychain and then the key from the spa's keystore */
 	ret = spa_keystore_lookup_keychain_record(spa,

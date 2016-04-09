@@ -85,8 +85,10 @@ typedef struct zil_header {
  * The zec_cksum is checked by the SPA against the sequence
  * number passed in the blk_cksum field of the blkptr_t
  */
+#define	ZIL_MAC_LEN 8
+
 typedef struct zil_chain {
-	uint64_t zc_pad;
+	uint8_t zc_mac[ZIL_MAC_LEN]; /* mac for encryption */
 	blkptr_t zc_next_blk;	/* next block in chain */
 	uint64_t zc_nused;	/* bytes in log block used */
 	zio_eck_t zc_eck;	/* block trailer */
