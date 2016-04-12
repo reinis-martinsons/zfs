@@ -770,6 +770,7 @@ zio_crypt_init_uios(boolean_t encrypt, dmu_object_type_t ot, uint8_t *plainbuf,
 	}
 
 	if (ret == ZIO_NO_ENCRYPTION_NEEDED) {
+		bzero(mac, maclen);
 		return (ret);
 	} else if (ret) {
 		goto error;
@@ -822,7 +823,11 @@ zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key,
 
 	/* if no encryption is required, just copy the plain data */
 	if (ret == ZIO_NO_ENCRYPTION_NEEDED){
-		bcopy(plainbuf, cipherbuf, datalen);
+		if (encrypt) {
+			bcopy(plainbuf, cipherbuf, datalen);
+		} else {
+			bcopy(cipherbuf, plainbuf, datalen);
+		}
 		return (0);
 	} else if (ret) {
 		return (ret);
