@@ -598,7 +598,8 @@ zio_crypt_init_uios_zil(boolean_t encrypt, uint8_t *plainbuf,
 		lr_len = lr->lrc_reclen;
 
 		if (lr->lrc_txtype == TX_WRITE) {
-			crypt_len = lr_len - sizeof (lr_t) - sizeof (blkptr_t);
+			bcopy(slrp, dlrp, sizeof(lr_t));
+			crypt_len = sizeof (lr_write_t) - sizeof (lr_t) - sizeof (blkptr_t);
 			src_iovecs[nr_iovecs].iov_base = slrp + sizeof (lr_t);
 			src_iovecs[nr_iovecs].iov_len = crypt_len;
 			dst_iovecs[nr_iovecs].iov_base = dlrp + sizeof (lr_t);
@@ -621,6 +622,7 @@ zio_crypt_init_uios_zil(boolean_t encrypt, uint8_t *plainbuf,
 				total_len += crypt_len;
 			}
 		} else {
+			bcopy(slrp, dlrp, sizeof(lr_t));
 			crypt_len = lr_len - sizeof (lr_t);
 			src_iovecs[nr_iovecs].iov_base = slrp + sizeof (lr_t);
 			src_iovecs[nr_iovecs].iov_len = crypt_len;

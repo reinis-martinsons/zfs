@@ -1289,7 +1289,7 @@ spa_keystore_lookup_keychain_record(spa_t *spa, uint64_t dsobj,
 
 	rw_exit(&spa->spa_keystore.sk_kr_lock);
 
-	if (*kc_out)
+	if (kc_out)
 		*kc_out = found_kr->kr_keychain;
 	return (0);
 
@@ -1297,7 +1297,7 @@ error_unlock:
 	LOG_ERROR(ret, "");
 	rw_exit(&spa->spa_keystore.sk_kr_lock);
 
-	if (*kc_out)
+	if (kc_out)
 		*kc_out = NULL;
 	return (ret);
 }
@@ -1513,10 +1513,18 @@ spa_encrypt_data(spa_t *spa, zbookmark_phys_t *bookmark, uint64_t txgid,
 	if (ret)
 		goto error;
 
-	/* generate an iv */
+	/*
+	 * generate an iv. If dedup is enabled, we cannot use the bookmark
+	 * since this block could belong to multiple bookmarks. In this case we
+	 * use a hash of plainbuf. Additionally, ZIL blocks have a txgid of 0
+	 * on write, but on replay they have a real txgid. Therefore, in this
+	 * case we cannot use the txgid either. However, the blkid from the
+	 * bookmark should be unique in this case, since the blkid is
+	 * essentially just a ZIL block sequence id.
+	 */
 	if (!dedup) {
-		ret = zio_crypt_generate_iv(bookmark, txgid,
-		    MAX_DATA_IV_LEN, iv);
+		ret = zio_crypt_generate_iv(bookmark,
+		    (ot == DMU_OT_INTENT_LOG) ? 0 : txgid, MAX_DATA_IV_LEN, iv);
 	} else {
 		ret = zio_crypt_generate_iv_dd(plainbuf, datalen,
 		    MAX_DATA_IV_LEN, iv);
@@ -1555,7 +1563,7 @@ spa_decrypt_data(spa_t *spa, zbookmark_phys_t *bookmark, uint64_t txgid,
 	 * redetermined. See comment in zio_write_bp_init()
 	 */
 	if (ot == DMU_OT_INTENT_LOG) {
-		ret = zio_crypt_generate_iv(bookmark, txgid,
+		ret = zio_crypt_generate_iv(bookmark, 0,
 		    MAX_DATA_IV_LEN, zil_iv_buf);
 		if(ret)
 			goto error;

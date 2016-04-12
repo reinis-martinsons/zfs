@@ -244,7 +244,7 @@ zil_read_log_block(zilog_t *zilog, boolean_t decrypt, const blkptr_t *bp,
 		 */
 		cksum.zc_word[ZIL_ZC_SEQ]++;
 
-		if (!decrypt){
+		if (decrypt){
 			data = abuf->b_data;
 		}
 
