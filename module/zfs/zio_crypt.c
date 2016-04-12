@@ -572,6 +572,14 @@ zio_crypt_init_uios_zil(boolean_t encrypt, uint8_t *plainbuf,
 			nr_iovecs++;
 	}
 
+	if (nr_iovecs == 0) {
+		puio->uio_iov = NULL;
+		puio->uio_iovcnt = 0;
+		cuio->uio_iov = NULL;
+		cuio->uio_iovcnt = 0;
+		return (ZIO_NO_ENCRYPTION_NEEDED);
+	}
+
 	nr_src += nr_iovecs;
 	nr_dst += nr_iovecs;
 
@@ -761,8 +769,11 @@ zio_crypt_init_uios(boolean_t encrypt, dmu_object_type_t ot, uint8_t *plainbuf,
 		maclen = MAX_DATA_MAC_LEN;
 	}
 
-	if (ret)
+	if (ret == ZIO_NO_ENCRYPTION_NEEDED) {
+		return (ret);
+	} else if (ret) {
 		goto error;
+	}
 
 	/* populate the uios */
 #ifdef _KERNEL
@@ -808,8 +819,14 @@ zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key,
 	/* create uios for encryption */
 	ret = zio_crypt_init_uios(encrypt, ot, plainbuf, cipherbuf, datalen,
 		mac, out_mac, &puio, &cuio, &enc_len);
-	if (ret)
+
+	/* if no encryption is required, just copy the plain data */
+	if (ret == ZIO_NO_ENCRYPTION_NEEDED){
+		bcopy(plainbuf, cipherbuf, datalen);
+		return (0);
+	} else if (ret) {
 		return (ret);
+	}
 
 	/* perform the encryption */
 	ret = zio_do_crypt_uio(encrypt, key->zk_crypt, &key->zk_key,

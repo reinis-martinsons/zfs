@@ -72,6 +72,8 @@
 #define	WRAPPING_IV_LEN 13
 #define	WRAPPING_MAC_LEN 16
 
+#define	ZIO_NO_ENCRYPTION_NEEDED -1
+
 /* utility macros */
 #define	BITS_TO_BYTES(x) (((x) + 7) >> 3)
 #define	BYTES_TO_BITS(x) (x << 3)
