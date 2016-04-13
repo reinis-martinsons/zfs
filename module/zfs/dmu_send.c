@@ -2649,8 +2649,12 @@ dmu_recv_end_sync(void *arg, dmu_tx_t *tx)
 	/*
 	 * Release the hold from dmu_recv_begin.  This must be done before
 	 * we return to open context, so that when we free the dataset's dnode,
-	 * we can evict its bonus buffer.
+	 * we can evict its bonus buffer. Since the dataset may be destroyed
+	 * at this point (and therefore won't have a valid pointer to the spa)
+	 * we release the keychain record manually here
 	 */
+	(void) spa_keystore_remove_keychain_record(dmu_tx_pool(tx)->dp_spa,
+	     drc->drc_ds);
 	dsl_dataset_disown(drc->drc_ds, dmu_recv_tag);
 	drc->drc_ds = NULL;
 }

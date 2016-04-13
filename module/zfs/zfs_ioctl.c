@@ -5382,6 +5382,10 @@ zfs_ioc_crypto(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl) {
 		if (ret)
 			goto error;
 
+#ifdef _KERNEL
+		zvol_create_minors(dsname);
+#endif
+
 		break;
 	case ZFS_IOC_CRYPTO_ADD_KEY:
 		ret = spa_keystore_keychain_add_key(dsname);
