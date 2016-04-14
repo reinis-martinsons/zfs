@@ -176,6 +176,8 @@ error:
 	LOG_ERROR(ret, "");
 	if (key->zk_key.ck_data)
 		kmem_free(key->zk_key.ck_data, keydata_len);
+	if (key->zk_dd_key.ck_data)
+		kmem_free(key->zk_dd_key.ck_data, keydata_len);
 
 	return (ret);
 }
@@ -446,14 +448,14 @@ zio_crypt_generate_iv_dd(zio_crypt_key_t *key, uint8_t *plainbuf,
 	digest_data.cd_format = CRYPTO_DATA_RAW;
 	digest_data.cd_offset = 0;
 	digest_data.cd_length = SHA_256_DIGEST_LEN;
-	digest_data.cd_raw.iov_base = (char *)ivbuf;
+	digest_data.cd_raw.iov_base = (char *)digestbuf;
 	digest_data.cd_raw.iov_len = SHA_256_DIGEST_LEN;
 
 	/* generate the digest */
-	ret = crypto_mac(&mech, &pb_data, &key->zk_dd_key, key->zk_ctx_tmpl,
+	ret = crypto_mac(&mech, &pb_data, &key->zk_dd_key, key->zk_dd_ctx_tmpl,
 	    &digest_data, NULL);
 	if (ret != CRYPTO_SUCCESS) {
-		LOG_ERROR(ret, "crypto_digest() failed");
+		LOG_ERROR(ret, "crypto_mac() failed ");
 		ret = SET_ERROR(EIO);
 		goto error;
 	}

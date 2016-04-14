@@ -1535,7 +1535,7 @@ spa_encrypt_data(spa_t *spa, zbookmark_phys_t *bookmark, uint64_t txgid,
 		ret = zio_crypt_generate_iv(bookmark,
 		    (ot == DMU_OT_INTENT_LOG) ? 0 : txgid, MAX_DATA_IV_LEN, iv);
 	} else {
-		ret = zio_crypt_generate_iv_dd(&kce->ke_dd_key, plainbuf,
+		ret = zio_crypt_generate_iv_dd(&kce->ke_key, plainbuf,
 		    datalen, MAX_DATA_IV_LEN, iv);
 	}
 
