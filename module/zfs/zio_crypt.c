@@ -31,8 +31,6 @@
 #include <sys/zio.h>
 #include <sys/zil.h>
 
-#define	SHA_256_DIGEST_LEN 32
-
 void
 print_iovec(const iovec_t *iov)
 {
@@ -95,22 +93,33 @@ zio_crypt_key_destroy(zio_crypt_key_t *key)
 {
 	if (key->zk_ctx_tmpl)
 		crypto_destroy_ctx_template(key->zk_ctx_tmpl);
+	if (key->zk_ctx_tmpl)
+		crypto_destroy_ctx_template(key->zk_dd_ctx_tmpl);
 	if (key->zk_key.ck_data) {
 		bzero(key->zk_key.ck_data,
 			BITS_TO_BYTES(key->zk_key.ck_length));
 		kmem_free(key->zk_key.ck_data,
 			BITS_TO_BYTES(key->zk_key.ck_length));
 	}
+	if (key->zk_dd_key.ck_data) {
+		bzero(key->zk_dd_key.ck_data,
+			BITS_TO_BYTES(key->zk_dd_key.ck_length));
+		kmem_free(key->zk_dd_key.ck_data,
+			BITS_TO_BYTES(key->zk_key.ck_length));
+	}
 }
 
 int
-zio_crypt_key_init(uint64_t crypt, uint8_t *keydata, zio_crypt_key_t *key)
+zio_crypt_key_init(uint64_t crypt, uint8_t *keydata, uint8_t *dd_keydata,
+    zio_crypt_key_t *key)
 {
 	int ret;
 	crypto_mechanism_t mech;
 	uint64_t keydata_len;
 
 	ASSERT(crypt < ZIO_CRYPT_FUNCTIONS);
+
+	key->zk_crypt = crypt;
 
 	/* get the key length from the crypt table */
 	keydata_len = zio_crypt_table[crypt].ci_keylen;
@@ -122,8 +131,14 @@ zio_crypt_key_init(uint64_t crypt, uint8_t *keydata, zio_crypt_key_t *key)
 		goto error;
 	}
 
+	/* allocate the dedup key data's new buffer */
+	key->zk_dd_key.ck_data = kmem_alloc(HMAC_SHA256_KEYLEN, KM_SLEEP);
+	if (!key->zk_dd_key.ck_data) {
+		ret = ENOMEM;
+		goto error;
+	}
+
 	/* set values for the key */
-	key->zk_crypt = crypt;
 	key->zk_key.ck_format = CRYPTO_KEY_RAW;
 	key->zk_key.ck_length = BYTES_TO_BITS(keydata_len);
 
@@ -132,11 +147,27 @@ zio_crypt_key_init(uint64_t crypt, uint8_t *keydata, zio_crypt_key_t *key)
 
 	/* create the key's context template */
 	mech.cm_type = crypto_mech2id(zio_crypt_table[crypt].ci_mechname);
-	ret = crypto_create_ctx_template(&mech, &key->zk_key, &key->zk_ctx_tmpl,
-		KM_SLEEP);
+	ret = crypto_create_ctx_template(&mech, &key->zk_key,
+	    &key->zk_ctx_tmpl, KM_SLEEP);
 	if (ret != CRYPTO_SUCCESS) {
 		LOG_DEBUG("Failed to create context, consider CCM encryption");
 		key->zk_ctx_tmpl = NULL;
+	}
+
+	/* set values for the dedup key */
+	key->zk_dd_key.ck_format = CRYPTO_KEY_RAW;
+	key->zk_dd_key.ck_length = BYTES_TO_BITS(HMAC_SHA256_KEYLEN);
+
+	/* copy the data */
+	bcopy(dd_keydata, key->zk_dd_key.ck_data, HMAC_SHA256_KEYLEN);
+
+	/* create the dedup key's context template */
+	mech.cm_type = crypto_mech2id(SUN_CKM_SHA256_HMAC);
+	ret = crypto_create_ctx_template(&mech, &key->zk_dd_key,
+	    &key->zk_dd_ctx_tmpl, KM_SLEEP);
+	if (ret != CRYPTO_SUCCESS) {
+		LOG_DEBUG("Failed to create context, consider CCM encryption");
+		key->zk_dd_ctx_tmpl = NULL;
 	}
 
 	return (0);
@@ -151,7 +182,7 @@ error:
 
 static int
 zio_do_crypt_raw(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
-	crypto_ctx_template_t tmpl, uint8_t *ivbuf,	uint8_t *plainbuf,
+	crypto_ctx_template_t tmpl, uint8_t *ivbuf, uint8_t *plainbuf,
 	uint8_t *cipherbuf, uint_t datalen)
 {
 	int ret;
@@ -248,31 +279,41 @@ error:
 	zio_do_crypt_raw(B_FALSE, crypt, key, tmpl, iv, pd, cd, datalen)
 
 int
-zio_crypt_key_wrap(crypto_key_t *cwkey, uint64_t crypt,
-	uint8_t *keydata, dsl_crypto_key_phys_t *dckp)
+zio_crypt_key_wrap(crypto_key_t *cwkey, uint64_t crypt, uint8_t *keydata,
+    uint8_t *dd_keydata, dsl_crypto_key_phys_t *dckp)
 {
 	int ret;
 
 	ASSERT(crypt < ZIO_CRYPT_FUNCTIONS);
 	ASSERT(cwkey->ck_format == CRYPTO_KEY_RAW);
 
-	/* copy the crypt and iv into the dsl_crypto_key_phys_t */
-	dckp->dk_crypt_alg = crypt;
-	bzero(dckp->dk_padding, sizeof (dckp->dk_padding));
-	bzero(dckp->dk_keybuf, sizeof (dckp->dk_keybuf));
+	bzero(dckp, sizeof(dsl_crypto_key_phys_t));
 
-	/* generate an iv */
+	/* set the crypt */
+	dckp->dk_crypt_alg = crypt;
+
+	/* generate ivs */
 	ret = random_get_bytes(dckp->dk_iv, WRAPPING_IV_LEN);
 	if (ret)
 		goto error;
 
-	/* encrypt the key and store the result in dckp->keybuf */
+	ret = random_get_bytes(dckp->dk_dd_iv, WRAPPING_IV_LEN);
+	if (ret)
+		goto error;
+
+	/* encrypt the keys and store the results in the dckp*/
 	ret = zio_encrypt_raw(crypt, cwkey, NULL, dckp->dk_iv,
-		keydata, dckp->dk_keybuf, zio_crypt_table[crypt].ci_keylen);
+	    keydata, dckp->dk_keybuf, zio_crypt_table[crypt].ci_keylen);
+	if (ret)
+		goto error;
+
+	ret = zio_encrypt_raw(crypt, cwkey, NULL, dckp->dk_dd_iv,
+	    dd_keydata, dckp->dk_dd_keybuf, HMAC_SHA256_KEYLEN);
 	if (ret)
 		goto error;
 
 	return (0);
+
 error:
 	LOG_ERROR(ret, "");
 	return (ret);
@@ -280,17 +321,22 @@ error:
 
 int
 zio_crypt_key_unwrap(crypto_key_t *cwkey, dsl_crypto_key_phys_t *dckp,
-	uint8_t *keydata)
+	uint8_t *keydata, uint8_t *dd_keydata)
 {
 	int ret;
 
 	ASSERT(dckp->dk_crypt_alg < ZIO_CRYPT_FUNCTIONS);
 	ASSERT(cwkey->ck_format == CRYPTO_KEY_RAW);
 
-	/* encrypt the key and store the result in dckp->keybuf */
+	/* decrypt the keys and store the result in the output buffers */
 	ret = zio_decrypt_raw(dckp->dk_crypt_alg, cwkey, NULL,
-		dckp->dk_iv, keydata, dckp->dk_keybuf,
-		zio_crypt_table[dckp->dk_crypt_alg].ci_keylen);
+	    dckp->dk_iv, keydata, dckp->dk_keybuf,
+	    zio_crypt_table[dckp->dk_crypt_alg].ci_keylen);
+	if (ret)
+		goto error;
+
+	ret = zio_decrypt_raw(dckp->dk_crypt_alg, cwkey, NULL,
+	    dckp->dk_dd_iv, dd_keydata, dckp->dk_dd_keybuf, HMAC_SHA256_KEYLEN);
 	if (ret)
 		goto error;
 
@@ -376,8 +422,8 @@ error:
 }
 
 int
-zio_crypt_generate_iv_dd(uint8_t *plainbuf, uint_t datalen, uint_t ivlen,
-	uint8_t *ivbuf)
+zio_crypt_generate_iv_dd(zio_crypt_key_t *key, uint8_t *plainbuf,
+    uint_t datalen, uint_t ivlen, uint8_t *ivbuf)
 {
 	int ret;
 	crypto_mechanism_t mech;
@@ -385,7 +431,7 @@ zio_crypt_generate_iv_dd(uint8_t *plainbuf, uint_t datalen, uint_t ivlen,
 	uint8_t digestbuf[SHA_256_DIGEST_LEN];
 
 	/* initialize sha 256 mechanism */
-	mech.cm_type = crypto_mech2id(SUN_CKM_SHA256);
+	mech.cm_type = crypto_mech2id(SUN_CKM_SHA256_HMAC);
 	mech.cm_param = NULL;
 	mech.cm_param_len = 0;
 
@@ -404,7 +450,8 @@ zio_crypt_generate_iv_dd(uint8_t *plainbuf, uint_t datalen, uint_t ivlen,
 	digest_data.cd_raw.iov_len = SHA_256_DIGEST_LEN;
 
 	/* generate the digest */
-	ret = crypto_digest(&mech, &pb_data, &digest_data, NULL);
+	ret = crypto_mac(&mech, &pb_data, &key->zk_dd_key, key->zk_ctx_tmpl,
+	    &digest_data, NULL);
 	if (ret != CRYPTO_SUCCESS) {
 		LOG_ERROR(ret, "crypto_digest() failed");
 		ret = SET_ERROR(EIO);

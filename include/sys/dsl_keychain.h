@@ -83,8 +83,11 @@ typedef struct dsl_keychain_entry
 	/* first txg id that this key should be applied to */
 	uint64_t ke_txgid;
 
-	/* the actual key that this entry represents */
+	/* the encryption key that this entry represents */
 	zio_crypt_key_t ke_key;
+
+	/* HMAC key used for dedup IV generation */
+	zio_crypt_key_t ke_dd_key;
 } dsl_keychain_entry_t;
 
 /* in memory representation of a DSL keychain */

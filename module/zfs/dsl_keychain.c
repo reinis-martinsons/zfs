@@ -291,18 +291,19 @@ dsl_keychain_entry_sync(dsl_keychain_entry_t *kce,
 	dsl_wrapping_key_t *wkey, uint64_t kcobj, dmu_tx_t *tx)
 {
 	int ret;
-	dsl_crypto_key_phys_t key_phys;
+	dsl_crypto_key_phys_t dckp;
+	zio_crypt_key_t *zkey = &kce->ke_key;
 
 	/* wrap the key and store the result in key_phys */
-	ret = zio_crypt_key_wrap(&wkey->wk_key, kce->ke_key.zk_crypt,
-		kce->ke_key.zk_key.ck_data, &key_phys);
+	ret = zio_crypt_key_wrap(&wkey->wk_key, zkey->zk_crypt,
+		zkey->zk_key.ck_data, zkey->zk_dd_key.ck_data, &dckp);
 	if (ret)
 		goto error;
 
 	/* sync the change to disk */
 	ret = zap_update_uint64(tx->tx_pool->dp_meta_objset, kcobj,
 		&kce->ke_txgid, 1, 1, sizeof (dsl_crypto_key_phys_t),
-		&key_phys, tx);
+		&dckp, tx);
 	if (ret)
 		goto error;
 
@@ -319,19 +320,24 @@ dsl_keychain_entry_init(dsl_keychain_entry_t *kce, uint64_t crypt,
 {
 	int ret;
 	uint64_t keydata_len = zio_crypt_table[crypt].ci_keylen;
-	uint8_t rnddata[keydata_len];
+	uint8_t keydata[keydata_len];
+	uint8_t dd_keydata[keydata_len];
 
 	/* initialize the struct values */
 	list_link_init(&kce->ke_link);
 	kce->ke_txgid = txgid;
 
-	/* fill a buffer with random data */
-	ret = random_get_bytes(rnddata, keydata_len);
+	/* fill keydata buffers with random data */
+	ret = random_get_bytes(keydata, keydata_len);
+	if (ret)
+		goto error;
+
+	ret = random_get_bytes(dd_keydata, HMAC_SHA256_KEYLEN);
 	if (ret)
 		goto error;
 
 	/* create the key from the random data */
-	ret = zio_crypt_key_init(crypt, rnddata, &kce->ke_key);
+	ret = zio_crypt_key_init(crypt, keydata, dd_keydata, &kce->ke_key);
 	if (ret)
 		goto error;
 
@@ -561,6 +567,7 @@ dsl_keychain_open(objset_t *mos, dsl_wrapping_key_t *wkey,
 	uint64_t *txgid = NULL, crypt = 0;
 	dsl_crypto_key_phys_t dckp;
 	uint8_t keydata[MAX_CRYPT_KEY_LEN + WRAPPING_MAC_LEN];
+	uint8_t dd_keydata[HMAC_SHA256_KEYLEN + WRAPPING_MAC_LEN];
 	dsl_keychain_t *kc;
 	dsl_keychain_entry_t *cur_kce, *kce = NULL;
 
@@ -571,19 +578,19 @@ dsl_keychain_open(objset_t *mos, dsl_wrapping_key_t *wkey,
 
 	rw_init(&kc->kc_lock, NULL, RW_DEFAULT, NULL);
 	list_create(&kc->kc_entries, sizeof (dsl_keychain_entry_t),
-		offsetof(dsl_keychain_entry_t, ke_link));
+	    offsetof(dsl_keychain_entry_t, ke_link));
 	refcount_create(&kc->kc_refcnt);
 
 	/* iterate all entries in the on-disk keychain */
 	for (zap_cursor_init(&zc, mos, kcobj);
-		zap_cursor_retrieve(&zc, &za) == 0;
-		zap_cursor_advance(&zc)) {
+	    zap_cursor_retrieve(&zc, &za) == 0;
+	    zap_cursor_advance(&zc)) {
 		/* get the txgid from the name */
 		txgid = ((uint64_t *) za.za_name);
 
 		/* lookup the physical encryption key entry */
 		ret = zap_lookup_uint64(mos, kcobj, txgid, 1, 1,
-			sizeof (dsl_crypto_key_phys_t), &dckp);
+		    sizeof (dsl_crypto_key_phys_t), &dckp);
 		if (ret) {
 			ret = SET_ERROR(EIO);
 			goto error_fini;
@@ -598,10 +605,11 @@ dsl_keychain_open(objset_t *mos, dsl_wrapping_key_t *wkey,
 		}
 
 		/*
-		 * unwrap the key, will return error
-		 * if wkey is incorrect by checking the MAC
+		 * unwrap the key, will return an error
+		 * if wkey is incorrect by checking the MACs
 		 */
-		ret = zio_crypt_key_unwrap(&wkey->wk_key, &dckp, keydata);
+		ret = zio_crypt_key_unwrap(&wkey->wk_key, &dckp, keydata,
+		    dd_keydata);
 		if (ret) {
 			ret = SET_ERROR(EINVAL);
 			goto error_fini;
@@ -616,7 +624,8 @@ dsl_keychain_open(objset_t *mos, dsl_wrapping_key_t *wkey,
 		list_link_init(&kce->ke_link);
 		kce->ke_txgid = *txgid;
 
-		ret = zio_crypt_key_init(crypt, keydata, &kce->ke_key);
+		ret = zio_crypt_key_init(crypt, keydata, dd_keydata,
+		    &kce->ke_key);
 		if (ret)
 			goto error_fini;
 
@@ -625,7 +634,7 @@ dsl_keychain_open(objset_t *mos, dsl_wrapping_key_t *wkey,
 		 * we must add them in order
 		 */
 		for (cur_kce = list_head(&kc->kc_entries); cur_kce;
-			cur_kce = list_next(&kc->kc_entries, cur_kce)) {
+		    cur_kce = list_next(&kc->kc_entries, cur_kce)) {
 			if (cur_kce->ke_txgid > kce->ke_txgid)
 				break;
 		}
@@ -1526,8 +1535,8 @@ spa_encrypt_data(spa_t *spa, zbookmark_phys_t *bookmark, uint64_t txgid,
 		ret = zio_crypt_generate_iv(bookmark,
 		    (ot == DMU_OT_INTENT_LOG) ? 0 : txgid, MAX_DATA_IV_LEN, iv);
 	} else {
-		ret = zio_crypt_generate_iv_dd(plainbuf, datalen,
-		    MAX_DATA_IV_LEN, iv);
+		ret = zio_crypt_generate_iv_dd(&kce->ke_dd_key, plainbuf,
+		    datalen, MAX_DATA_IV_LEN, iv);
 	}
 
 	if (ret)

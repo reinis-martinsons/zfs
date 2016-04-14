@@ -71,6 +71,8 @@
 #define	WRAPPING_KEY_LEN 32
 #define	WRAPPING_IV_LEN 13
 #define	WRAPPING_MAC_LEN 16
+#define	SHA_256_DIGEST_LEN 32
+#define HMAC_SHA256_KEYLEN 32
 
 #define	ZIO_NO_ENCRYPTION_NEEDED -1
 
@@ -125,6 +127,14 @@ typedef struct dsl_crypto_key_phys
 
 	/* wrapped key data */
 	uint8_t dk_keybuf[48];
+
+	/* iv / nonce for unwrapping the dedup HMAC key */
+	uint8_t dk_dd_iv[13];
+
+	uint8_t dk_padding2[3];
+
+	/* wrapped dedup HMAC key data */
+	uint8_t dk_dd_keybuf[48];
 } dsl_crypto_key_phys_t;
 
 /* in memory representation of an unwrapped key that is loaded into memory */
@@ -138,29 +148,36 @@ typedef struct zio_crypt_key
 
 	/* private data for illumos crypto api */
 	crypto_ctx_template_t zk_ctx_tmpl;
+
+	/* illumos crypto api dedup key */
+	crypto_key_t zk_dd_key;
+
+	/* private data for dedup key */
+	crypto_ctx_template_t zk_dd_ctx_tmpl;
 } zio_crypt_key_t;
 
 typedef struct zbookmark_phys zbookmark_phys_t;
 
 void zio_crypt_key_destroy(zio_crypt_key_t *key);
-int zio_crypt_key_init(uint64_t crypt, uint8_t *keydata, zio_crypt_key_t *key);
+int zio_crypt_key_init(uint64_t crypt, uint8_t *keydata, uint8_t *dd_keydata,
+    zio_crypt_key_t *key);
 
-int zio_crypt_key_wrap(crypto_key_t *cwkey, uint64_t crypt,
-	uint8_t *keydata, dsl_crypto_key_phys_t *dckp);
+int zio_crypt_key_wrap(crypto_key_t *cwkey, uint64_t crypt, uint8_t *keydata,
+    uint8_t *dd_keydata, dsl_crypto_key_phys_t *dckp);
 int zio_crypt_key_unwrap(crypto_key_t *cwkey, dsl_crypto_key_phys_t *dckp,
-	uint8_t *keydata);
+    uint8_t *keydata, uint8_t *dd_keydata);
 
 int zio_crypt_generate_iv(zbookmark_phys_t *bookmark, uint64_t txgid,
-	uint_t ivlen, uint8_t *ivbuf);
-int zio_crypt_generate_iv_dd(uint8_t *plainbuf, uint_t datalen, uint_t ivlen,
-	uint8_t *ivbuf);
+    uint_t ivlen, uint8_t *ivbuf);
+int zio_crypt_generate_iv_dd(zio_crypt_key_t *key, uint8_t *plainbuf,
+    uint_t datalen, uint_t ivlen, uint8_t *ivbuf);
 
 int zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key,
-	dmu_object_type_t ot, uint8_t *iv, uint8_t *mac, uint_t datalen,
-	uint8_t *plainbuf, uint8_t *cipherbuf);
+    dmu_object_type_t ot, uint8_t *iv, uint8_t *mac, uint_t datalen,
+    uint8_t *plainbuf, uint8_t *cipherbuf);
 #define	zio_encrypt_data(key, ot, iv, mac, datalen, pb, cb) \
-	zio_do_crypt_data(B_TRUE, key, ot, iv, mac, datalen, pb, cb)
+    zio_do_crypt_data(B_TRUE, key, ot, iv, mac, datalen, pb, cb)
 #define	zio_decrypt_data(key, ot, iv, mac, datalen, pb, cb) \
-	zio_do_crypt_data(B_FALSE, key, ot, iv, mac, datalen, pb, cb)
+    zio_do_crypt_data(B_FALSE, key, ot, iv, mac, datalen, pb, cb)
 
 #endif

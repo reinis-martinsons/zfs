@@ -22,6 +22,13 @@ crypto_destroy_ctx_template(crypto_ctx_template_t tmpl)
 }
 
 int
+crypto_mac(crypto_mechanism_t *mech, crypto_data_t *data,
+    crypto_key_t *key, crypto_ctx_template_t tmpl, crypto_data_t *mac,
+    crypto_call_req_t *cr){
+	return (EOPNOTSUPP);
+}
+
+int
 crypto_encrypt(crypto_mechanism_t *mech, crypto_data_t *plaintext,
 	crypto_key_t *key, crypto_ctx_template_t tmpl,
 	crypto_data_t *ciphertext, crypto_call_req_t *cr)
