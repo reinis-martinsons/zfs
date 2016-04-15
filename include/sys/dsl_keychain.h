@@ -153,7 +153,8 @@ void dsl_wrapping_key_hold(dsl_wrapping_key_t *wkey, void *tag);
 void dsl_wrapping_key_rele(dsl_wrapping_key_t *wkey, void *tag);
 void dsl_wrapping_key_free(dsl_wrapping_key_t *wkey);
 int dsl_wrapping_key_create(uint8_t *wkeydata, dsl_wrapping_key_t **wkey_out);
-int dsl_crypto_params_init_nvlist(nvlist_t *props, dsl_crypto_params_t *dcp);
+int dsl_crypto_params_init_nvlist(nvlist_t *props, nvlist_t *crypto_args,
+    dsl_crypto_params_t *dcp);
 void dsl_crypto_params_destroy(dsl_crypto_params_t *dcp);
 
 void spa_keystore_init(spa_keystore_t *sk);

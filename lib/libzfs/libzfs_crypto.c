@@ -322,8 +322,8 @@ encryption_feature_is_enabled(zpool_handle_t *zph)
 }
 
 static int
-populate_create_encryption_params_nvlist(libzfs_handle_t *hdl,
-	char *keysource, const char *fsname, nvlist_t *props)
+populate_create_encryption_params_nvlists(libzfs_handle_t *hdl, char *keysource,
+    const char *fsname, nvlist_t *props, nvlist_t *hidden_args)
 {
 	int ret;
 	uint64_t salt = 0;
@@ -371,7 +371,7 @@ populate_create_encryption_params_nvlist(libzfs_handle_t *hdl,
 		goto error;
 
 	/* add the derived key to the properties list */
-	ret = nvlist_add_uint8_array(props, "wkeydata", key_data,
+	ret = nvlist_add_uint8_array(hidden_args, "wkeydata", key_data,
 	    WRAPPING_KEY_LEN);
 	if (ret)
 		goto error;
@@ -390,13 +390,15 @@ error:
 }
 
 int
-zfs_crypto_create(libzfs_handle_t *hdl, nvlist_t *props, char *parent_name)
+zfs_crypto_create(libzfs_handle_t *hdl, char *parent_name, nvlist_t *props,
+    nvlist_t **hidden_args)
 {
 	int ret;
 	char errbuf[1024];
 	uint64_t crypt = 0, pcrypt = 0;
 	char *keysource = NULL;
 	zfs_handle_t *pzhp = NULL;
+	nvlist_t *ha = NULL;
 	boolean_t local_crypt = B_TRUE;
 
 	(void) snprintf(errbuf, sizeof (errbuf),
@@ -429,13 +431,13 @@ zfs_crypto_create(libzfs_handle_t *hdl, nvlist_t *props, char *parent_name)
 	if (!encryption_feature_is_enabled(pzhp->zpool_hdl)) {
 		if (!local_crypt && !keysource) {
 			ret = 0;
-			goto out;
+			goto error;
 		}
 
 		ret = EINVAL;
 		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
 		    "Encryption feature not enabled."));
-		goto out;
+		goto error;
 	}
 
 	/* Check for encryption being explicitly truned off */
@@ -443,7 +445,7 @@ zfs_crypto_create(libzfs_handle_t *hdl, nvlist_t *props, char *parent_name)
 		ret = EINVAL;
 		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
 		    "Invalid encryption value. Dataset must be encrypted."));
-		goto out;
+		goto error;
 	}
 
 	/* Get inherited the encryption property if we don't have it locally */
@@ -459,11 +461,11 @@ zfs_crypto_create(libzfs_handle_t *hdl, nvlist_t *props, char *parent_name)
 			ret = EINVAL;
 			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
 			    "Encryption required to set keysource."));
-			goto out;
+			goto error;
 		}
 
 		ret = 0;
-		goto out;
+		goto error;
 	}
 
 	/*
@@ -474,7 +476,7 @@ zfs_crypto_create(libzfs_handle_t *hdl, nvlist_t *props, char *parent_name)
 		ret = EINVAL;
 		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
 		    "Keysource required."));
-		goto out;
+		goto error;
 	}
 
 	/*
@@ -482,30 +484,38 @@ zfs_crypto_create(libzfs_handle_t *hdl, nvlist_t *props, char *parent_name)
 	 * be a new encryption root. populate encryption params
 	 */
 	if (keysource) {
-		ret = populate_create_encryption_params_nvlist(hdl,
-		    keysource, NULL, props);
+		ha = fnvlist_alloc();
+
+		ret = populate_create_encryption_params_nvlists(hdl,
+		    keysource, NULL, props, ha);
 		if (ret)
-			goto out;
+			goto error;
 	}
 
 	zfs_close(pzhp);
 
+	*hidden_args = ha;
 	return (0);
 
-out:
+error:
 	if (pzhp)
 		zfs_close(pzhp);
+	if (ha)
+		nvlist_free(ha);
 
+	*hidden_args = NULL;
 	return (ret);
 }
 
 int
 zfs_crypto_clone(libzfs_handle_t *hdl, zfs_handle_t *origin_zhp,
-	nvlist_t *props, char *parent_name, boolean_t add_key)
+    char *parent_name, boolean_t add_key, nvlist_t *props,
+    nvlist_t **hidden_args)
 {
 	int ret;
 	char errbuf[1024];
 	char *keysource = NULL;
+	nvlist_t *ha = NULL;
 	zfs_handle_t *pzhp = NULL;
 	uint64_t crypt, pcrypt, ocrypt, okey_status;
 
@@ -591,8 +601,10 @@ zfs_crypto_clone(libzfs_handle_t *hdl, zfs_handle_t *origin_zhp,
 
 	/* prepare the keysource if needed */
 	if (keysource) {
-		ret = populate_create_encryption_params_nvlist(hdl,
-		    keysource, NULL, props);
+		ha = fnvlist_alloc();
+
+		ret = populate_create_encryption_params_nvlists(hdl,
+		    keysource, NULL, props, ha);
 		if (ret)
 			goto out;
 	}
@@ -606,12 +618,16 @@ zfs_crypto_clone(libzfs_handle_t *hdl, zfs_handle_t *origin_zhp,
 
 	zfs_close(pzhp);
 
+	*hidden_args = ha;
 	return (0);
 
 out:
 	if (pzhp)
 		zfs_close(pzhp);
+	if (ha)
+		nvlist_free(ha);
 
+	*hidden_args = NULL;
 	return (ret);
 }
 
@@ -628,7 +644,7 @@ zfs_crypto_load_key(zfs_handle_t *zhp)
 	char *uri;
 	uint8_t *key_material, *key_data;
 	size_t key_material_len;
-	nvlist_t *nvl = NULL;
+	nvlist_t *crypto_args = NULL;
 	zprop_source_t keysource_srctype;
 
 	(void) snprintf(errbuf, sizeof (errbuf),
@@ -702,14 +718,15 @@ zfs_crypto_load_key(zfs_handle_t *zhp)
 		goto error;
 
 	/* put the key in an nvlist and pass to the ioctl */
-	nvl = fnvlist_alloc();
+	crypto_args = fnvlist_alloc();
 
-	ret = nvlist_add_uint8_array(nvl, "wkeydata", key_data,
+	ret = nvlist_add_uint8_array(crypto_args, "wkeydata", key_data,
 	    WRAPPING_KEY_LEN);
 	if (ret)
 		goto error;
 
-	ret = lzc_crypto(zhp->zfs_name, ZFS_IOC_CRYPTO_LOAD_KEY, nvl);
+	ret = lzc_crypto(zhp->zfs_name, ZFS_IOC_CRYPTO_LOAD_KEY, NULL,
+	    crypto_args);
 
 	if (ret) {
 		switch (ret) {
@@ -729,7 +746,7 @@ zfs_crypto_load_key(zfs_handle_t *zhp)
 		zfs_error(zhp->zfs_hdl, EZFS_CRYPTOFAILED, errbuf);
 	}
 
-	nvlist_free(nvl);
+	nvlist_free(crypto_args);
 	free(key_material);
 	free(key_data);
 
@@ -741,8 +758,8 @@ error:
 		free(key_material);
 	if (key_data)
 		free(key_data);
-	if (nvl)
-		nvlist_free(nvl);
+	if (crypto_args)
+		nvlist_free(crypto_args);
 
 	return (ret);
 }
@@ -802,7 +819,7 @@ zfs_crypto_unload_key(zfs_handle_t *zhp)
 	}
 
 	/* call the ioctl */
-	ret = lzc_crypto(zhp->zfs_name, ZFS_IOC_CRYPTO_UNLOAD_KEY, NULL);
+	ret = lzc_crypto(zhp->zfs_name, ZFS_IOC_CRYPTO_UNLOAD_KEY, NULL, NULL);
 
 	if (ret) {
 		switch (ret) {
@@ -852,7 +869,7 @@ zfs_crypto_add_key(zfs_handle_t *zhp)
 	}
 
 	/* call the ioctl */
-	ret = lzc_crypto(zhp->zfs_name, ZFS_IOC_CRYPTO_ADD_KEY, NULL);
+	ret = lzc_crypto(zhp->zfs_name, ZFS_IOC_CRYPTO_ADD_KEY, NULL, NULL);
 	if (ret) {
 		switch (ret) {
 		case ENOENT:
@@ -875,6 +892,7 @@ zfs_crypto_rewrap(zfs_handle_t *zhp, nvlist_t *props)
 {
 	int ret;
 	char errbuf[1024];
+	nvlist_t *crypto_args = NULL;
 	uint64_t crypt;
 	char prop_keysource[MAXNAMELEN];
 	char *keysource;
@@ -918,14 +936,17 @@ zfs_crypto_rewrap(zfs_handle_t *zhp, nvlist_t *props)
 		goto error;
 	}
 
-	/* populate the nvlist with the encryption params */
-	ret = populate_create_encryption_params_nvlist(zhp->zfs_hdl, keysource,
-	    zfs_get_name(zhp), props);
+	/* populate an nvlist with the encryption params */
+	crypto_args = fnvlist_alloc();
+
+	ret = populate_create_encryption_params_nvlists(zhp->zfs_hdl, keysource,
+	    zfs_get_name(zhp), props, crypto_args);
 	if (ret)
 		goto error;
 
 	/* call the ioctl */
-	ret = lzc_crypto(zhp->zfs_name, ZFS_IOC_CRYPTO_REWRAP, props);
+	ret = lzc_crypto(zhp->zfs_name, ZFS_IOC_CRYPTO_REWRAP, props,
+	    crypto_args);
 	if (ret) {
 		switch (ret) {
 		case EINVAL:
@@ -940,9 +961,14 @@ zfs_crypto_rewrap(zfs_handle_t *zhp, nvlist_t *props)
 		zfs_error(zhp->zfs_hdl, EZFS_CRYPTOFAILED, errbuf);
 	}
 
+	nvlist_free(crypto_args);
+
 	return (ret);
 
 error:
+	if (crypto_args)
+		nvlist_free(crypto_args);
+
 	zfs_error(zhp->zfs_hdl, EZFS_CRYPTOFAILED, errbuf);
 	return (ret);
 }

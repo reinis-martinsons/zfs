@@ -3137,10 +3137,12 @@ zfs_destroy_temp_keychain_record(const char *dsname) {
 	dmu_objset_rele(os, FTAG);
 }
 
+
 /*
  * innvl: {
  *     "type" -> dmu_objset_type_t (int32)
  *     (optional) "props" -> { prop -> value }
+ *     (optional) "hidden_args" -> { "wkeydata" -> value }
  * }
  *
  * outnvl: propname -> error code (int32)
@@ -3151,6 +3153,7 @@ zfs_ioc_create(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 	int error = 0;
 	zfs_creat_t zct = { 0 };
 	nvlist_t *nvprops = NULL;
+	nvlist_t *hidden_args = NULL;
 	void (*cbfunc)(objset_t *os, void *arg, cred_t *cr, dmu_tx_t *tx);
 	int32_t type32;
 	dmu_objset_type_t type;
@@ -3161,6 +3164,7 @@ zfs_ioc_create(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 		return (SET_ERROR(EINVAL));
 	type = type32;
 	(void) nvlist_lookup_nvlist(innvl, "props", &nvprops);
+	(void) nvlist_lookup_nvlist(innvl, ZPOOL_HIDDEN_ARGS, &hidden_args);
 
 	switch (type) {
 	case DMU_OST_ZFS:
@@ -3226,7 +3230,7 @@ zfs_ioc_create(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 		}
 	}
 
-	error = dsl_crypto_params_init_nvlist(nvprops, &dcp);
+	error = dsl_crypto_params_init_nvlist(nvprops, hidden_args, &dcp);
 	if (error != 0) {
 		nvlist_free(zct.zct_zplprops);
 		return (error);
@@ -3239,9 +3243,7 @@ zfs_ioc_create(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 	if (dcp.cp_wkey && error != 0)
 		dsl_crypto_params_destroy(&dcp);
 
-	/*
-	 * See comment in zfs_create_fs() for details
-	 */
+	/* See comment in zfs_create_fs() for details */
 	if (type == DMU_OST_ZFS && error == 0)
 		zfs_destroy_temp_keychain_record(fsname);
 
@@ -3267,6 +3269,7 @@ zfs_ioc_create(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
  * innvl: {
  *     "origin" -> name of origin snapshot
  *     (optional) "props" -> { prop -> value }
+ *     (optional) "hidden_args" -> { "wkeydata" -> value }
  * }
  *
  * outputs:
@@ -3277,12 +3280,14 @@ zfs_ioc_clone(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 {
 	int error = 0;
 	nvlist_t *nvprops = NULL;
+	nvlist_t *hidden_args = NULL;
 	char *origin_name;
 	dsl_crypto_params_t dcp = { 0 };
 
 	if (nvlist_lookup_string(innvl, "origin", &origin_name) != 0)
 		return (SET_ERROR(EINVAL));
 	(void) nvlist_lookup_nvlist(innvl, "props", &nvprops);
+	(void) nvlist_lookup_nvlist(innvl, ZPOOL_HIDDEN_ARGS, &hidden_args);
 
 	if (strchr(fsname, '@') ||
 	    strchr(fsname, '%'))
@@ -3291,11 +3296,9 @@ zfs_ioc_clone(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 	if (dataset_namecheck(origin_name, NULL, NULL) != 0)
 		return (SET_ERROR(EINVAL));
 
-	error = dsl_crypto_params_init_nvlist(nvprops, &dcp);
+	error = dsl_crypto_params_init_nvlist(nvprops, hidden_args, &dcp);
 	if (error != 0)
 		return (error);
-
-	LOG_CRYPTO_PARAMS(&dcp);
 
 	error = dmu_objset_clone(fsname, origin_name, &dcp);
 
@@ -5357,7 +5360,7 @@ zfs_ioc_crypto(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl) {
 	int ret = 0;
 	dsl_crypto_params_t dcp = { 0 };
 	uint64_t crypto_cmd;
-	nvlist_t *args;
+	nvlist_t *args, *hidden_args;
 	spa_t *spa;
 
 	ret = spa_open(dsname, &spa, FTAG);
@@ -5384,13 +5387,14 @@ zfs_ioc_crypto(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl) {
 
 	switch (crypto_cmd) {
 	case ZFS_IOC_CRYPTO_LOAD_KEY:
-		ret = nvlist_lookup_nvlist(innvl, "args", &args);
+		ret = nvlist_lookup_nvlist(innvl, ZPOOL_HIDDEN_ARGS,
+		    &hidden_args);
 		if (ret) {
 			ret = SET_ERROR(EINVAL);
 			goto error;
 		}
 
-		ret = dsl_crypto_params_init_nvlist(args, &dcp);
+		ret = dsl_crypto_params_init_nvlist(NULL, hidden_args, &dcp);
 		if (ret)
 			goto error;
 
@@ -5426,7 +5430,14 @@ zfs_ioc_crypto(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl) {
 			goto error;
 		}
 
-		ret = dsl_crypto_params_init_nvlist(args, &dcp);
+		ret = nvlist_lookup_nvlist(innvl, ZPOOL_HIDDEN_ARGS,
+		    &hidden_args);
+		if (ret) {
+			ret = SET_ERROR(EINVAL);
+			goto error;
+		}
+
+		ret = dsl_crypto_params_init_nvlist(args, hidden_args, &dcp);
 		if (ret)
 			goto error;
 

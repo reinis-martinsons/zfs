@@ -954,6 +954,12 @@ typedef enum {
 #define	ZPOOL_HIST_DSID		"dsid"
 
 /*
+ * Special nvlist name that will not have its args recorded in the pool's
+ * history log.
+ */
+#define ZPOOL_HIDDEN_ARGS	"hidden_args"
+
+/*
  * Flags for ZFS_IOC_VDEV_SET_STATE
  */
 #define	ZFS_ONLINE_CHECKREMOVE	0x1

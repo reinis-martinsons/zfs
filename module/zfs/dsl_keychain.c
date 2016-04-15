@@ -97,7 +97,8 @@ error:
 }
 
 int
-dsl_crypto_params_init_nvlist(nvlist_t *props, dsl_crypto_params_t *dcp)
+dsl_crypto_params_init_nvlist(nvlist_t *props, nvlist_t *crypto_args,
+    dsl_crypto_params_t *dcp)
 {
 	int ret;
 	dsl_wrapping_key_t *wkey = NULL;
@@ -110,36 +111,47 @@ dsl_crypto_params_init_nvlist(nvlist_t *props, dsl_crypto_params_t *dcp)
 	uint_t wkeydata_len;
 
 	/* get relevent properties from the nvlist */
-	ret = nvlist_lookup_uint64(props,
-		zfs_prop_to_name(ZFS_PROP_ENCRYPTION), &crypt);
-	if (ret)
+	if (props) {
+		ret = nvlist_lookup_uint64(props,
+		    zfs_prop_to_name(ZFS_PROP_ENCRYPTION), &crypt);
+		if (ret)
+			crypt_exists = B_FALSE;
+
+		ret = nvlist_lookup_string(props,
+		    zfs_prop_to_name(ZFS_PROP_KEYSOURCE), &keysource);
+		if (ret)
+			keysource_exists = B_FALSE;
+
+		ret = nvlist_lookup_uint64(props,
+		    zfs_prop_to_name(ZFS_PROP_SALT), &salt);
+		if (ret)
+			salt_exists = B_FALSE;
+
+		ret = nvlist_lookup_uint64(props, "crypto_cmd", &cmd);
+		if (ret)
+			cmd_exists = B_FALSE;
+	} else {
 		crypt_exists = B_FALSE;
-
-	ret = nvlist_lookup_string(props,
-		zfs_prop_to_name(ZFS_PROP_KEYSOURCE), &keysource);
-	if (ret)
 		keysource_exists = B_FALSE;
-
-	ret = nvlist_lookup_uint8_array(props, "wkeydata", &wkeydata,
-		&wkeydata_len);
-	if (ret)
-		wkeydata_exists = B_FALSE;
-
-	ret = nvlist_lookup_uint64(props,
-		zfs_prop_to_name(ZFS_PROP_SALT), &salt);
-	if (ret)
 		salt_exists = B_FALSE;
-
-	ret = nvlist_lookup_uint64(props, "crypto_cmd", &cmd);
-	if (ret)
 		cmd_exists = B_FALSE;
+	}
+
+	if (crypto_args) {
+		ret = nvlist_lookup_uint8_array(crypto_args, "wkeydata",
+		    &wkeydata, &wkeydata_len);
+		if (ret)
+			wkeydata_exists = B_FALSE;
+	} else {
+		wkeydata_exists = B_FALSE;
+	}
 
 	LOG_DEBUG("%d %d %d %d %d", (int)crypt_exists, (int)keysource_exists,
-		(int)wkeydata_exists, (int)salt_exists, (int)cmd_exists);
+	    (int)salt_exists, (int)cmd_exists, (int)wkeydata_exists);
 
 	/* no parameters are valid; results in inherited crypto settings */
 	if ((!crypt_exists || crypt == ZIO_CRYPT_OFF) && !keysource_exists &&
-		!wkeydata_exists & !salt_exists) {
+	    !wkeydata_exists && !salt_exists) {
 		ret = 0;
 		goto out;
 	}
@@ -157,12 +169,8 @@ dsl_crypto_params_init_nvlist(nvlist_t *props, dsl_crypto_params_t *dcp)
 	}
 
 	/* remove crypto_cmd from props since it should not be used again */
-	if (cmd_exists) {
-		ret = nvlist_remove_all(props, "crypto_cmd");
-		if (ret) {
-			ret = SET_ERROR(EIO);
-			goto error;
-		}
+	if (props && cmd_exists) {
+		(void) nvlist_remove_all(props, "crypto_cmd");
 	}
 
 	/* create the wrapping key from the raw data */
@@ -170,14 +178,6 @@ dsl_crypto_params_init_nvlist(nvlist_t *props, dsl_crypto_params_t *dcp)
 		/* create the wrapping key with the verified parameters */
 		ret = dsl_wrapping_key_create(wkeydata, &wkey);
 		if (ret) goto error;
-
-		/* remove wkeydata from props since it should not be logged */
-		bzero(wkeydata, wkeydata_len);
-		ret = nvlist_remove_all(props, "wkeydata");
-		if (ret) {
-			ret = SET_ERROR(EIO);
-			goto error;
-		}
 	}
 
 	dcp->cp_cmd = cmd;
