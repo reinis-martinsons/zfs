@@ -1268,7 +1268,33 @@ zfs_secpolicy_tmp_snapshot(zfs_cmd_t *zc, nvlist_t *innvl, cred_t *cr)
 static int
 zfs_secpolicy_crypto(zfs_cmd_t *zc, nvlist_t *innvl, cred_t *cr)
 {
-	return (0);
+	int ret = 0;
+	uint64_t crypto_cmd;
+
+	ret = nvlist_lookup_uint64(innvl, "crypto_cmd", &crypto_cmd);
+	if (ret) {
+		ret = SET_ERROR(EINVAL);
+		goto out;
+	}
+
+	switch(crypto_cmd){
+	case ZFS_IOC_CRYPTO_LOAD_KEY:
+	case ZFS_IOC_CRYPTO_UNLOAD_KEY:
+		ret = zfs_secpolicy_write_perms(zc->zc_name,
+		    ZFS_DELEG_PERM_LOAD_KEY, cr);
+		break;
+	case ZFS_IOC_CRYPTO_ADD_KEY:
+	case ZFS_IOC_CRYPTO_REWRAP:
+		ret = zfs_secpolicy_write_perms(zc->zc_name,
+		    ZFS_DELEG_PERM_CHANGE_KEY, cr);
+		break;
+	default:
+		ret = SET_ERROR(EINVAL);
+		break;
+	}
+
+out:
+	return (ret);
 }
 
 /*
