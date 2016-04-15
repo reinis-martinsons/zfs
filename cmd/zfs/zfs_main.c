@@ -4595,6 +4595,12 @@ deleg_perm_comment(zfs_deleg_note_t note)
 	case ZFS_DELEG_NOTE_SNAPSHOT:
 		str = gettext("");
 		break;
+	case ZFS_DELEG_NOTE_LOAD_KEY:
+		str = gettext("Allows loading or unloading an encryption key");
+		break;
+	case ZFS_DELEG_NOTE_CHANGE_KEY:
+		str = gettext("Allows changing or adding an encryption key");
+		break;
 /*
  *	case ZFS_DELEG_NOTE_VSCAN:
  *		str = gettext("");
