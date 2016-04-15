@@ -47,6 +47,20 @@ typedef enum key_locator {
 	KEY_LOCATOR_URI
 } key_locator_t;
 
+static char *
+get_key_format_name(key_format_t format){
+	switch(format) {
+	case KEY_FORMAT_RAW:
+		return "raw";
+	case KEY_FORMAT_HEX:
+		return "hex";
+	case KEY_FORMAT_PASSPHRASE:
+		return "passphrase";
+	default:
+		return "";
+	}
+}
+
 static int
 parse_format(key_format_t *format, char *s, int len)
 {
@@ -70,6 +84,7 @@ parse_locator(key_locator_t *locator, char *s, int len, char **uri)
 		return (0);
 	}
 
+	/* uri can currently only be an absolut file path */
 	if (len > 8 && strncmp("file:///", s, 8) == 0) {
 		*locator = KEY_LOCATOR_URI;
 		*uri = s;
@@ -113,71 +128,133 @@ keysource_prop_parser(char *keysource, key_format_t *format,
 }
 
 static int
-get_key_material(libzfs_handle_t *hdl, key_format_t format,
-	key_locator_t locator, const char *fsname, uint8_t **key_material_out,
-	size_t *key_material_len)
-{
-	int ret, rbytes;
-	char c;
-	uint8_t *key_material = NULL;
+hex_key_to_raw(char *hex, int hexlen, uint8_t *out){
+	int ret, i;
+	unsigned int c;
 
-	*key_material_out = NULL;
-	*key_material_len = 0;
+	for (i = 0; i < hexlen; i += 2){
+		ret = sscanf(&hex[i], "%02x", &c);
+		if (ret != 1){
+			ret = EINVAL;
+			goto error;
+		}
+
+		out[i / 2] = c;
+	}
+
+	return (0);
+
+error:
+	return (ret);
+}
+
+static int
+get_key_material(libzfs_handle_t *hdl, key_format_t format,
+	key_locator_t locator, char *uri, const char *fsname, uint8_t **km_out,
+	size_t *kmlen_out)
+{
+	int ret;
+	FILE *fd = NULL;
+	size_t kmlen, bytes;
+	char c;
+	uint8_t *km = NULL;
 
 	switch (locator) {
 	case KEY_LOCATOR_PROMPT:
-		if (format == KEY_FORMAT_RAW) {
-			/* allocate a buffer for key material */
-			key_material = zfs_alloc(hdl, WRAPPING_KEY_LEN);
-			if (!key_material)
-				return (ENOMEM);
+		fd = stdin;
 
-			/* prompt for the raw key */
-			if (fsname && isatty(STDIN_FILENO)) {
-				(void) printf("Enter raw key for '%s': ",
-				    fsname);
-				(void) fflush(stdout);
-			}
-
-			/* read the raw key from stdin */
-			errno = 0;
-			rbytes = read(STDIN_FILENO, key_material,
-				WRAPPING_KEY_LEN);
-			if (rbytes != WRAPPING_KEY_LEN) {
-				ret = errno;
-				goto error;
-			}
-			*key_material_len = WRAPPING_KEY_LEN;
-
-			/* clean off the newline from stdin if it exists */
-			while ((c = getchar()) != '\n' && c != EOF);
-
-		} else {
-			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-				"URI key location not yet supported."));
-			return (EOPNOTSUPP);
+		/* prompt for the key */
+		if (fsname && isatty(fileno(fd))) {
+			(void) printf("Enter %s key for '%s': ",
+			    get_key_format_name(format), fsname);
+			(void) fflush(stdout);
 		}
 
 		break;
-
 	case KEY_LOCATOR_URI:
-		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-				"URI key location not yet supported."));
-		return (EOPNOTSUPP);
+		/* open the file specified in the uri*/
+		fd = fopen(&uri[7], "r");
+		if (!fd) {
+			ret = errno;
+			errno = 0;
+			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+			    "Failed to open key material file"));
+			goto error;
+		}
+
+		break;
 	default:
+		ret = EINVAL;
 		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			"Invalid key locator."));
-		return (EINVAL);
+		    "Invalid key locator."));
+		goto error;
 	}
 
-	*key_material_out = key_material;
+	switch(format) {
+	case KEY_FORMAT_RAW:
+	case KEY_FORMAT_HEX:
+		if (format == KEY_FORMAT_RAW) {
+			kmlen = WRAPPING_KEY_LEN;
+		} else {
+			kmlen = WRAPPING_KEY_LEN * 2;
+		}
+
+		km = zfs_alloc(hdl, kmlen);
+		if (!km) {
+			ret = ENOMEM;
+			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+			    "Failed to allocate memory for key material."));
+			goto error;
+		}
+
+		bytes = read(fileno(fd), km, kmlen);
+
+		/* clean off the newline from stdin if needed */
+		if (isatty(fileno(fd)))
+			while ((c = getc(fd)) != '\n' && c != EOF);
+
+		if (bytes != kmlen && bytes > 0) {
+			ret = EINVAL;
+			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+			    "Key material too short."));
+			goto error;
+		} else if (bytes <= 0) {
+			ret = errno;
+			errno = 0;
+			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+			    "Failed to read key."));
+			goto error;
+		}
+
+		break;
+	case KEY_FORMAT_PASSPHRASE:
+		ret = EOPNOTSUPP;
+		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+		    "passphrase key format not yet supported."));
+		goto error;
+	default:
+		ret = EINVAL;
+		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+		    "Invalid key format."));
+		goto error;
+	}
+
+	if (fd != stdin)
+		fclose(fd);
+
+	*km_out = km;
+	*kmlen_out = kmlen;
 	return (0);
 
-	error:if (key_material)
-		free(key_material);
+error:
+	if (km)
+		free(km);
 
-	*key_material_len = 0;
-	*key_material_out = NULL;
+	if (fd && fd != stdin)
+		fclose(fd);
+
+	*km_out = NULL;
+	*kmlen_out = 0;
 	return (ret);
 }
 
@@ -197,15 +274,14 @@ derive_key(libzfs_handle_t *hdl, key_format_t format,
 
 	switch (format) {
 	case KEY_FORMAT_RAW:
-		if (key_material_len != WRAPPING_KEY_LEN) {
-			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-				"Incorrect key size."));
-			ret = EINVAL;
-			goto error;
-		}
 		bcopy(key_material, key, WRAPPING_KEY_LEN);
 		break;
 	case KEY_FORMAT_HEX:
+		ret = hex_key_to_raw((char *) key_material,
+		    WRAPPING_KEY_LEN * 2, key);
+		if (ret)
+			goto error;
+		break;
 	case KEY_FORMAT_PASSPHRASE:
 		ret = EOPNOTSUPP;
 		goto error;
@@ -232,14 +308,14 @@ encryption_feature_is_enabled(zpool_handle_t *zph)
 
 	/* check that features can be enabled */
 	if (zpool_get_prop_int(zph, ZPOOL_PROP_VERSION, NULL)
-		< SPA_VERSION_FEATURES)
+	    < SPA_VERSION_FEATURES)
 		return (B_FALSE);
 
 	/* check for crypto feature */
 	features = zpool_get_features(zph);
 	if (!features || nvlist_lookup_uint64(features,
-		spa_feature_table[SPA_FEATURE_ENCRYPTION].fi_guid,
-		&feat_refcount) != 0)
+	    spa_feature_table[SPA_FEATURE_ENCRYPTION].fi_guid,
+	    &feat_refcount) != 0)
 		return (B_FALSE);
 
 	return (B_TRUE);
@@ -261,13 +337,12 @@ populate_create_encryption_params_nvlist(libzfs_handle_t *hdl,
 	/* Parse the keysource */
 	ret = keysource_prop_parser(keysource, &keyformat, &keylocator, &uri);
 	if (ret) {
-		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			"Invalid keysource."));
+		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN, "Invalid keysource."));
 		goto error;
 	}
 
 	/* get key material from keysource */
-	ret = get_key_material(hdl, keyformat, keylocator, fsname,
+	ret = get_key_material(hdl, keyformat, keylocator, uri, fsname,
 		&key_material, &key_material_len);
 	if (ret)
 		goto error;
@@ -277,7 +352,7 @@ populate_create_encryption_params_nvlist(libzfs_handle_t *hdl,
 		ret = random_get_bytes((uint8_t *) &salt, sizeof (uint64_t));
 		if (ret) {
 			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-				"Failed to generate salt."));
+			    "Failed to generate salt."));
 			goto error;
 		}
 	}
@@ -285,19 +360,19 @@ populate_create_encryption_params_nvlist(libzfs_handle_t *hdl,
 	ret = nvlist_add_uint64(props, zfs_prop_to_name(ZFS_PROP_SALT), salt);
 	if (ret) {
 		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			"Failed to add salt to properties."));
+		    "Failed to add salt to properties."));
 		goto error;
 	}
 
 	/* derive a key from the key material */
 	ret = derive_key(hdl, keyformat, key_material, key_material_len, salt,
-		&key_data);
+	    &key_data);
 	if (ret)
 		goto error;
 
 	/* add the derived key to the properties list */
 	ret = nvlist_add_uint8_array(props, "wkeydata", key_data,
-		WRAPPING_KEY_LEN);
+	    WRAPPING_KEY_LEN);
 	if (ret)
 		goto error;
 
@@ -325,17 +400,17 @@ zfs_crypto_create(libzfs_handle_t *hdl, nvlist_t *props, char *parent_name)
 	boolean_t local_crypt = B_TRUE;
 
 	(void) snprintf(errbuf, sizeof (errbuf),
-		dgettext(TEXT_DOMAIN, "Encryption create error"));
+	    dgettext(TEXT_DOMAIN, "Encryption create error"));
 
 	/* lookup crypt from props */
 	ret = nvlist_lookup_uint64(props,
-		zfs_prop_to_name(ZFS_PROP_ENCRYPTION), &crypt);
+	    zfs_prop_to_name(ZFS_PROP_ENCRYPTION), &crypt);
 	if (ret)
 		local_crypt = B_FALSE;
 
 	/* lookup keysource from props */
 	ret = nvlist_lookup_string(props,
-		zfs_prop_to_name(ZFS_PROP_KEYSOURCE), &keysource);
+	    zfs_prop_to_name(ZFS_PROP_KEYSOURCE), &keysource);
 	if (ret)
 		keysource = NULL;
 
@@ -343,7 +418,7 @@ zfs_crypto_create(libzfs_handle_t *hdl, nvlist_t *props, char *parent_name)
 	pzhp = make_dataset_handle(hdl, parent_name);
 	if (pzhp == NULL) {
 		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			"Failed to lookup parent."));
+		    "Failed to lookup parent."));
 		return (ENOENT);
 	}
 
@@ -359,7 +434,7 @@ zfs_crypto_create(libzfs_handle_t *hdl, nvlist_t *props, char *parent_name)
 
 		ret = EINVAL;
 		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			"Encryption feature not enabled."));
+		    "Encryption feature not enabled."));
 		goto out;
 	}
 
@@ -367,8 +442,7 @@ zfs_crypto_create(libzfs_handle_t *hdl, nvlist_t *props, char *parent_name)
 	if (crypt == ZIO_CRYPT_OFF && pcrypt != ZIO_CRYPT_OFF) {
 		ret = EINVAL;
 		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			"Invalid encryption value. Dataset must "
-			"be encrypted."));
+		    "Invalid encryption value. Dataset must be encrypted."));
 		goto out;
 	}
 
@@ -384,7 +458,7 @@ zfs_crypto_create(libzfs_handle_t *hdl, nvlist_t *props, char *parent_name)
 		if (keysource) {
 			ret = EINVAL;
 			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-				"Encryption required to set keysource."));
+			    "Encryption required to set keysource."));
 			goto out;
 		}
 
@@ -399,7 +473,7 @@ zfs_crypto_create(libzfs_handle_t *hdl, nvlist_t *props, char *parent_name)
 	if (pcrypt == ZIO_CRYPT_OFF && !keysource) {
 		ret = EINVAL;
 		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			"Keysource required."));
+		    "Keysource required."));
 		goto out;
 	}
 
@@ -409,7 +483,7 @@ zfs_crypto_create(libzfs_handle_t *hdl, nvlist_t *props, char *parent_name)
 	 */
 	if (keysource) {
 		ret = populate_create_encryption_params_nvlist(hdl,
-			keysource, NULL, props);
+		    keysource, NULL, props);
 		if (ret)
 			goto out;
 	}
@@ -436,13 +510,13 @@ zfs_crypto_clone(libzfs_handle_t *hdl, zfs_handle_t *origin_zhp,
 	uint64_t crypt, pcrypt, ocrypt, okey_status;
 
 	(void) snprintf(errbuf, sizeof (errbuf),
-		dgettext(TEXT_DOMAIN, "Encryption clone error"));
+	    dgettext(TEXT_DOMAIN, "Encryption clone error"));
 
 	/* get a reference to parent dataset, should never be null */
 	pzhp = make_dataset_handle(hdl, parent_name);
 	if (pzhp == NULL) {
 		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			"Failed to lookup parent."));
+		    "Failed to lookup parent."));
 		return (ENOENT);
 	}
 
@@ -452,17 +526,17 @@ zfs_crypto_clone(libzfs_handle_t *hdl, zfs_handle_t *origin_zhp,
 
 	/* lookup keysource from props */
 	ret = nvlist_lookup_string(props,
-		zfs_prop_to_name(ZFS_PROP_KEYSOURCE), &keysource);
+	    zfs_prop_to_name(ZFS_PROP_KEYSOURCE), &keysource);
 	if (ret)
 		keysource = NULL;
 
 	/* crypt should not be set */
-	ret = nvlist_lookup_uint64(props,
-		zfs_prop_to_name(ZFS_PROP_ENCRYPTION), &crypt);
+	ret = nvlist_lookup_uint64(props, zfs_prop_to_name(ZFS_PROP_ENCRYPTION),
+	    &crypt);
 	if (ret == 0) {
 		ret = EINVAL;
 		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			"Encryption may not be specified during cloning."));
+		    "Encryption may not be specified during cloning."));
 		goto out;
 	}
 
@@ -470,8 +544,8 @@ zfs_crypto_clone(libzfs_handle_t *hdl, zfs_handle_t *origin_zhp,
 	if (pcrypt != ZIO_CRYPT_OFF && ocrypt == ZIO_CRYPT_OFF) {
 		ret = EINVAL;
 		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			"Cannot create unencrypted clone as child "
-			"of encrypted parent."));
+		    "Cannot create unencrypted clone as child "
+		    "of encrypted parent."));
 		goto out;
 	}
 
@@ -483,8 +557,8 @@ zfs_crypto_clone(libzfs_handle_t *hdl, zfs_handle_t *origin_zhp,
 		if (add_key || keysource) {
 			ret = EINVAL;
 			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-				"Encryption properties may not be set "
-				"for an unencrypted clone."));
+			    "Encryption properties may not be set "
+			    "for an unencrypted clone."));
 			goto out;
 		}
 
@@ -500,7 +574,7 @@ zfs_crypto_clone(libzfs_handle_t *hdl, zfs_handle_t *origin_zhp,
 	if (okey_status != ZFS_KEYSTATUS_AVAILABLE) {
 		ret = EPERM;
 		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			"Origin wrapping key must be loaded."));
+		    "Origin wrapping key must be loaded."));
 		goto out;
 	}
 
@@ -511,21 +585,21 @@ zfs_crypto_clone(libzfs_handle_t *hdl, zfs_handle_t *origin_zhp,
 	if (pcrypt == ZIO_CRYPT_OFF && !keysource) {
 		ret = EINVAL;
 		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			"Keysource required."));
+		    "Keysource required."));
 		goto out;
 	}
 
 	/* prepare the keysource if needed */
 	if (keysource) {
 		ret = populate_create_encryption_params_nvlist(hdl,
-			keysource, NULL, props);
+		    keysource, NULL, props);
 		if (ret)
 			goto out;
 	}
 
 	if (add_key) {
 		ret = nvlist_add_uint64(props, "crypto_cmd",
-			ZFS_IOC_CRYPTO_ADD_KEY);
+		    ZFS_IOC_CRYPTO_ADD_KEY);
 		if (ret)
 			goto out;
 	}
@@ -558,11 +632,11 @@ zfs_crypto_load_key(zfs_handle_t *zhp)
 	zprop_source_t keysource_srctype;
 
 	(void) snprintf(errbuf, sizeof (errbuf),
-		dgettext(TEXT_DOMAIN, "Key load error"));
+	    dgettext(TEXT_DOMAIN, "Key load error"));
 
 	if (!encryption_feature_is_enabled(zhp->zpool_hdl)) {
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-			"Encryption feature not enabled."));
+		    "Encryption feature not enabled."));
 		ret = EINVAL;
 		goto error;
 	}
@@ -571,24 +645,24 @@ zfs_crypto_load_key(zfs_handle_t *zhp)
 	crypt = zfs_prop_get_int(zhp, ZFS_PROP_ENCRYPTION);
 	if (crypt == ZIO_CRYPT_OFF) {
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-			"Encryption not enabled for this dataset."));
+		    "Encryption not enabled for this dataset."));
 		ret = EINVAL;
 		goto error;
 	}
 
 	/* check that we are loading for an encryption root */
 	ret = zfs_prop_get(zhp, ZFS_PROP_KEYSOURCE, keysource,
-		sizeof (keysource), &keysource_srctype, keysource_src,
-		sizeof (keysource_src), B_TRUE);
+	    sizeof (keysource), &keysource_srctype, keysource_src,
+	    sizeof (keysource_src), B_TRUE);
 	if (ret) {
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-			"Failed to obtain keysource property."));
+		    "Failed to obtain keysource property."));
 		ret = EIO;
 		goto error;
 	} else if (keysource_srctype == ZPROP_SRC_INHERITED) {
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-			"Keys must be loaded for encryption root '%s'."),
-			keysource_src);
+		    "Keys must be loaded for encryption root '%s'."),
+		    keysource_src);
 		ret = EINVAL;
 		goto error;
 	}
@@ -597,7 +671,7 @@ zfs_crypto_load_key(zfs_handle_t *zhp)
 	keystatus = zfs_prop_get_int(zhp, ZFS_PROP_KEYSTATUS);
 	if (keystatus == ZFS_KEYSTATUS_AVAILABLE) {
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-			"Key already loaded."));
+		    "Key already loaded."));
 		ret = EINVAL;
 		goto error;
 	}
@@ -606,14 +680,14 @@ zfs_crypto_load_key(zfs_handle_t *zhp)
 	ret = keysource_prop_parser(keysource, &format, &locator, &uri);
 	if (ret) {
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-			"Invalid keysource property."));
+		    "Invalid keysource property."));
 		ret = EIO;
 		goto error;
 	}
 
 	/* get key material from keysource */
-	ret = get_key_material(zhp->zfs_hdl, format, locator,
-		zfs_get_name(zhp), &key_material, &key_material_len);
+	ret = get_key_material(zhp->zfs_hdl, format, locator, uri,
+	    zfs_get_name(zhp), &key_material, &key_material_len);
 	if (ret)
 		goto error;
 
@@ -623,7 +697,7 @@ zfs_crypto_load_key(zfs_handle_t *zhp)
 
 	/* derive a key from the key material */
 	ret = derive_key(zhp->zfs_hdl, format, key_material,
-		key_material_len, salt, &key_data);
+	    key_material_len, salt, &key_data);
 	if (ret)
 		goto error;
 
@@ -631,7 +705,7 @@ zfs_crypto_load_key(zfs_handle_t *zhp)
 	nvl = fnvlist_alloc();
 
 	ret = nvlist_add_uint8_array(nvl, "wkeydata", key_data,
-		WRAPPING_KEY_LEN);
+	    WRAPPING_KEY_LEN);
 	if (ret)
 		goto error;
 
@@ -641,15 +715,15 @@ zfs_crypto_load_key(zfs_handle_t *zhp)
 		switch (ret) {
 		case EINVAL:
 			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-				"Incorrect key provided."));
+			    "Incorrect key provided."));
 			break;
 		case EEXIST:
 			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-				"Keychain is already loaded."));
+			    "Keychain is already loaded."));
 			break;
 		case EBUSY:
 			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-				"Dataset is busy."));
+			    "Dataset is busy."));
 			break;
 		}
 		zfs_error(zhp->zfs_hdl, EZFS_CRYPTOFAILED, errbuf);
@@ -684,11 +758,11 @@ zfs_crypto_unload_key(zfs_handle_t *zhp)
 	zprop_source_t keysource_srctype;
 
 	(void) snprintf(errbuf, sizeof (errbuf),
-		dgettext(TEXT_DOMAIN, "Key unload error"));
+	    dgettext(TEXT_DOMAIN, "Key unload error"));
 
 	if (!encryption_feature_is_enabled(zhp->zpool_hdl)) {
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-			"Encryption feature not enabled."));
+		    "Encryption feature not enabled."));
 		ret = EINVAL;
 		goto error;
 	}
@@ -697,24 +771,24 @@ zfs_crypto_unload_key(zfs_handle_t *zhp)
 	crypt = zfs_prop_get_int(zhp, ZFS_PROP_ENCRYPTION);
 	if (crypt == ZIO_CRYPT_OFF) {
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-			"Encryption not enabled."));
+		    "Encryption not enabled."));
 		ret = EINVAL;
 		goto error;
 	}
 
 	/* check that we are loading for an encryption root */
 	ret = zfs_prop_get(zhp, ZFS_PROP_KEYSOURCE, keysource,
-		sizeof (keysource), &keysource_srctype, keysource_src,
-		sizeof (keysource_src), B_TRUE);
+	    sizeof (keysource), &keysource_srctype, keysource_src,
+	    sizeof (keysource_src), B_TRUE);
 	if (ret) {
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-			"Failed to obtain keysource property."));
+		    "Failed to obtain keysource property."));
 		ret = EIO;
 		goto error;
 	} else if (keysource_srctype == ZPROP_SRC_INHERITED) {
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-			"Keys must be unloaded for encryption root '%s'."),
-			keysource_src);
+		    "Keys must be unloaded for encryption root '%s'."),
+		    keysource_src);
 		ret = EINVAL;
 		goto error;
 	}
@@ -723,7 +797,7 @@ zfs_crypto_unload_key(zfs_handle_t *zhp)
 	keystatus = zfs_prop_get_int(zhp, ZFS_PROP_KEYSTATUS);
 	if (keystatus == ZFS_KEYSTATUS_UNAVAILABLE) {
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-			"Key already unloaded."));
+		    "Key already unloaded."));
 		return (EINVAL);
 	}
 
@@ -734,11 +808,11 @@ zfs_crypto_unload_key(zfs_handle_t *zhp)
 		switch (ret) {
 		case ENOENT:
 			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-				"Keychain is not currently loaded."));
+			    "Keychain is not currently loaded."));
 			break;
 		case EBUSY:
 			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-				"Dataset is busy."));
+			    "Dataset is busy."));
 			break;
 		}
 		zfs_error(zhp->zfs_hdl, EZFS_CRYPTOFAILED, errbuf);
@@ -759,11 +833,11 @@ zfs_crypto_add_key(zfs_handle_t *zhp)
 	uint64_t crypt;
 
 	(void) snprintf(errbuf, sizeof (errbuf),
-		dgettext(TEXT_DOMAIN, "Add key error"));
+	    dgettext(TEXT_DOMAIN, "Add key error"));
 
 	if (!encryption_feature_is_enabled(zhp->zpool_hdl)) {
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-			"Encryption feature not enabled."));
+		    "Encryption feature not enabled."));
 		ret = EINVAL;
 		goto error;
 	}
@@ -772,19 +846,18 @@ zfs_crypto_add_key(zfs_handle_t *zhp)
 	crypt = zfs_prop_get_int(zhp, ZFS_PROP_ENCRYPTION);
 	if (crypt == ZIO_CRYPT_OFF) {
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-			"Encryption not enabled."));
+		    "Encryption not enabled."));
 		ret = EINVAL;
 		goto error;
 	}
 
 	/* call the ioctl */
 	ret = lzc_crypto(zhp->zfs_name, ZFS_IOC_CRYPTO_ADD_KEY, NULL);
-
 	if (ret) {
 		switch (ret) {
 		case ENOENT:
 			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-				"Keychain is not currently loaded."));
+			    "Keychain is not currently loaded."));
 			break;
 		}
 		zfs_error(zhp->zfs_hdl, EZFS_CRYPTOFAILED, errbuf);
@@ -807,11 +880,11 @@ zfs_crypto_rewrap(zfs_handle_t *zhp, nvlist_t *props)
 	char *keysource;
 
 	(void) snprintf(errbuf, sizeof (errbuf),
-		dgettext(TEXT_DOMAIN, "Rewrap keychain error"));
+	    dgettext(TEXT_DOMAIN, "Rewrap keychain error"));
 
 	if (!encryption_feature_is_enabled(zhp->zpool_hdl)) {
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-			"Encryption feature not enabled."));
+		    "Encryption feature not enabled."));
 		ret = EINVAL;
 		goto error;
 	}
@@ -820,49 +893,48 @@ zfs_crypto_rewrap(zfs_handle_t *zhp, nvlist_t *props)
 	crypt = zfs_prop_get_int(zhp, ZFS_PROP_ENCRYPTION);
 	if (crypt == ZIO_CRYPT_OFF) {
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-			"Encryption not enabled."));
+		    "Encryption not enabled."));
 		ret = EINVAL;
 		goto error;
 	}
 
 	/* load keysource from dataset if not specified */
 	ret = nvlist_lookup_string(props, zfs_prop_to_name(ZFS_PROP_KEYSOURCE),
-		&keysource);
+	    &keysource);
 	if (ret == ENOENT) {
 		ret = zfs_prop_get(zhp, ZFS_PROP_KEYSOURCE, prop_keysource,
-			sizeof (prop_keysource), NULL, NULL, 0, B_TRUE);
+		    sizeof (prop_keysource), NULL, NULL, 0, B_TRUE);
 		if (ret) {
 			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-				"Failed to obtain keysource property."));
+			    "Failed to obtain keysource property."));
 			ret = EIO;
 			goto error;
 		}
 		keysource = prop_keysource;
 	} else if (ret) {
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-			"Failed to find keysource."));
+		    "Failed to find keysource."));
 		ret = EIO;
 		goto error;
 	}
 
 	/* populate the nvlist with the encryption params */
 	ret = populate_create_encryption_params_nvlist(zhp->zfs_hdl, keysource,
-		zfs_get_name(zhp), props);
+	    zfs_get_name(zhp), props);
 	if (ret)
 		goto error;
 
 	/* call the ioctl */
 	ret = lzc_crypto(zhp->zfs_name, ZFS_IOC_CRYPTO_REWRAP, props);
-
 	if (ret) {
 		switch (ret) {
 		case EINVAL:
 			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-				"Invalid properties for key change."));
+			    "Invalid properties for key change."));
 			break;
 		case ENOENT:
 			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-				"Keychain is not currently loaded."));
+			    "Keychain is not currently loaded."));
 			break;
 		}
 		zfs_error(zhp->zfs_hdl, EZFS_CRYPTOFAILED, errbuf);
