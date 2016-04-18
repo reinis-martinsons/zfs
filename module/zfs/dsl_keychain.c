@@ -1345,30 +1345,34 @@ dmu_objset_create_encryption_check(dsl_dir_t *pdd, dsl_crypto_params_t *dcp)
 
 	LOG_CRYPTO_PARAMS(dcp);
 
+	if (!spa_feature_is_enabled(pdd->dd_pool->dp_spa,
+	    SPA_FEATURE_ENCRYPTION) && dcp->cp_crypt != ZIO_CRYPT_OFF)
+		return (SET_ERROR(EINVAL));
+
 	ret = dsl_prop_get_dd(pdd, zfs_prop_to_name(ZFS_PROP_ENCRYPTION),
-		8, 1, &pcrypt, NULL, B_FALSE);
+	    8, 1, &pcrypt, NULL, B_FALSE);
 	if (ret)
 		return (ret);
 
 	if (dcp->cp_crypt == ZIO_CRYPT_OFF && pcrypt != ZIO_CRYPT_OFF)
 		return (SET_ERROR(EINVAL));
 	if (dcp->cp_crypt == ZIO_CRYPT_INHERIT &&
-		pcrypt == ZIO_CRYPT_OFF &&
-		(dcp->cp_salt || dcp->cp_keysource || dcp->cp_wkey))
+	    pcrypt == ZIO_CRYPT_OFF &&
+	    (dcp->cp_salt || dcp->cp_keysource || dcp->cp_wkey))
 		return (SET_ERROR(EINVAL));
 	if (dcp->cp_crypt == ZIO_CRYPT_OFF &&
-		(dcp->cp_salt || dcp->cp_keysource || dcp->cp_wkey))
+	    (dcp->cp_salt || dcp->cp_keysource || dcp->cp_wkey))
 		return (SET_ERROR(EINVAL));
 	if (dcp->cp_crypt != ZIO_CRYPT_INHERIT &&
-		dcp->cp_crypt != ZIO_CRYPT_OFF &&
-		pcrypt == ZIO_CRYPT_OFF && !dcp->cp_keysource)
+	    dcp->cp_crypt != ZIO_CRYPT_OFF &&
+	    pcrypt == ZIO_CRYPT_OFF && !dcp->cp_keysource)
 		return (SET_ERROR(EINVAL));
 	if (dcp->cp_cmd)
 		return (SET_ERROR(EINVAL));
 
 	if (!dcp->cp_wkey && pcrypt != ZIO_CRYPT_OFF) {
 		ret = spa_keystore_wkey_hold_ddobj(pdd->dd_pool->dp_spa,
-			pdd->dd_object, FTAG, &wkey);
+		    pdd->dd_object, FTAG, &wkey);
 		if (ret)
 			return (SET_ERROR(EPERM));
 
@@ -1388,13 +1392,17 @@ dmu_objset_clone_encryption_check(dsl_dir_t *pdd, dsl_dir_t *odd,
 
 	LOG_CRYPTO_PARAMS(dcp);
 
+	if (!spa_feature_is_enabled(pdd->dd_pool->dp_spa,
+	    SPA_FEATURE_ENCRYPTION) && dcp->cp_crypt != ZIO_CRYPT_OFF)
+		return (SET_ERROR(EINVAL));
+
 	ret = dsl_prop_get_dd(pdd, zfs_prop_to_name(ZFS_PROP_ENCRYPTION), 8, 1,
-		&pcrypt, NULL, B_FALSE);
+	    &pcrypt, NULL, B_FALSE);
 	if (ret)
 		return (ret);
 
 	ret = dsl_prop_get_dd(odd, zfs_prop_to_name(ZFS_PROP_ENCRYPTION), 8, 1,
-		&ocrypt, NULL, B_FALSE);
+	    &ocrypt, NULL, B_FALSE);
 	if (ret)
 		return (ret);
 
@@ -1407,7 +1415,7 @@ dmu_objset_clone_encryption_check(dsl_dir_t *pdd, dsl_dir_t *odd,
 
 	/* origin wrapping key must be present */
 	ret = spa_keystore_wkey_hold_ddobj(pdd->dd_pool->dp_spa,
-		odd->dd_object, FTAG, &wkey);
+	    odd->dd_object, FTAG, &wkey);
 	if (ret)
 		return (SET_ERROR(EPERM));
 
@@ -1416,7 +1424,7 @@ dmu_objset_clone_encryption_check(dsl_dir_t *pdd, dsl_dir_t *odd,
 	/* parent's wrapping key must be present if a new one isn't specified */
 	if (!dcp->cp_wkey && pcrypt != ZIO_CRYPT_OFF) {
 		ret = spa_keystore_wkey_hold_ddobj(pdd->dd_pool->dp_spa,
-			pdd->dd_object, FTAG, &wkey);
+		    pdd->dd_object, FTAG, &wkey);
 		if (ret)
 			return (SET_ERROR(EPERM));
 
@@ -1445,8 +1453,16 @@ dsl_keychain_create_sync(uint64_t crypt, dsl_wrapping_key_t *wkey,
 	VERIFY0(dsl_keychain_entry_init(&kce, crypt, 0));
 	VERIFY0(dsl_keychain_entry_sync(&kce, wkey, kcobj, tx));
 
-	/* increment the encryption feature count */
-	spa_feature_incr(tx->tx_pool->dp_spa, SPA_FEATURE_ENCRYPTION, tx);
+	/*
+	 * Increment the encryption feature count. However, during
+	 * dsl_pool_create(), the root dataset it created before the pool's
+	 * feature objects are initialized. In this case it is up to the
+	 * caller to increment the feature count for us once the feature flags
+	 * are available.
+	 */
+	if (tx->tx_pool->dp_spa->spa_feat_for_write_obj != 0)
+		spa_feature_incr(tx->tx_pool->dp_spa,
+		    SPA_FEATURE_ENCRYPTION, tx);
 
 	return (kcobj);
 }

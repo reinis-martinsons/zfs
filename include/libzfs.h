@@ -490,7 +490,7 @@ extern nvlist_t *zfs_get_clones_nvl(zfs_handle_t *);
 /*
  * zfs encryption management
  */
-extern int zfs_crypto_create(libzfs_handle_t *, char *, nvlist_t *,
+extern int zfs_crypto_create(libzfs_handle_t *, char *, nvlist_t *, nvlist_t *,
     nvlist_t **);
 extern int zfs_crypto_clone(libzfs_handle_t *, zfs_handle_t *, char *,
     boolean_t, nvlist_t *, nvlist_t **);

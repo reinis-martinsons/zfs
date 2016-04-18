@@ -3310,7 +3310,7 @@ zfs_create(libzfs_handle_t *hdl, const char *path, zfs_type_t type,
 	}
 
 	(void) parent_name(path, parent, sizeof (parent));
-	if (zfs_crypto_create(hdl, parent, props, &hidden_args) != 0){
+	if (zfs_crypto_create(hdl, parent, props, NULL, &hidden_args) != 0) {
 		nvlist_free(props);
 		return (zfs_error(hdl, EZFS_CRYPTOFAILED, errbuf));
 	}

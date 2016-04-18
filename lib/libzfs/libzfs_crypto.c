@@ -391,7 +391,7 @@ error:
 
 int
 zfs_crypto_create(libzfs_handle_t *hdl, char *parent_name, nvlist_t *props,
-    nvlist_t **hidden_args)
+    nvlist_t *pool_props, nvlist_t **hidden_args)
 {
 	int ret;
 	char errbuf[1024];
@@ -416,28 +416,38 @@ zfs_crypto_create(libzfs_handle_t *hdl, char *parent_name, nvlist_t *props,
 	if (ret)
 		keysource = NULL;
 
-	/* get a reference to parent dataset, should never be null */
-	pzhp = make_dataset_handle(hdl, parent_name);
-	if (pzhp == NULL) {
-		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-		    "Failed to lookup parent."));
-		return (ENOENT);
-	}
-
-	/* Lookup parent's crypt */
-	pcrypt = zfs_prop_get_int(pzhp, ZFS_PROP_ENCRYPTION);
-
-	/* Check for encryption feature */
-	if (!encryption_feature_is_enabled(pzhp->zpool_hdl)) {
-		if (!local_crypt && !keysource) {
-			ret = 0;
-			goto error;
+	if (parent_name) {
+		/* get a reference to parent dataset */
+		pzhp = make_dataset_handle(hdl, parent_name);
+		if (pzhp == NULL) {
+			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+			    "Failed to lookup parent."));
+			return (ENOENT);
 		}
 
-		ret = EINVAL;
-		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-		    "Encryption feature not enabled."));
-		goto error;
+		/* Lookup parent's crypt */
+		pcrypt = zfs_prop_get_int(pzhp, ZFS_PROP_ENCRYPTION);
+
+		/* Check for encryption feature */
+		if (!encryption_feature_is_enabled(pzhp->zpool_hdl)) {
+			if (!local_crypt && !keysource) {
+				ret = 0;
+				goto error;
+			}
+
+			ret = EINVAL;
+			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+			    "Encryption feature not enabled."));
+			goto error;
+		}
+	} else {
+		if(!nvlist_exists(pool_props, "feature@encryption")){
+			ret = EINVAL;
+			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+			    "Encryption feature not enabled."));
+		}
+
+		pcrypt = crypt;
 	}
 
 	/* Check for encryption being explicitly truned off */
@@ -492,7 +502,8 @@ zfs_crypto_create(libzfs_handle_t *hdl, char *parent_name, nvlist_t *props,
 			goto error;
 	}
 
-	zfs_close(pzhp);
+	if (pzhp)
+		zfs_close(pzhp);
 
 	*hidden_args = ha;
 	return (0);
