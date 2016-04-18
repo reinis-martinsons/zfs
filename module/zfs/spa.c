@@ -3647,7 +3647,8 @@ spa_create(const char *pool, nvlist_t *nvroot, nvlist_t *props,
 		}
 	}
 
-	if (!has_encryption && dcp->cp_crypt != ZIO_CRYPT_OFF) {
+	if (!has_encryption && dcp->cp_crypt != ZIO_CRYPT_OFF &&
+	    dcp->cp_crypt != ZIO_CRYPT_INHERIT) {
 		spa_deactivate(spa);
 		spa_remove(spa);
 		mutex_exit(&spa_namespace_lock);
@@ -3821,7 +3822,8 @@ spa_create(const char *pool, nvlist_t *nvroot, nvlist_t *props,
 	}
 
 	/* see comment in dsl_keychain_create_sync() */
-	if (dcp->cp_crypt != ZIO_CRYPT_OFF)
+	if (dcp->cp_crypt != ZIO_CRYPT_INHERIT &&
+	    dcp->cp_crypt != ZIO_CRYPT_OFF)
 		spa_feature_incr(spa, SPA_FEATURE_ENCRYPTION, tx);
 
 	dmu_tx_commit(tx);
