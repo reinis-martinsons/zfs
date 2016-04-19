@@ -30,12 +30,7 @@
 extern "C" {
 #endif
 
-#include <sys/systm.h>
-#include <sys/sysmacros.h>
-#include <sys/types.h>
-#include <sys/errno.h>
-#include <sys/rwlock.h>
-#include <sys/kmem.h>
+#include <sys/zfs_context.h>
 #include <sys/crypto/common.h>
 #include <sys/crypto/impl.h>
 
@@ -229,10 +224,8 @@ typedef struct aes_ctx {
 		ecb_ctx_t acu_ecb;
 		cbc_ctx_t acu_cbc;
 		ctr_ctx_t acu_ctr;
-#ifdef _KERNEL
 		ccm_ctx_t acu_ccm;
 		gcm_ctx_t acu_gcm;
-#endif
 	} acu;
 } aes_ctx_t;
 

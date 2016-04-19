@@ -29,7 +29,7 @@
  * layer, between the kernel API/ioctls and the SPI.
  */
 
-#include <sys/kmem_cache.h>
+#include <sys/zfs_context.h>
 #include <sys/crypto/common.h>
 #include <sys/crypto/impl.h>
 #include <sys/crypto/sched_impl.h>
@@ -578,7 +578,11 @@ kcf_resubmit_request(kcf_areq_node_t *areq)
 
 static inline int EMPTY_TASKQ(taskq_t *tq)
 {
+#ifdef _KERNEL
 	return (tq->tq_lowest_id == tq->tq_next_id);
+#else
+	return (tq->tq_task.tqent_next == &tq->tq_task || tq->tq_active == 0);
+#endif
 }
 
 /*
@@ -911,8 +915,6 @@ kcf_remove_node(kcf_areq_node_t *node)
 	kcf_areq_node_t *nextp = node->an_next;
 	kcf_areq_node_t *prevp = node->an_prev;
 
-	ASSERT(mutex_owned(&gswq->gs_lock));
-
 	if (nextp != NULL)
 		nextp->an_prev = prevp;
 	else
@@ -923,7 +925,6 @@ kcf_remove_node(kcf_areq_node_t *node)
 	else
 		gswq->gs_first = nextp;
 
-	ASSERT(mutex_owned(&node->an_lock));
 	node->an_state = REQ_CANCELED;
 }
 

@@ -34,7 +34,7 @@
 extern "C" {
 #endif
 
-#include <sys/types.h>
+#include <sys/zfs_context.h>
 #include <sys/crypto/common.h>
 
 /* Similar to sysmacros.h IS_P2ALIGNED, but checks two pointers: */

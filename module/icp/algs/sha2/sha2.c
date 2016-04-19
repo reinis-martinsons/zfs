@@ -394,7 +394,6 @@ SHA2Init(uint64_t mech, SHA2_CTX *ctx)
 
 #ifndef _KERNEL
 
-#pragma inline(SHA256Init)
 void
 SHA256Init(SHA256_CTX *ctx)
 {

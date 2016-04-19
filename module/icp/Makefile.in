@@ -16,7 +16,6 @@ obj-$(CONFIG_ZFS) := $(MODULE).o
 
 ccflags-y += -I$(src)/include
 asflags-y += -I$(src)/include
-asflags-y += -D_ASM
 asflags-y += $(ZFS_MODULE_CFLAGS)
 
 $(MODULE)-objs += illumos-crypto.o

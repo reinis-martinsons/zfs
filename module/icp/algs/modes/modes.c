@@ -23,11 +23,7 @@
  * Use is subject to license terms.
  */
 
-#ifndef _KERNEL
-#include <stdlib.h>
-#endif
-
-#include <sys/types.h>
+#include <sys/zfs_context.h>
 #include <modes/modes.h>
 #include <sys/crypto/common.h>
 #include <sys/crypto/impl.h>

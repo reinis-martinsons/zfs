@@ -34,8 +34,6 @@
 extern "C" {
 #endif
 
-#ifdef _KERNEL
-
 #include <sys/zfs_context.h>
 #include <sys/modhash.h>
 
@@ -102,8 +100,6 @@ int i_mod_hash_find_nosync(mod_hash_t *, mod_hash_key_t, mod_hash_val_t *);
 void i_mod_hash_walk_nosync(mod_hash_t *, uint_t (*)(mod_hash_key_t,
     mod_hash_val_t *, void *), void *);
 void i_mod_hash_clear_nosync(mod_hash_t *hash);
-
-#endif /* _KERNEL */
 
 #ifdef __cplusplus
 }

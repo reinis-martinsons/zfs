@@ -184,6 +184,7 @@
 
 #if !defined(lint) && !defined(__lint)
 	.ident	"%Z%%M%	%I%	%E% SMI"
+#define _ASM
 #include <sys/asm_linkage.h>
 
 #define	KS_LENGTH	60

@@ -23,7 +23,7 @@
  * Use is subject to license terms.
  */
 
-#include <sys/sysmacros.h>
+#include <sys/zfs_context.h>
 #include <sys/crypto/common.h>
 #include <sys/crypto/api.h>
 #include <sys/crypto/impl.h>
@@ -66,7 +66,6 @@ crypto_mech2id(char *mechname)
 {
 	return (crypto_mech2id_common(mechname, B_TRUE));
 }
-EXPORT_SYMBOL(crypto_mech2id);
 
 /*
  * We walk the notification list and do the callbacks.
@@ -122,3 +121,7 @@ kcf_walk_ntfylist(uint32_t event, void *event_arg)
 
 	mutex_exit(&ntfy_list_lock);
 }
+
+#if defined(_KERNEL) && defined(HAVE_SPL)
+EXPORT_SYMBOL(crypto_mech2id);
+#endif

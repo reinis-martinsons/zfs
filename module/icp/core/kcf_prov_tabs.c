@@ -39,11 +39,7 @@
  * provider descriptors.
  */
 
-#include <sys/types.h>
-#include <sys/kmem.h>
-#include <sys/cmn_err.h>
-#include <sys/ddi.h>
-#include <sys/sunddi.h>
+#include <sys/zfs_context.h>
 #include <sys/crypto/common.h>
 #include <sys/crypto/impl.h>
 #include <sys/crypto/sched_impl.h>

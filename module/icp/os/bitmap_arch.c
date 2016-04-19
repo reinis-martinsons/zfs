@@ -28,7 +28,7 @@
  * Architecture specific definition for bitmap related routines.
  * These may be implemented using ISA specific instructions.
  */
-#include <sys/bitmap.h>
+#include <sys/zfs_context.h>
 
 /*
  * Find highest one bit set.

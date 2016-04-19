@@ -137,12 +137,8 @@
  *	destructors for every element in the hash.
  */
 
+#include <sys/zfs_context.h>
 #include <sys/bitmap.h>
-#include <sys/debug.h>
-#include <sys/kmem.h>
-#include <sys/sunddi.h>
-#include <sys/kmem_cache.h>
-
 #include <sys/modhash_impl.h>
 
 /*

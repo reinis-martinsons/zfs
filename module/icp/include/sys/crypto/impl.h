@@ -30,19 +30,15 @@
  * Kernel Cryptographic Framework private implementation definitions.
  */
 
-#ifdef _KERNEL
+#include <sys/zfs_context.h>
 #include <sys/crypto/common.h>
 #include <sys/crypto/api.h>
 #include <sys/crypto/spi.h>
 #include <sys/crypto/ioctl.h>
-#include <sys/zfs_context.h>
-#endif /* _KERNEL */
 
 #ifdef	__cplusplus
 extern "C" {
 #endif
-
-#ifdef _KERNEL
 
 #define	KCF_MODULE "kcf"
 
@@ -802,8 +798,8 @@ typedef struct crypto_minor {
 	    req) : CRYPTO_NOT_SUPPORTED)
 
 #define	KCF_PROV_VERIFY(pd, ctx, data, sig, req) ( \
-	(KCF_PROV_VERIFY_OPS(pd) && KCF_PROV_VERIFY_OPS(pd)->verify) ? \
-	KCF_PROV_VERIFY_OPS(pd)->verify(ctx, data, sig, req) : \
+	(KCF_PROV_VERIFY_OPS(pd) && KCF_PROV_VERIFY_OPS(pd)->do_verify) ? \
+	KCF_PROV_VERIFY_OPS(pd)->do_verify(ctx, data, sig, req) : \
 	CRYPTO_NOT_SUPPORTED)
 
 #define	KCF_PROV_VERIFY_UPDATE(pd, ctx, data, req) ( \
@@ -1366,7 +1362,6 @@ extern int kcf_policy_load_dev_disabled(char *, uint_t, uint_t,
     crypto_mech_name_t *, uint_t *, crypto_mech_name_t **);
 extern boolean_t in_soft_config_list(char *);
 
-#endif	/* _KERNEL */
 
 #ifdef	__cplusplus
 }

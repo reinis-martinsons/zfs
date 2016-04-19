@@ -37,7 +37,6 @@
 extern "C" {
 #endif
 
-#ifdef	_KERNEL
 
 #define	CRYPTO_SPI_VERSION_1	1
 #define	CRYPTO_SPI_VERSION_2	2
@@ -260,7 +259,7 @@ typedef struct crypto_verify_ops {
 	int (*verify_init)(crypto_ctx_t *,
 	    crypto_mechanism_t *, crypto_key_t *, crypto_spi_ctx_template_t,
 	    crypto_req_handle_t);
-	int (*verify)(crypto_ctx_t *,
+	int (*do_verify)(crypto_ctx_t *,
 	    crypto_data_t *, crypto_data_t *, crypto_req_handle_t);
 	int (*verify_update)(crypto_ctx_t *,
 	    crypto_data_t *, crypto_req_handle_t);
@@ -554,7 +553,6 @@ typedef struct crypto_ops {
 
 typedef uint32_t crypto_func_group_t;
 
-#endif /* _KERNEL */
 
 #define	CRYPTO_FG_ENCRYPT		0x00000001 /* encrypt_init() */
 #define	CRYPTO_FG_DECRYPT		0x00000002 /* decrypt_init() */
@@ -589,7 +587,6 @@ typedef uint32_t crypto_func_group_t;
  */
 #define	CRYPTO_PROVIDER_DESCR_MAX_LEN	64
 
-#ifdef _KERNEL
 
 /* Bit mask for all the simple operations */
 #define	CRYPTO_FG_SIMPLEOP_MASK	(CRYPTO_FG_ENCRYPT | CRYPTO_FG_DECRYPT | \
@@ -716,7 +713,6 @@ extern void crypto_provider_notification(crypto_kcf_provider_handle_t, uint_t);
 extern void crypto_op_notification(crypto_req_handle_t, int);
 extern int crypto_kmflag(crypto_req_handle_t);
 
-#endif	/* _KERNEL */
 
 #ifdef	__cplusplus
 }

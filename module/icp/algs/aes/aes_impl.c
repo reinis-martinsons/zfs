@@ -23,17 +23,10 @@
  * Use is subject to license terms.
  */
 
-#include <sys/types.h>
-#include <sys/systm.h>
-#include <sys/ddi.h>
-#include <sys/sysmacros.h>
+#include <sys/zfs_context.h>
 #include <sys/crypto/spi.h>
 #include <modes/modes.h>
 #include <aes/aes_impl.h>
-#ifndef	_KERNEL
-#include <strings.h>
-#include <stdlib.h>
-#endif	/* !_KERNEL */
 
 
 /*

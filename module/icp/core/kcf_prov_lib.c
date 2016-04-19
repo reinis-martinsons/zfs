@@ -23,9 +23,7 @@
  * Use is subject to license terms.
  */
 
-#include <sys/systm.h>
-#include <sys/sysmacros.h>
-#include <sys/kmem.h>
+#include <sys/zfs_context.h>
 #include <modes/modes.h>
 #include <sys/crypto/common.h>
 #include <sys/crypto/impl.h>

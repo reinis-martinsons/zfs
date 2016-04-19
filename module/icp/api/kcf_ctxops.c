@@ -23,10 +23,7 @@
  * Use is subject to license terms.
  */
 
-#include <sys/errno.h>
-#include <sys/types.h>
-#include <sys/systm.h>
-#include <sys/kmem.h>
+#include <sys/zfs_context.h>
 #include <sys/crypto/common.h>
 #include <sys/crypto/impl.h>
 #include <sys/crypto/api.h>
@@ -116,7 +113,6 @@ crypto_create_ctx_template(crypto_mechanism_t *mech, crypto_key_t *key,
 
 	return (error);
 }
-EXPORT_SYMBOL(crypto_create_ctx_template);
 
 /*
  * crypto_destroy_ctx_template()
@@ -148,4 +144,8 @@ crypto_destroy_ctx_template(crypto_ctx_template_t tmpl)
 	kmem_free(ctx_tmpl->ct_prov_tmpl, ctx_tmpl->ct_size);
 	kmem_free(ctx_tmpl, sizeof (kcf_ctx_template_t));
 }
+
+#if defined(_KERNEL) && defined(HAVE_SPL)
+EXPORT_SYMBOL(crypto_create_ctx_template);
 EXPORT_SYMBOL(crypto_destroy_ctx_template);
+#endif

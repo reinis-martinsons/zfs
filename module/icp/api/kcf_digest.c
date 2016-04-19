@@ -23,11 +23,7 @@
  * Use is subject to license terms.
  */
 
-#include <sys/errno.h>
-#include <sys/types.h>
-#include <sys/kmem.h>
-#include <sys/cmn_err.h>
-#include <sys/sysmacros.h>
+#include <sys/zfs_context.h>
 #include <sys/crypto/common.h>
 #include <sys/crypto/impl.h>
 #include <sys/crypto/api.h>
@@ -122,7 +118,7 @@ crypto_digest_prov(crypto_provider_t provider, crypto_session_id_t sid,
 
 	return (rv);
 }
-EXPORT_SYMBOL(crypto_digest_prov);
+
 
 /*
  * Same as crypto_digest_prov(), but relies on the KCF scheduler to
@@ -184,7 +180,6 @@ retry:
 	KCF_PROV_REFRELE(pd);
 	return (error);
 }
-EXPORT_SYMBOL(crypto_digest);
 
 /*
  * crypto_digest_init_prov()
@@ -265,7 +260,6 @@ crypto_digest_init_prov(crypto_provider_t provider, crypto_session_id_t sid,
 
 	return (error);
 }
-EXPORT_SYMBOL(crypto_digest_init_prov);
 
 /*
  * Same as crypto_digest_init_prov(), but relies on the KCF scheduler
@@ -317,7 +311,6 @@ retry:
 	KCF_PROV_REFRELE(pd);
 	return (error);
 }
-EXPORT_SYMBOL(crypto_digest_init);
 
 /*
  * crypto_digest_update()
@@ -367,7 +360,6 @@ crypto_digest_update(crypto_context_t context, crypto_data_t *data,
 
 	return (error);
 }
-EXPORT_SYMBOL(crypto_digest_update);
 
 /*
  * crypto_digest_final()
@@ -419,7 +411,6 @@ crypto_digest_final(crypto_context_t context, crypto_data_t *digest,
 	KCF_CONTEXT_COND_RELEASE(error, kcf_ctx);
 	return (error);
 }
-EXPORT_SYMBOL(crypto_digest_final);
 
 /*
  * Performs a digest update on the specified key. Note that there is
@@ -455,7 +446,6 @@ crypto_digest_key_prov(crypto_context_t context, crypto_key_t *key,
 
 	return (error);
 }
-EXPORT_SYMBOL(crypto_digest_key_prov);
 
 /*
  * See comments for crypto_digest_update() and crypto_digest_final().
@@ -491,4 +481,14 @@ crypto_digest_single(crypto_context_t context, crypto_data_t *data,
 	KCF_CONTEXT_COND_RELEASE(error, kcf_ctx);
 	return (error);
 }
+
+#if defined(_KERNEL) && defined(HAVE_SPL)
+EXPORT_SYMBOL(crypto_digest_prov);
+EXPORT_SYMBOL(crypto_digest);
+EXPORT_SYMBOL(crypto_digest_init_prov);
+EXPORT_SYMBOL(crypto_digest_init);
+EXPORT_SYMBOL(crypto_digest_update);
+EXPORT_SYMBOL(crypto_digest_final);
+EXPORT_SYMBOL(crypto_digest_key_prov);
 EXPORT_SYMBOL(crypto_digest_single);
+#endif

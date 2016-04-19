@@ -129,8 +129,8 @@ extern "C" {
 #define	BIT_ONLYONESET(u) \
 	((((u) == 0) ? 0 : ((u) & ((u) - 1)) == 0))
 
-#if defined(_KERNEL) && !defined(_ASM)
-#include <sys/atomic.h>
+#ifndef _ASM
+//#include <sys/atomic.h>
 
 /*
  * return next available bit index from map with specified number of bits
@@ -182,7 +182,7 @@ extern int	odd_parity(ulong_t);
  */
 #define	BITX(u, h, l)	(((u) >> (l)) & ((1LU << ((h) - (l) + 1LU)) - 1LU))
 
-#endif	/* _KERNEL && !_ASM */
+#endif	/* _ASM */
 
 #ifdef	__cplusplus
 }

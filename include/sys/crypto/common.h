@@ -61,13 +61,11 @@ typedef struct crypto_mechanism32 {
 
 #endif  /* _SYSCALL32 */
 
-#ifdef _KERNEL
 /* CK_AES_CTR_PARAMS provides parameters to the CKM_AES_CTR mechanism */
 typedef struct CK_AES_CTR_PARAMS {
 	ulong_t	ulCounterBits;
 	uint8_t cb[16];
 } CK_AES_CTR_PARAMS;
-#endif
 
 /* CK_AES_CCM_PARAMS provides parameters to the CKM_AES_CCM mechanism */
 typedef struct CK_AES_CCM_PARAMS {
@@ -96,7 +94,6 @@ typedef struct CK_AES_GMAC_PARAMS {
 	ulong_t ulAADLen;
 } CK_AES_GMAC_PARAMS;
 
-#ifdef _KERNEL
 /*
  * CK_ECDH1_DERIVE_PARAMS provides the parameters to the
  * CKM_ECDH1_KEY_DERIVE mechanism
@@ -108,9 +105,7 @@ typedef struct CK_ECDH1_DERIVE_PARAMS {
 	ulong_t		ulPublicDataLen;
 	uchar_t		*pPublicData;
 } CK_ECDH1_DERIVE_PARAMS;
-#endif
 
-#ifdef _KERNEL
 #ifdef  _SYSCALL32
 
 /* needed for 32-bit applications running on 64-bit kernels */
@@ -155,7 +150,6 @@ typedef struct CK_ECDH1_DERIVE_PARAMS32 {
 } CK_ECDH1_DERIVE_PARAMS32;
 
 #endif  /* _SYSCALL32 */
-#endif /* _KERNEL */
 
 /*
  * The measurement unit bit flag for a mechanism's minimum or maximum key size.

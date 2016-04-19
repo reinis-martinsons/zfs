@@ -1,6 +1,12 @@
+#ifdef _KERNEL
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
+#else
+#define __exit
+#define __init
+#endif
+
 #include <sys/crypto/common.h>
 #include <sys/crypto/api.h>
 #include <sys/crypto/impl.h>
@@ -22,7 +28,7 @@
 
 #define	SHA_CKSUM_SIZE 32
 
-static void __exit
+void __exit
 illumos_crypto_exit(void)
 {
 	sha2_mod_fini();
@@ -32,10 +38,9 @@ illumos_crypto_exit(void)
 	kcf_destroy_mech_tabs();
 	mod_hash_fini();
 }
-module_exit(illumos_crypto_exit);
 
 /* roughly equivalent to kcf.c: _init() */
-static int __init
+int __init
 illumos_crypto_init(void)
 {
 	/* initialize the mod hash module */
@@ -59,6 +64,9 @@ illumos_crypto_init(void)
 
 	return (0);
 }
-module_init(illumos_crypto_init);
 
+#if defined(_KERNEL) && defined(HAVE_SPL)
+module_init(illumos_crypto_init);
+module_exit(illumos_crypto_exit);
 MODULE_LICENSE("CDDL");
+#endif

@@ -50,8 +50,6 @@ struct mod_ops {
 	int	(*modm_info)(void *, struct modlinkage *, int *);
 };
 
-#ifdef _KERNEL
-
 /*
  * The defined set of mod_ops structures for each loadable module type
  * Defined in modctl.c
@@ -77,8 +75,6 @@ extern struct mod_ops mod_ippops;
 extern struct mod_ops mod_pcbeops;
 extern struct mod_ops mod_devfsops;
 extern struct mod_ops mod_kiconvops;
-
-#endif /* _KERNEL */
 
 /*
  * Definitions for the module specific linkage structures.
@@ -322,9 +318,7 @@ struct modinfo32 {
 #define	MI_INFO_ONE	1
 #define	MI_INFO_ALL	2
 #define	MI_INFO_CNT	4
-#ifdef _KERNEL
 #define	MI_INFO_LINKAGE	8	/* used internally to extract modlinkage */
-#endif
 /*
  * MI_INFO_NOBASE indicates caller does not need mi_base. Failure to use this
  * flag may lead 32-bit apps to receive an EOVERFLOW error from modctl(MODINFO)
@@ -423,9 +417,6 @@ typedef struct modctl {
 #define	MOD_NONOTIFY		0x2	/* No krtld notifications on (un)load */
 #define	MOD_NOUNLOAD		0x4	/* Assume EBUSY for all _fini's */
 
-
-#ifdef _KERNEL
-
 #define	MOD_BIND_HASHSIZE	64
 #define	MOD_BIND_HASHMASK	(MOD_BIND_HASHSIZE-1)
 
@@ -452,12 +443,6 @@ extern modctl_t modules;
 extern int	mod_install(struct modlinkage *);
 extern int	mod_remove(struct modlinkage *);
 extern int	mod_info(struct modlinkage *, struct modinfo *);
-
-#else	/* _KERNEL */
-
-extern int modctl(int, ...);
-
-#endif	/* _KERNEL */
 
 /*
  * bit definitions for moddebug.
