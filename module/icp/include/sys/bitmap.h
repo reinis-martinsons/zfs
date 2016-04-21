@@ -130,7 +130,6 @@ extern "C" {
 	((((u) == 0) ? 0 : ((u) & ((u) - 1)) == 0))
 
 #ifndef _ASM
-//#include <sys/atomic.h>
 
 /*
  * return next available bit index from map with specified number of bits
