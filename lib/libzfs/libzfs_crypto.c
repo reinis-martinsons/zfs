@@ -26,11 +26,12 @@
  * Use is subject to license terms.
  */
 
-#include <libintl.h>
-#include <libzfs.h>
+#include <sys/zfs_context.h>
 #include <sys/fs/zfs.h>
 #include <sys/dsl_keychain.h>
-
+#include <sys/crypto/icp.h>
+#include <libintl.h>
+#include <libzfs.h>
 #include "libzfs_impl.h"
 #include "zfeature_common.h"
 

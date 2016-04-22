@@ -23,8 +23,8 @@
  * Use is subject to license terms.
  */
 
+#include <sys/zfs_context.h>
 #include <sys/modctl.h>
-#include <sys/cmn_err.h>
 
 /*
  * Null operations; used for uninitialized and "misc" modules.

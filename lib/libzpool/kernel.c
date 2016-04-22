@@ -39,6 +39,7 @@
 #include <sys/utsname.h>
 #include <sys/time.h>
 #include <sys/systeminfo.h>
+#include <sys/crypto/icp.h>
 
 /*
  * Emulation of kernel services in userland.

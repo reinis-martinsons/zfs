@@ -24,12 +24,11 @@
  * Use is subject to license terms.
  */
 
+#include <sys/zfs_context.h>
 #include <sys/modctl.h>
-#include <sys/cmn_err.h>
 #include <sys/crypto/common.h>
 #include <sys/crypto/spi.h>
-#include <sys/systm.h>
-#include <sys/sysmacros.h>
+#include <sys/crypto/icp.h>
 #define	_SHA2_IMPL
 #include <sha2/sha2.h>
 

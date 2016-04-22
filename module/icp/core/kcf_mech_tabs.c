@@ -23,11 +23,11 @@
  * Use is subject to license terms.
  */
 
+#include <sys/zfs_context.h>
 #include <sys/crypto/common.h>
 #include <sys/crypto/api.h>
 #include <sys/crypto/impl.h>
 #include <sys/modhash.h>
-#include <sys/cmn_err.h>
 
 /* Cryptographic mechanisms tables and their access functions */
 

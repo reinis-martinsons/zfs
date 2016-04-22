@@ -461,6 +461,7 @@ mod_hash_create_extended(
 	}
 	(void) strcpy(mod_hash->mh_name, hname);
 
+	rw_init(&mod_hash->mh_contents, NULL, RW_DEFAULT, NULL);
 	mod_hash->mh_sleep = sleep;
 	mod_hash->mh_nchains = nchains;
 	mod_hash->mh_kdtor = kdtor;
@@ -517,6 +518,7 @@ mod_hash_destroy_hash(mod_hash_t *hash)
 	 */
 	mod_hash_clear(hash);
 
+	rw_destroy(&hash->mh_contents);
 	kmem_free(hash->mh_name, strlen(hash->mh_name) + 1);
 	kmem_free(hash, MH_SIZE(hash->mh_nchains));
 }

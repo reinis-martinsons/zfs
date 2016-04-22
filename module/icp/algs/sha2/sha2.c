@@ -33,10 +33,7 @@
  * and appreciated.
  */
 
-#include <sys/types.h>
-#include <sys/param.h>
-#include <sys/systm.h>
-#include <sys/sysmacros.h>
+#include <sys/zfs_context.h>
 #define	_SHA2_IMPL
 #include <sha2/sha2.h>
 #include <sha2/sha2_consts.h>

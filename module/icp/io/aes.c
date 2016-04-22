@@ -31,7 +31,7 @@
 #include <sys/crypto/common.h>
 #include <sys/crypto/impl.h>
 #include <sys/crypto/spi.h>
-#include <sys/crypto/algs.h>
+#include <sys/crypto/icp.h>
 #include <modes/modes.h>
 #include <aes/aes_impl.h>
 #include <sys/modctl.h>

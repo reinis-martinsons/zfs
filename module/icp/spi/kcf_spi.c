@@ -31,15 +31,11 @@
 
 
 #include <sys/zfs_context.h>
-#include <sys/sunddi.h>
-#include <sys/modctl.h>
+#include <sys/policy.h>
 #include <sys/crypto/common.h>
 #include <sys/crypto/impl.h>
 #include <sys/crypto/sched_impl.h>
 #include <sys/crypto/spi.h>
-#include <sys/kstat.h>
-#include <sys/policy.h>
-#include <sys/cmn_err.h>
 
 /*
  * minalloc and maxalloc values to be used for taskq_create().

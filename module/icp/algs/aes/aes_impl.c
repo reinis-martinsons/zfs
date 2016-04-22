@@ -28,7 +28,6 @@
 #include <modes/modes.h>
 #include <aes/aes_impl.h>
 
-
 /*
  * This file is derived from the file  rijndael-alg-fst.c  taken from the
  * "optimized C code v3.0" on the "rijndael home page"

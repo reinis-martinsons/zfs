@@ -12,24 +12,10 @@
 #include <sys/crypto/impl.h>
 #include <sys/crypto/sched_impl.h>
 #include <sys/modhash_impl.h>
-#include <sys/crypto/algs.h>
-
-#define	WRAPPING_IV_LEN 13
-#define	WRAPPING_MAC_LEN 16
-#define	CTBUF_LEN(len) ((len) + WRAPPING_IV_LEN + WRAPPING_MAC_LEN)
-
-#define	SET_CRYPTO_DATA(cd, buf, len)	\
-	(cd).cd_format = CRYPTO_DATA_RAW;\
-	(cd).cd_offset = 0;\
-	(cd).cd_length = (len);\
-	(cd).cd_miscdata = NULL;\
-	(cd).cd_raw.iov_base = (buf);\
-	(cd).cd_raw.iov_len = (len);
-
-#define	SHA_CKSUM_SIZE 32
+#include <sys/crypto/icp.h>
 
 void __exit
-illumos_crypto_exit(void)
+icp_exit(void)
 {
 	sha2_mod_fini();
 	aes_mod_fini();
@@ -41,7 +27,7 @@ illumos_crypto_exit(void)
 
 /* roughly equivalent to kcf.c: _init() */
 int __init
-illumos_crypto_init(void)
+icp_init(void)
 {
 	/* initialize the mod hash module */
 	mod_hash_init();
@@ -66,7 +52,7 @@ illumos_crypto_init(void)
 }
 
 #if defined(_KERNEL) && defined(HAVE_SPL)
-module_init(illumos_crypto_init);
-module_exit(illumos_crypto_exit);
+module_init(icp_init);
+module_exit(icp_exit);
 MODULE_LICENSE("CDDL");
 #endif
