@@ -34,7 +34,7 @@
 #include <sys/avl.h>
 #include <sys/zio.h>
 
-#define ENCRYPT_DEBUG
+#define	ENCRYPT_DEBUG
 #if defined(_KERNEL) && defined(ENCRYPT_DEBUG)
 
 #define	LOG_DEBUG(fmt, args...) \
@@ -72,7 +72,7 @@
 #define	WRAPPING_IV_LEN 13
 #define	WRAPPING_MAC_LEN 16
 #define	SHA_256_DIGEST_LEN 32
-#define HMAC_SHA256_KEYLEN 32
+#define	HMAC_SHA256_KEYLEN 32
 
 #define	ZIO_NO_ENCRYPTION_NEEDED -1
 

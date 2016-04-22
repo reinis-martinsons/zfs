@@ -244,9 +244,8 @@ zil_read_log_block(zilog_t *zilog, boolean_t decrypt, const blkptr_t *bp,
 		 */
 		cksum.zc_word[ZIL_ZC_SEQ]++;
 
-		if (decrypt){
+		if (decrypt)
 			data = abuf->b_data;
-		}
 
 		if (BP_GET_CHECKSUM(bp) == ZIO_CHECKSUM_ZILOG2) {
 			zil_chain_t *zilc = data;
@@ -280,7 +279,7 @@ zil_read_log_block(zilog_t *zilog, boolean_t decrypt, const blkptr_t *bp,
 			}
 		}
 
-		if(abuf)
+		if (abuf)
 			VERIFY(arc_buf_remove_ref(abuf, &abuf));
 	}
 
@@ -484,7 +483,7 @@ zil_claim_log_record(zilog_t *zilog, lr_t *lrc, void *tx, uint64_t first_txg)
 	 * waited for all writes to be stable first), so it is semantically
 	 * correct to declare this the end of the log.
 	 */
-	if (lr->lr_blkptr.blk_birth >= first_txg){
+	if (lr->lr_blkptr.blk_birth >= first_txg) {
 		error = zil_check_log_data(zilog, lr);
 		if (error)
 			return (error);

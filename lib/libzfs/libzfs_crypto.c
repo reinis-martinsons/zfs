@@ -49,16 +49,16 @@ typedef enum key_locator {
 } key_locator_t;
 
 static char *
-get_key_format_name(key_format_t format){
-	switch(format) {
+get_key_format_name(key_format_t format) {
+	switch (format) {
 	case KEY_FORMAT_RAW:
-		return "raw";
+		return ("raw");
 	case KEY_FORMAT_HEX:
-		return "hex";
+		return ("hex");
 	case KEY_FORMAT_PASSPHRASE:
-		return "passphrase";
+		return ("passphrase");
 	default:
-		return "";
+		return ("");
 	}
 }
 
@@ -129,13 +129,14 @@ keysource_prop_parser(char *keysource, key_format_t *format,
 }
 
 static int
-hex_key_to_raw(char *hex, int hexlen, uint8_t *out){
+hex_key_to_raw(char *hex, int hexlen, uint8_t *out)
+{
 	int ret, i;
 	unsigned int c;
 
-	for (i = 0; i < hexlen; i += 2){
+	for (i = 0; i < hexlen; i += 2) {
 		ret = sscanf(&hex[i], "%02x", &c);
-		if (ret != 1){
+		if (ret != 1) {
 			ret = EINVAL;
 			goto error;
 		}
@@ -173,7 +174,7 @@ get_key_material(libzfs_handle_t *hdl, key_format_t format,
 
 		break;
 	case KEY_LOCATOR_URI:
-		/* open the file specified in the uri*/
+		/* open the file specified in the uri */
 		fd = fopen(&uri[7], "r");
 		if (!fd) {
 			ret = errno;
@@ -191,7 +192,7 @@ get_key_material(libzfs_handle_t *hdl, key_format_t format,
 		goto error;
 	}
 
-	switch(format) {
+	switch (format) {
 	case KEY_FORMAT_RAW:
 	case KEY_FORMAT_HEX:
 		if (format == KEY_FORMAT_RAW) {
@@ -442,7 +443,7 @@ zfs_crypto_create(libzfs_handle_t *hdl, char *parent_name, nvlist_t *props,
 			goto error;
 		}
 	} else {
-		if(!nvlist_exists(pool_props, "feature@encryption")){
+		if (!nvlist_exists(pool_props, "feature@encryption")) {
 			ret = EINVAL;
 			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
 			    "Encryption feature not enabled."));

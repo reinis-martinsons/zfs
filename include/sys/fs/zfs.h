@@ -957,7 +957,7 @@ typedef enum {
  * Special nvlist name that will not have its args recorded in the pool's
  * history log.
  */
-#define ZPOOL_HIDDEN_ARGS	"hidden_args"
+#define	ZPOOL_HIDDEN_ARGS	"hidden_args"
 
 /*
  * Flags for ZFS_IOC_VDEV_SET_STATE

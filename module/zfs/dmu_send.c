@@ -2654,7 +2654,7 @@ dmu_recv_end_sync(void *arg, dmu_tx_t *tx)
 	 * we release the keychain record manually here
 	 */
 	(void) spa_keystore_remove_keychain_record(dmu_tx_pool(tx)->dp_spa,
-	     drc->drc_ds);
+	    drc->drc_ds);
 	dsl_dataset_disown(drc->drc_ds, dmu_recv_tag);
 	drc->drc_ds = NULL;
 }

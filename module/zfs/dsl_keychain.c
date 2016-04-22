@@ -1590,7 +1590,7 @@ spa_decrypt_data(spa_t *spa, zbookmark_phys_t *bookmark, uint64_t txgid,
 	if (ot == DMU_OT_INTENT_LOG) {
 		ret = zio_crypt_generate_iv(bookmark, 0,
 		    MAX_DATA_IV_LEN, zil_iv_buf);
-		if(ret)
+		if (ret)
 			goto error;
 
 		zc = (zil_chain_t *) cipherbuf;

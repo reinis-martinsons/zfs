@@ -260,9 +260,6 @@ zio_do_crypt_raw(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
 		ret = crypto_decrypt(&mech, &cipherdata, key, tmpl, &plaindata,
 			NULL);
 
-	//print_crypto_data("plaindata", &plaindata);
-	//print_crypto_data("cipherdata", &cipherdata);
-
 	if (ret != CRYPTO_SUCCESS) {
 		LOG_ERROR(ret, "");
 		ret = EIO;
@@ -289,7 +286,7 @@ zio_crypt_key_wrap(crypto_key_t *cwkey, uint64_t crypt, uint8_t *keydata,
 	ASSERT(crypt < ZIO_CRYPT_FUNCTIONS);
 	ASSERT(cwkey->ck_format == CRYPTO_KEY_RAW);
 
-	bzero(dckp, sizeof(dsl_crypto_key_phys_t));
+	bzero(dckp, sizeof (dsl_crypto_key_phys_t));
 
 	/* set the crypt */
 	dckp->dk_crypt_alg = crypt;
@@ -303,7 +300,7 @@ zio_crypt_key_wrap(crypto_key_t *cwkey, uint64_t crypt, uint8_t *keydata,
 	if (ret)
 		goto error;
 
-	/* encrypt the keys and store the results in the dckp*/
+	/* encrypt the keys and store the results in the dckp */
 	ret = zio_encrypt_raw(crypt, cwkey, NULL, dckp->dk_iv,
 	    keydata, dckp->dk_keybuf, zio_crypt_table[crypt].ci_keylen);
 	if (ret)
@@ -552,10 +549,6 @@ zio_do_crypt_uio(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
 		    NULL);
 	}
 
-	LOG_DEBUG("encrypt = %d", encrypt);
-	//print_crypto_data("plaindata", &plaindata);
-	//print_crypto_data("cipherdata", &cipherdata);
-
 	if (ret != CRYPTO_SUCCESS) {
 		LOG_ERROR(ret, "");
 		ret = EIO;
@@ -655,8 +648,9 @@ zio_crypt_init_uios_zil(boolean_t encrypt, uint8_t *plainbuf,
 		lr_len = lr->lrc_reclen;
 
 		if (lr->lrc_txtype == TX_WRITE) {
-			bcopy(slrp, dlrp, sizeof(lr_t));
-			crypt_len = sizeof (lr_write_t) - sizeof (lr_t) - sizeof (blkptr_t);
+			bcopy(slrp, dlrp, sizeof (lr_t));
+			crypt_len = sizeof (lr_write_t) -
+			    sizeof (lr_t) - sizeof (blkptr_t);
 			src_iovecs[nr_iovecs].iov_base = slrp + sizeof (lr_t);
 			src_iovecs[nr_iovecs].iov_len = crypt_len;
 			dst_iovecs[nr_iovecs].iov_base = dlrp + sizeof (lr_t);
@@ -671,15 +665,17 @@ zio_crypt_init_uios_zil(boolean_t encrypt, uint8_t *plainbuf,
 
 			if (lr_len != sizeof (lr_write_t)) {
 				crypt_len = lr_len - sizeof (lr_write_t);
-				src_iovecs[nr_iovecs].iov_base = slrp + sizeof (lr_write_t);
+				src_iovecs[nr_iovecs].iov_base =
+				    slrp + sizeof (lr_write_t);
 				src_iovecs[nr_iovecs].iov_len = crypt_len;
-				dst_iovecs[nr_iovecs].iov_base = dlrp + sizeof (lr_write_t);
+				dst_iovecs[nr_iovecs].iov_base =
+				    dlrp + sizeof (lr_write_t);
 				dst_iovecs[nr_iovecs].iov_len = crypt_len;
 				nr_iovecs++;
 				total_len += crypt_len;
 			}
 		} else {
-			bcopy(slrp, dlrp, sizeof(lr_t));
+			bcopy(slrp, dlrp, sizeof (lr_t));
 			crypt_len = lr_len - sizeof (lr_t);
 			src_iovecs[nr_iovecs].iov_base = slrp + sizeof (lr_t);
 			src_iovecs[nr_iovecs].iov_len = crypt_len;
@@ -834,12 +830,12 @@ zio_crypt_init_uios(boolean_t encrypt, dmu_object_type_t ot, uint8_t *plainbuf,
 	cuio->uio_segflg = UIO_USERSPACE;
 #endif
 
-	mac_iov = ((iovec_t*)&cuio->uio_iov[cuio->uio_iovcnt - 1]);
+	mac_iov = ((iovec_t *)&cuio->uio_iov[cuio->uio_iovcnt - 1]);
 	mac_iov->iov_base = mac;
 	mac_iov->iov_len = maclen;
 
 	if (!encrypt) {
-		mac_out_iov = ((iovec_t*)&puio->uio_iov[puio->uio_iovcnt - 1]);
+		mac_out_iov = ((iovec_t *)&puio->uio_iov[puio->uio_iovcnt - 1]);
 		mac_out_iov->iov_base = out_mac;
 		mac_out_iov->iov_len = maclen;
 	}
@@ -871,7 +867,7 @@ zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key,
 		mac, out_mac, &puio, &cuio, &enc_len);
 
 	/* if no encryption is required, just copy the plain data */
-	if (ret == ZIO_NO_ENCRYPTION_NEEDED){
+	if (ret == ZIO_NO_ENCRYPTION_NEEDED) {
 		if (encrypt) {
 			bcopy(plainbuf, cipherbuf, datalen);
 		} else {

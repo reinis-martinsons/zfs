@@ -1225,14 +1225,14 @@ zpool_create(libzfs_handle_t *hdl, const char *pool, nvlist_t *nvroot,
 			goto create_failed;
 		}
 		if (zfs_crypto_create(hdl, NULL, zc_fsprops, props,
-		    &hidden_args) != 0){
+		    &hidden_args) != 0) {
 			goto create_failed;
 		}
 		if (nvlist_add_nvlist(zc_props,
 		    ZPOOL_ROOTFS_PROPS, zc_fsprops) != 0) {
 			goto create_failed;
 		}
-		if(hidden_args != NULL && nvlist_add_nvlist(zc_props,
+		if (hidden_args != NULL && nvlist_add_nvlist(zc_props,
 		    ZPOOL_HIDDEN_ARGS, hidden_args) != 0) {
 			goto create_failed;
 		}

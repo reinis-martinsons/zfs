@@ -3,8 +3,8 @@
 #include <linux/kernel.h>
 #include <linux/init.h>
 #else
-#define __exit
-#define __init
+#define	__exit
+#define	__init
 #endif
 
 #include <sys/crypto/common.h>

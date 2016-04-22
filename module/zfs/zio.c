@@ -1344,7 +1344,7 @@ zio_write_bp_init(zio_t *zio)
 		}
 		zio->io_pipeline = ZIO_INTERLOCK_PIPELINE;
 	} else {
-		if(IO_IS_ALLOCATING(zio)) {
+		if (IO_IS_ALLOCATING(zio)) {
 			ASSERT(zp->zp_checksum != ZIO_CHECKSUM_GANG_HEADER);
 			BP_SET_LSIZE(bp, lsize);
 			BP_SET_TYPE(bp, zp->zp_type);

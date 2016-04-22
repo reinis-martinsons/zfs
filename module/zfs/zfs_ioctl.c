@@ -1277,7 +1277,7 @@ zfs_secpolicy_crypto(zfs_cmd_t *zc, nvlist_t *innvl, cred_t *cr)
 		goto out;
 	}
 
-	switch(crypto_cmd){
+	switch (crypto_cmd) {
 	case ZFS_IOC_CRYPTO_LOAD_KEY:
 	case ZFS_IOC_CRYPTO_UNLOAD_KEY:
 		ret = zfs_secpolicy_write_perms(zc->zc_name,
@@ -3142,7 +3142,7 @@ zfs_destroy_temp_keychain_record(const char *dsname) {
 	if (error != 0)
 		return;
 
-	if(os->os_encrypted)
+	if (os->os_encrypted)
 		(void) spa_keystore_remove_keychain_record(os->os_spa,
 		    os->os_dsl_dataset);
 

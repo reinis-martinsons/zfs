@@ -718,7 +718,7 @@ dsl_dataset_tryown(dsl_dataset_t *ds, void *tag, boolean_t key_required)
 			ret = spa_keystore_create_keychain_record(spa, ds);
 			if (ret) {
 				mutex_exit(&ds->ds_lock);
-				return SET_ERROR(EPERM);
+				return (SET_ERROR(EPERM));
 			}
 		}
 		ds->ds_owner = tag;
@@ -879,7 +879,7 @@ dsl_dataset_create_sync_dd(dsl_dir_t *dd, dsl_dataset_t *origin,
 			VERIFY0(dsl_prop_get_dd(dd->dd_parent,
 			    zfs_prop_to_name(ZFS_PROP_ENCRYPTION),
 			    8, 1, &crypt, NULL, B_FALSE));
-		} else if(crypt == ZIO_CRYPT_INHERIT) {
+		} else if (crypt == ZIO_CRYPT_INHERIT) {
 			crypt = ZIO_CRYPT_OFF;
 		}
 
