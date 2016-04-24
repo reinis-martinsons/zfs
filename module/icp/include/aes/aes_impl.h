@@ -19,7 +19,7 @@
  * CDDL HEADER END
  */
 /*
- * Copyright 2008 Sun Microsystems, Inc.  All rights reserved.
+ * Copyright 2009 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
  */
 
@@ -106,25 +106,62 @@ typedef union {
 	uint32_t	ks32[((MAX_AES_NR) + 1) * (MAX_AES_NB)];
 } aes_ks_t;
 
+/* aes_key.flags value: */
+#define	INTEL_AES_NI_CAPABLE	0x1	/* AES-NI instructions present */
+
 typedef struct aes_key aes_key_t;
 struct aes_key {
-	int		nr;
-	int		type;
-	aes_ks_t	encr_ks;
-	aes_ks_t	decr_ks;
+	aes_ks_t	encr_ks;  /* encryption key schedule */
+	aes_ks_t	decr_ks;  /* decryption key schedule */
+#ifdef __amd64
+	long double	align128; /* Align fields above for Intel AES-NI */
+	int		flags;	  /* implementation-dependent flags */
+#endif	/* __amd64 */
+	int		nr;	  /* number of rounds (10, 12, or 14) */
+	int		type;	  /* key schedule size (32 or 64 bits) */
 };
 
-extern int aes_encrypt_contiguous_blocks(void *, char *, size_t,
-    crypto_data_t *);
-extern int aes_decrypt_contiguous_blocks(void *, char *, size_t,
-    crypto_data_t *);
-extern int aes_encrypt_block(const void *ks, const uint8_t *pt, uint8_t *ct);
-extern int aes_decrypt_block(const void *ks, const uint8_t *ct, uint8_t *pt);
+/*
+ * Core AES functions.
+ * ks and keysched are pointers to aes_key_t.
+ * They are declared void* as they are intended to be opaque types.
+ * Use function aes_alloc_keysched() to allocate memory for ks and keysched.
+ */
+extern void *aes_alloc_keysched(size_t *size, int kmflag);
 extern void aes_init_keysched(const uint8_t *cipherKey, uint_t keyBits,
 	void *keysched);
-extern void *aes_alloc_keysched(size_t *size, int kmflag);
-extern void aes_copy_block(uint8_t *, uint8_t *);
-extern void aes_xor_block(uint8_t *, uint8_t *);
+extern int aes_encrypt_block(const void *ks, const uint8_t *pt, uint8_t *ct);
+extern int aes_decrypt_block(const void *ks, const uint8_t *ct, uint8_t *pt);
+
+/*
+ * AES mode functions.
+ * The first 2 functions operate on 16-byte AES blocks.
+ */
+extern void aes_copy_block(uint8_t *in, uint8_t *out);
+extern void aes_xor_block(uint8_t *data, uint8_t *dst);
+
+/* Note: ctx is a pointer to aes_ctx_t defined in modes.h */
+extern int aes_encrypt_contiguous_blocks(void *ctx, char *data, size_t length,
+    crypto_data_t *out);
+extern int aes_decrypt_contiguous_blocks(void *ctx, char *data, size_t length,
+    crypto_data_t *out);
+
+/*
+ * The following definitions and declarations are only used by AES FIPS POST
+ */
+#ifdef _AES_IMPL
+
+typedef enum aes_mech_type {
+	AES_ECB_MECH_INFO_TYPE,		/* SUN_CKM_AES_ECB */
+	AES_CBC_MECH_INFO_TYPE,		/* SUN_CKM_AES_CBC */
+	AES_CBC_PAD_MECH_INFO_TYPE,	/* SUN_CKM_AES_CBC_PAD */
+	AES_CTR_MECH_INFO_TYPE,		/* SUN_CKM_AES_CTR */
+	AES_CCM_MECH_INFO_TYPE,		/* SUN_CKM_AES_CCM */
+	AES_GCM_MECH_INFO_TYPE,		/* SUN_CKM_AES_GCM */
+	AES_GMAC_MECH_INFO_TYPE		/* SUN_CKM_AES_GMAC */
+} aes_mech_type_t;
+
+#endif /* _AES_IMPL */
 
 #ifdef	__cplusplus
 }

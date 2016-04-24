@@ -19,8 +19,7 @@
  * CDDL HEADER END
  */
 /*
- * Copyright 2009 Sun Microsystems, Inc.  All rights reserved.
- * Use is subject to license terms.
+ * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  */
 
 #include <sys/zfs_context.h>
@@ -29,46 +28,85 @@
 #include <sys/crypto/impl.h>
 #include <sys/byteorder.h>
 
+#ifdef __amd64
+
+#ifdef _KERNEL
+/* Workaround for no XMM kernel thread save/restore */
+#define	KPREEMPT_DISABLE	kpreempt_disable()
+#define	KPREEMPT_ENABLE		kpreempt_enable()
+
+#else
+#define	KPREEMPT_DISABLE
+#define	KPREEMPT_ENABLE
+#endif	/* _KERNEL */
+
+extern void gcm_mul_pclmulqdq(uint64_t *x_in, uint64_t *y, uint64_t *res);
+static int intel_pclmulqdq_instruction_present(void);
+#endif	/* __amd64 */
+
 struct aes_block {
 	uint64_t a;
 	uint64_t b;
 };
 
+
+/*
+ * gcm_mul()
+ * Perform a carry-less multiplication (that is, use XOR instead of the
+ * multiply operator) on *x_in and *y and place the result in *res.
+ *
+ * Byte swap the input (*x_in and *y) and the output (*res).
+ *
+ * Note: x_in, y, and res all point to 16-byte numbers (an array of two
+ * 64-bit integers).
+ */
 void
 gcm_mul(uint64_t *x_in, uint64_t *y, uint64_t *res)
 {
-	uint64_t R = { 0xe100000000000000ULL };
-	struct aes_block z = { 0, 0 };
-	struct aes_block v;
-	uint64_t x;
-	int i, j;
+#ifdef __amd64
+	if (intel_pclmulqdq_instruction_present()) {
+		KPREEMPT_DISABLE;
+		gcm_mul_pclmulqdq(x_in, y, res);
+		KPREEMPT_ENABLE;
+	} else
+#endif	/* __amd64 */
+	{
+		static const uint64_t R = 0xe100000000000000ULL;
+		struct aes_block z = {0, 0};
+		struct aes_block v;
+		uint64_t x;
+		int i, j;
 
-	v.a = ntohll(y[0]);
-	v.b = ntohll(y[1]);
+		v.a = ntohll(y[0]);
+		v.b = ntohll(y[1]);
 
-	for (j = 0; j < 2; j++) {
-		x = ntohll(x_in[j]);
-		for (i = 0; i < 64; i++, x <<= 1) {
-			if (x & 0x8000000000000000ULL) {
-				z.a ^= v.a;
-				z.b ^= v.b;
-			}
-			if (v.b & 1ULL) {
-				v.b = (v.a << 63)|(v.b >> 1);
-				v.a = (v.a >> 1) ^ R;
-			} else {
-				v.b = (v.a << 63)|(v.b >> 1);
-				v.a = v.a >> 1;
+		for (j = 0; j < 2; j++) {
+			x = ntohll(x_in[j]);
+			for (i = 0; i < 64; i++, x <<= 1) {
+				if (x & 0x8000000000000000ULL) {
+					z.a ^= v.a;
+					z.b ^= v.b;
+				}
+				if (v.b & 1ULL) {
+					v.b = (v.a << 63)|(v.b >> 1);
+					v.a = (v.a >> 1) ^ R;
+				} else {
+					v.b = (v.a << 63)|(v.b >> 1);
+					v.a = v.a >> 1;
+				}
 			}
 		}
+		res[0] = htonll(z.a);
+		res[1] = htonll(z.b);
 	}
-	res[0] = htonll(z.a);
-	res[1] = htonll(z.b);
 }
+
 
 #define	GHASH(c, d, t) \
 	xor_block((uint8_t *)(d), (uint8_t *)(c)->gcm_ghash); \
-	gcm_mul((uint64_t *)(c)->gcm_ghash, (c)->gcm_H, (uint64_t *)(t));
+	gcm_mul((uint64_t *)(void *)(c)->gcm_ghash, (c)->gcm_H, \
+	(uint64_t *)(void *)(t));
+
 
 /*
  * Encrypt multiple blocks of data in GCM mode.  Decrypt for GCM mode
@@ -247,7 +285,8 @@ gcm_encrypt_final(gcm_ctx_t *ctx, crypto_data_t *out, size_t block_size,
 		ctx->gcm_processed_data_len += ctx->gcm_remainder_len;
 	}
 
-	ctx->gcm_len_a_len_c[1] = htonll(ctx->gcm_processed_data_len << 3);
+	ctx->gcm_len_a_len_c[1] =
+	    htonll(CRYPTO_BYTES2BITS(ctx->gcm_processed_data_len));
 	GHASH(ctx, ctx->gcm_len_a_len_c, ghash);
 	encrypt_block(ctx->gcm_keysched, (uint8_t *)ctx->gcm_J0,
 	    (uint8_t *)ctx->gcm_J0);
@@ -372,6 +411,19 @@ gcm_decrypt_final(gcm_ctx_t *ctx, crypto_data_t *out, size_t block_size,
 	blockp = ctx->gcm_pt_buf;
 	remainder = pt_len;
 	while (remainder > 0) {
+		/* Incomplete last block */
+		if (remainder < block_size) {
+			bcopy(blockp, ctx->gcm_remainder, remainder);
+			ctx->gcm_remainder_len = remainder;
+			/*
+			 * not expecting anymore ciphertext, just
+			 * compute plaintext for the remaining input
+			 */
+			gcm_decrypt_incomplete_block(ctx, block_size,
+			    processed, encrypt_block, xor_block);
+			ctx->gcm_remainder_len = 0;
+			goto out;
+		}
 		/* add ciphertext to the hash */
 		GHASH(ctx, blockp, ghash);
 
@@ -393,23 +445,9 @@ gcm_decrypt_final(gcm_ctx_t *ctx, crypto_data_t *out, size_t block_size,
 		processed += block_size;
 		blockp += block_size;
 		remainder -= block_size;
-
-		/* Incomplete last block */
-		if (remainder > 0 && remainder < block_size) {
-			bcopy(blockp, ctx->gcm_remainder, remainder);
-			ctx->gcm_remainder_len = remainder;
-			/*
-			 * not expecting anymore ciphertext, just
-			 * compute plaintext for the remaining input
-			 */
-			gcm_decrypt_incomplete_block(ctx, block_size,
-			    processed, encrypt_block, xor_block);
-			ctx->gcm_remainder_len = 0;
-			goto out;
-		}
 	}
 out:
-	ctx->gcm_len_a_len_c[1] = htonll(pt_len << 3);
+	ctx->gcm_len_a_len_c[1] = htonll(CRYPTO_BYTES2BITS(pt_len));
 	GHASH(ctx, ctx->gcm_len_a_len_c, ghash);
 	encrypt_block(ctx->gcm_keysched, (uint8_t *)ctx->gcm_J0,
 	    (uint8_t *)ctx->gcm_J0);
@@ -495,7 +533,7 @@ gcm_format_initial_blocks(uchar_t *iv, ulong_t iv_len,
 		} while (remainder > 0);
 
 		len_a_len_c[0] = 0;
-		len_a_len_c[1] = htonll(iv_len << 3);
+		len_a_len_c[1] = htonll(CRYPTO_BYTES2BITS(iv_len));
 		GHASH(ctx, len_a_len_c, ctx->gcm_J0);
 
 		/* J0 will be used again in the final */
@@ -566,7 +604,7 @@ gcm_init_ctx(gcm_ctx_t *gcm_ctx, char *param, size_t block_size,
 	CK_AES_GCM_PARAMS *gcm_param;
 
 	if (param != NULL) {
-		gcm_param = (CK_AES_GCM_PARAMS *)param;
+		gcm_param = (CK_AES_GCM_PARAMS *)(void *)param;
 
 		if ((rv = gcm_validate_args(gcm_param)) != 0) {
 			return (rv);
@@ -577,7 +615,8 @@ gcm_init_ctx(gcm_ctx_t *gcm_ctx, char *param, size_t block_size,
 		gcm_ctx->gcm_processed_data_len = 0;
 
 		/* these values are in bits */
-		gcm_ctx->gcm_len_a_len_c[0] = htonll(gcm_param->ulAADLen << 3);
+		gcm_ctx->gcm_len_a_len_c[0]
+		    = htonll(CRYPTO_BYTES2BITS(gcm_param->ulAADLen));
 
 		rv = CRYPTO_SUCCESS;
 		gcm_ctx->gcm_flags |= GCM_MODE;
@@ -588,6 +627,41 @@ gcm_init_ctx(gcm_ctx_t *gcm_ctx, char *param, size_t block_size,
 
 	if (gcm_init(gcm_ctx, gcm_param->pIv, gcm_param->ulIvLen,
 	    gcm_param->pAAD, gcm_param->ulAADLen, block_size,
+	    encrypt_block, copy_block, xor_block) != 0) {
+		rv = CRYPTO_MECHANISM_PARAM_INVALID;
+	}
+out:
+	return (rv);
+}
+
+int
+gmac_init_ctx(gcm_ctx_t *gcm_ctx, char *param, size_t block_size,
+    int (*encrypt_block)(const void *, const uint8_t *, uint8_t *),
+    void (*copy_block)(uint8_t *, uint8_t *),
+    void (*xor_block)(uint8_t *, uint8_t *))
+{
+	int rv;
+	CK_AES_GMAC_PARAMS *gmac_param;
+
+	if (param != NULL) {
+		gmac_param = (CK_AES_GMAC_PARAMS *)(void *)param;
+
+		gcm_ctx->gcm_tag_len = CRYPTO_BITS2BYTES(AES_GMAC_TAG_BITS);
+		gcm_ctx->gcm_processed_data_len = 0;
+
+		/* these values are in bits */
+		gcm_ctx->gcm_len_a_len_c[0]
+		    = htonll(CRYPTO_BYTES2BITS(gmac_param->ulAADLen));
+
+		rv = CRYPTO_SUCCESS;
+		gcm_ctx->gcm_flags |= GMAC_MODE;
+	} else {
+		rv = CRYPTO_MECHANISM_PARAM_INVALID;
+		goto out;
+	}
+
+	if (gcm_init(gcm_ctx, gmac_param->pIv, AES_GMAC_IV_LEN,
+	    gmac_param->pAAD, gmac_param->ulAADLen, block_size,
 	    encrypt_block, copy_block, xor_block) != 0) {
 		rv = CRYPTO_MECHANISM_PARAM_INVALID;
 	}
@@ -611,8 +685,78 @@ gcm_alloc_ctx(int kmflag)
 	return (gcm_ctx);
 }
 
+void *
+gmac_alloc_ctx(int kmflag)
+{
+	gcm_ctx_t *gcm_ctx;
+
+#ifdef _KERNEL
+	if ((gcm_ctx = kmem_zalloc(sizeof (gcm_ctx_t), kmflag)) == NULL)
+#else
+	if ((gcm_ctx = calloc(1, sizeof (gcm_ctx_t))) == NULL)
+#endif
+		return (NULL);
+
+	gcm_ctx->gcm_flags = GMAC_MODE;
+	return (gcm_ctx);
+}
+
 void
 gcm_set_kmflag(gcm_ctx_t *ctx, int kmflag)
 {
 	ctx->gcm_kmflag = kmflag;
 }
+
+
+#ifdef __amd64
+
+#define INTEL_PCLMULQDQ_FLAG (1 << 1)
+
+/*
+ * Return 1 if executing on Intel with PCLMULQDQ instructions,
+ * otherwise 0 (i.e., Intel without PCLMULQDQ or AMD64).
+ * Cache the result, as the CPU can't change.
+ *
+ * Note: the userland version uses getisax().  The kernel version uses
+ * is_x86_featureset().
+ */
+static int
+intel_pclmulqdq_instruction_present(void)
+{
+	static int cached_result = -1;
+	unsigned eax, ebx, ecx, edx;
+	unsigned func, subfunc;
+
+	if (cached_result == -1) { /* first time */
+		/* check for an intel cpu */
+		func = 0;
+		subfunc = 0;
+
+		__asm__ __volatile__ (
+		    "cpuid"
+		    : "=a" (eax), "=b" (ebx), "=c" (ecx), "=d" (edx)
+		    : "a"(func), "c"(subfunc));
+
+		if (memcmp((char *) (&ebx), "Genu", 4) == 0 &&
+		    memcmp((char *) (&edx), "ineI", 4) == 0 &&
+			memcmp((char *) (&ecx), "ntel", 4) == 0) {
+
+			func = 1;
+			subfunc = 0;
+
+			/* check for aes-ni instruction set */
+			__asm__ __volatile__ (
+				"cpuid"
+				: "=a" (eax), "=b" (ebx), "=c" (ecx), "=d" (edx)
+				: "a"(func), "c"(subfunc));
+
+			cached_result = !!(ecx & INTEL_PCLMULQDQ_FLAG);
+		} else {
+			cached_result = 0;
+		}
+	}
+
+	return (cached_result);
+}
+
+#endif	/* __amd64 */

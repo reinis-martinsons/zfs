@@ -17,17 +17,10 @@ DEFAULT_INCLUDES += \
 
 AM_CCASFLAGS = \
 	-I$(top_srcdir)/include \
-	-I$(top_srcdir)/module/icp/include
+	-I$(top_srcdir)/module/icp/include \
 	-I$(top_srcdir)/lib/libspl/include
 
 noinst_LTLIBRARIES = libicp.la
-
-# asm-x86_64_C = aes/aeskey.c
-# asm-x86_64_ASM = aes/aes_amd64.S
-# asm-i386_C =
-# asm-i386_ASM =
-# asm-generic_C =
-# asm-generic_ASM =
 
 USER_C =
 
@@ -41,6 +34,7 @@ KERNEL_C = \
 	api/kcf_miscapi.c \
 	api/kcf_mac.c \
 	algs/aes/aes_impl.c \
+	algs/aes/aes_modes.c \
 	algs/modes/modes.c \
 	algs/modes/cbc.c \
 	algs/modes/gcm.c \
@@ -61,12 +55,10 @@ KERNEL_C = \
 	core/kcf_prov_tabs.c \
 	asm-x86_64/aes/aeskey.c
 
-#	$($(TARGET_ASM_DIR)_C)
-
 KERNEL_ASM = \
-	asm-x86_64/aes/aes_amd64.S
-	
-#	$($(TARGET_ASM_DIR)_ASM)
+	asm-x86_64/aes/aes_amd64.S \
+	asm-x86_64/aes/aes_intel.S \
+	asm-x86_64/modes/gcm_intel.S
 
 nodist_libicp_la_SOURCES = \
 	$(USER_C) \

@@ -59,10 +59,9 @@
  * 5. Changed aes_encrypt_key* aes_decrypt_key* functions to "static void"
  * 6. Changed N_COLS to MAX_AES_NB
  * 7. Replaced functions aes_encrypt_key and aes_decrypt_key with
- *	OpenSolaris-compatible functions rijndael_key_setup_enc and
- *	rijndael_key_setup_dec
+ *	OpenSolaris-compatible functions rijndael_key_setup_enc_amd64 and
+ *	rijndael_key_setup_dec_amd64
  * 8. cstyled code and removed lint warnings
- *
  */
 
 #if defined(REDUCE_CODE_SIZE)
@@ -212,7 +211,8 @@ aes_encrypt_key256(const unsigned char *key, uint32_t rk[])
  * keyBits	AES key size (128, 192, or 256 bits)
  */
 int
-rijndael_key_setup_enc(uint32_t rk[], const uint32_t cipherKey[], int keyBits)
+rijndael_key_setup_enc_amd64(uint32_t rk[], const uint32_t cipherKey[],
+	int keyBits)
 {
 	switch (keyBits) {
 	case 128:
@@ -559,7 +559,8 @@ aes_decrypt_key256(const unsigned char *key, uint32_t rk[])
  * keyBits	AES key size (128, 192, or 256 bits)
  */
 int
-rijndael_key_setup_dec(uint32_t rk[], const uint32_t cipherKey[], int keyBits)
+rijndael_key_setup_dec_amd64(uint32_t rk[], const uint32_t cipherKey[],
+	int keyBits)
 {
 	switch (keyBits) {
 	case 128:

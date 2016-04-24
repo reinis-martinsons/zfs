@@ -7,6 +7,8 @@ TARGET_ASM_DIR = @TARGET_ASM_DIR@
 
 asm-x86_64_OBJS := $(TARGET_ASM_DIR)/aes/aeskey.o 
 asm-x86_64_OBJS += $(TARGET_ASM_DIR)/aes/aes_amd64.o
+asm-x86_64_OBJS += $(TARGET_ASM_DIR)/aes/aes_intel.o
+asm-x86_64_OBJS += $(TARGET_ASM_DIR)/modes/gcm_intel.o
 asm-i386_OBJS :=
 asm-generic_OBJS :=
 
@@ -42,5 +44,6 @@ $(MODULE)-objs += algs/modes/ecb.o
 $(MODULE)-objs += algs/modes/gcm.o
 $(MODULE)-objs += algs/modes/modes.o
 $(MODULE)-objs += algs/aes/aes_impl.o
+$(MODULE)-objs += algs/aes/aes_modes.o
 $(MODULE)-objs += algs/sha2/sha2.o
 $(MODULE)-objs += $($(TARGET_ASM_DIR)_OBJS)

@@ -66,8 +66,7 @@
 extern "C" {
 #endif
 
-#include <sys/types.h>
-#include <sys/byteorder.h>
+#include <sys/zfs_context.h>
 #include <aes/aes_impl.h>
 
 /*  SUPPORT FEATURES */

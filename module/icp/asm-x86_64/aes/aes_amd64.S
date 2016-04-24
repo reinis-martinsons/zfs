@@ -156,7 +156,8 @@
  * sub	rax,[ebx+ecx*4-20h]	sub	-0x20(%ebx,%ecx,4),%rax
  *
  * 5. Added OpenSolaris ENTRY_NP/SET_SIZE macros from
- * /usr/include/sys/asm_linkage.h, .ident keywords, and lint(1B) guards.
+ * /usr/include/sys/asm_linkage.h, lint(1B) guards, and dummy C function
+ * definitions for lint.
  *
  * 6. Renamed functions and reordered parameters to match OpenSolaris:
  * Original Gladman interface:
@@ -171,9 +172,9 @@
  * 10, 12, or 14 bytes.
  *
  * OpenSolaris OS interface:
- *	void aes_encrypt_impl(const aes_ks_t *ks, int Nr,
+ *	void aes_encrypt_amd64(const aes_ks_t *ks, int Nr,
  *		const uint32_t pt[4], uint32_t ct[4])/
- *	void aes_decrypt_impl(const aes_ks_t *ks, int Nr,
+ *	void aes_decrypt_amd64(const aes_ks_t *ks, int Nr,
  *		const uint32_t pt[4], uint32_t ct[4])/
  *	typedef union {uint64_t ks64[(MAX_AES_NR + 1) * 4]/
  *		 uint32_t ks32[(MAX_AES_NR + 1) * 4]/ } aes_ks_t/
@@ -182,8 +183,23 @@
  * For the x86 64-bit architecture, OpenSolaris OS uses ks32 instead of ks64.
  */
 
-#if !defined(lint) && !defined(__lint)
-	.ident	"%Z%%M%	%I%	%E% SMI"
+#if defined(lint) || defined(__lint)
+
+#include <sys/types.h>
+/* ARGSUSED */
+void
+aes_encrypt_amd64(const uint32_t rk[], int Nr, const uint32_t pt[4],
+	uint32_t ct[4]) {
+}
+/* ARGSUSED */
+void
+aes_decrypt_amd64(const uint32_t rk[], int Nr, const uint32_t ct[4],
+	uint32_t pt[4]) {
+}
+
+
+#else
+
 #define _ASM
 #include <sys/asm_linkage.h>
 
@@ -312,7 +328,6 @@
 #define	tab_f(x)	1(tptr,x,8)
 #define	tab_i(x)	7(tptr,x,8)
 
-	/* EXPORT DELETE START */
 #define	ff_rnd(p1, p2, p3, p4, round)	/* normal forward round */ \
 	mov	fk_ref(round,0), p1; \
 	mov	fk_ref(round,1), p2; \
@@ -668,11 +683,10 @@
 	xor	%edi, p3
 
 #endif	/* LAST_ROUND_TABLES */
-	/* EXPORT DELETE END */
 
 /*
  * OpenSolaris OS:
- * void aes_encrypt_impl(const aes_ks_t *ks, int Nr,
+ * void aes_encrypt_amd64(const aes_ks_t *ks, int Nr,
  *	const uint32_t pt[4], uint32_t ct[4])/
  *
  * Original interface:
@@ -683,15 +697,14 @@
 enc_tab:
 	enc_vals(u8)
 #ifdef	LAST_ROUND_TABLES
-	/ Last Round Tables:
+	// Last Round Tables:
 	enc_vals(w8)
 #endif
 
 
-	ENTRY_NP(aes_encrypt_impl)
-	/* EXPORT DELETE START */
+	ENTRY_NP(aes_encrypt_amd64)
 #ifdef	GLADMAN_INTERFACE
-	/ Original interface
+	// Original interface
 	sub	$[4*8], %rsp	// gnu/linux/opensolaris binary interface
 	mov	%rsi, (%rsp)	// output pointer (P2)
 	mov	%rdx, %r8	// context (P3)
@@ -702,7 +715,7 @@ enc_tab:
 	movzx	4*KS_LENGTH(kptr), %esi	// Get byte key length * 16
 
 #else
-	/ OpenSolaris OS interface
+	// OpenSolaris OS interface
 	sub	$[4*8], %rsp	// Make room on stack to save registers
 	mov	%rcx, (%rsp)	// Save output pointer (P4) on stack
 	mov	%rdi, %r8	// context (P1)
@@ -743,7 +756,7 @@ enc_tab:
 	mov	$-1, %rax	// error
 	jmp	4f
 
-	/ Perform normal forward rounds
+	// Perform normal forward rounds
 1:	ff_rnd(%r9d, %r10d, %r11d, %r12d, 13)
 	ff_rnd(%r9d, %r10d, %r11d, %r12d, 12)
 2:	ff_rnd(%r9d, %r10d, %r11d, %r12d, 11)
@@ -771,14 +784,13 @@ enc_tab:
 	mov	2*8(%rsp), %rbp
 	mov	3*8(%rsp), %r12
 	add	$[4*8], %rsp
-	/* EXPORT DELETE END */
 	ret
 
-	SET_SIZE(aes_encrypt_impl)
+	SET_SIZE(aes_encrypt_amd64)
 
 /*
  * OpenSolaris OS:
- * void aes_decrypt_impl(const aes_ks_t *ks, int Nr,
+ * void aes_decrypt_amd64(const aes_ks_t *ks, int Nr,
  *	const uint32_t pt[4], uint32_t ct[4])/
  *
  * Original interface:
@@ -794,21 +806,20 @@ dec_tab:
 #endif
 
 
-	ENTRY_NP(aes_decrypt_impl)
-	/* EXPORT DELETE START */
+	ENTRY_NP(aes_decrypt_amd64)
 #ifdef	GLADMAN_INTERFACE
 	// Original interface
 	sub	$[4*8], %rsp	// gnu/linux/opensolaris binary interface
 	mov	%rsi, (%rsp)	// output pointer (P2)
-	mov	%rdx, %r8	/ context (P3)
+	mov	%rdx, %r8	// context (P3)
 
 	mov	%rbx, 1*8(%rsp)	// P1: input pointer in rdi
 	mov	%rbp, 2*8(%rsp)	// P2: output pointer in (rsp)
 	mov	%r12, 3*8(%rsp)	// P3: context in r8
-	movzx	4*KS_LENGTH(kptr), %esi	/ Get byte key length * 16
+	movzx	4*KS_LENGTH(kptr), %esi	// Get byte key length * 16
 
 #else
-	/ OpenSolaris OS interface
+	// OpenSolaris OS interface
 	sub	$[4*8], %rsp	// Make room on stack to save registers
 	mov	%rcx, (%rsp)	// Save output pointer (P4) on stack
 	mov	%rdi, %r8	// context (P1)
@@ -883,12 +894,7 @@ dec_tab:
 	mov	2*8(%rsp), %rbp
 	mov	3*8(%rsp), %r12
 	add	$[4*8], %rsp
-	/* EXPORT DELETE END */
 	ret
 
-	SET_SIZE(aes_decrypt_impl)
-
-#else
-	/* LINTED */
-	/* Nothing to be linted in this file--it's pure assembly source. */
-#endif	/* !lint && !__lint */
+	SET_SIZE(aes_decrypt_amd64)
+#endif	/* lint || __lint */
