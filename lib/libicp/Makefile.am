@@ -1,12 +1,8 @@
 include $(top_srcdir)/config/Rules.am
 
-# VPATH = \
-# 	$(top_srcdir)/lib/libicp \
-# 	$(top_srcdir)/lib/libicp/$(TARGET_ASM_DIR)
-
 VPATH = \
 	$(top_srcdir)/module/icp \
-	$(top_srcdir)/module/icp/$(TARGET_ASM_DIR)
+	$(top_srcdir)/lib/libicp
 
 AM_CFLAGS += $(DEBUG_STACKFLAGS) $(FRAME_LARGER_THAN)
 
@@ -21,6 +17,24 @@ AM_CCASFLAGS = \
 	-I$(top_srcdir)/lib/libspl/include
 
 noinst_LTLIBRARIES = libicp.la
+
+if TARGET_ASM_X86_64
+ASM_SOURCES_C = asm-x86_64/aes/aeskey.c
+ASM_SOURCES_AS = \
+	asm-x86_64/aes/aes_amd64.S \
+	asm-x86_64/aes/aes_intel.S \
+	asm-x86_64/modes/gcm_intel.S
+endif
+
+if TARGET_ASM_I386
+ASM_SOURCES_C =
+ASM_SOURCES_AS =
+endif
+	
+if TARGET_ASM_GENERIC
+ASM_SOURCES_C =
+ASM_SOURCES_AS =
+endif
 
 USER_C =
 
@@ -53,12 +67,9 @@ KERNEL_C = \
 	core/kcf_callprov.c \
 	core/kcf_mech_tabs.c \
 	core/kcf_prov_tabs.c \
-	asm-x86_64/aes/aeskey.c
+	$(ASM_SOURCES_C)
 
-KERNEL_ASM = \
-	asm-x86_64/aes/aes_amd64.S \
-	asm-x86_64/aes/aes_intel.S \
-	asm-x86_64/modes/gcm_intel.S
+KERNEL_ASM = $(ASM_SOURCES_AS)
 
 nodist_libicp_la_SOURCES = \
 	$(USER_C) \
