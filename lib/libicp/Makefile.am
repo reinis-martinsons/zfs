@@ -11,14 +11,10 @@ DEFAULT_INCLUDES += \
 	-I$(top_srcdir)/module/icp/include \
 	-I$(top_srcdir)/lib/libspl/include
 
-AM_CCASFLAGS = \
-	-I$(top_srcdir)/include \
-	-I$(top_srcdir)/module/icp/include \
-	-I$(top_srcdir)/lib/libspl/include
-
 noinst_LTLIBRARIES = libicp.la
 
 if TARGET_ASM_X86_64
+AM_CCASFLAGS = -fPIC
 ASM_SOURCES_C = asm-x86_64/aes/aeskey.c
 ASM_SOURCES_AS = \
 	asm-x86_64/aes/aes_amd64.S \
