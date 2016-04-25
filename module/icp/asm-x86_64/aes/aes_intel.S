@@ -417,8 +417,8 @@ _key_expansion_256b:
 #define	ROUNDS64		KEYSIZE64	/* temp */
 #define	ENDAESKEY		USERCIPHERKEY	/* temp */
 
-
 ENTRY_NP(rijndael_key_setup_enc_intel)
+rijndael_key_setup_enc_intel_local:
 	CLEAR_TS_OR_PUSH_XMM0_TO_XMM6(%r10)
 
 	// NULL pointer sanity check
@@ -601,7 +601,7 @@ ENTRY_NP(rijndael_key_setup_enc_intel)
  */
 ENTRY_NP(rijndael_key_setup_dec_intel)
 	// Generate round keys used for encryption
-	call	rijndael_key_setup_enc_intel
+	call	rijndael_key_setup_enc_intel_local
 	test	%rax, %rax
 #ifdef	OPENSSL_INTERFACE
 	jnz	.Ldec_key_exit	// Failed if returned non-0

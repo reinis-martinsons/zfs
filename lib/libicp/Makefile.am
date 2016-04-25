@@ -14,7 +14,6 @@ DEFAULT_INCLUDES += \
 noinst_LTLIBRARIES = libicp.la
 
 if TARGET_ASM_X86_64
-AM_CCASFLAGS = -fPIC
 ASM_SOURCES_C = asm-x86_64/aes/aeskey.c
 ASM_SOURCES_AS = \
 	asm-x86_64/aes/aes_amd64.S \
