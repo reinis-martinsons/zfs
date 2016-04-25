@@ -1,6 +1,9 @@
 /*
- * Copyright 2008 Sun Microsystems, Inc.  All rights reserved.
+ * Copyright 2009 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
+ */
+/*
+ * Copyright 2013 Saso Kiselkov.  All rights reserved.
  */
 
 /*
@@ -38,21 +41,8 @@
 #include <sha2/sha2.h>
 #include <sha2/sha2_consts.h>
 
-#define	_RESTRICT_KYWD
+#define _RESTRICT_KYWD
 
-#ifdef _KERNEL
-#include <sys/cmn_err.h>
-
-#else
-#include <strings.h>
-#include <stdlib.h>
-#include <errno.h>
-
-#pragma weak SHA256Update = SHA2Update
-
-#pragma weak SHA256Final = SHA2Final
-
-#endif	/* _KERNEL */
 
 #ifdef _LITTLE_ENDIAN
 #include <sys/byteorder.h>
@@ -61,7 +51,12 @@
 
 static void Encode(uint8_t *, uint32_t *, size_t);
 
+#if	defined(__amd64)
+#define	SHA256Transform(ctx, in) SHA256TransformBlocks((ctx), (in), 1)
+void SHA256TransformBlocks(SHA2_CTX *ctx, const void *in, size_t num);
+#else
 static void SHA256Transform(SHA2_CTX *, const uint8_t *);
+#endif	/* __amd64 */
 
 static uint8_t PADDING[128] = { 0x80, /* all zeros */ };
 
@@ -116,6 +111,8 @@ static uint8_t PADDING[128] = { 0x80, /* all zeros */ };
 	    ((uint64_t)(addr)[6] << 8) | (uint64_t)(addr)[7])
 #endif	/* _BIG_ENDIAN */
 
+
+#if	!defined(__amd64)
 /* SHA256 Transform */
 
 static void
@@ -323,6 +320,8 @@ SHA256Transform(SHA2_CTX *ctx, const uint8_t *blk)
 	ctx->state.s32[6] += g;
 	ctx->state.s32[7] += h;
 }
+#endif	/* !__amd64 */
+
 
 /*
  * Encode()
@@ -343,7 +342,7 @@ Encode(uint8_t *_RESTRICT_KYWD output, uint32_t *_RESTRICT_KYWD input,
 #if	defined(__sparc)
 	if (IS_P2ALIGNED(output, sizeof (uint32_t))) {
 		for (i = 0, j = 0; j < len; i++, j += 4) {
-			/* LINTED: pointer alignment */
+			/* LINTED E_BAD_PTR_CAST_ALIGN */
 			*((uint32_t *)(output + j)) = input[i];
 		}
 	} else {
@@ -376,28 +375,21 @@ SHA2Init(uint64_t mech, SHA2_CTX *ctx)
 		ctx->state.s32[6] = 0x1f83d9abU;
 		ctx->state.s32[7] = 0x5be0cd19U;
 		break;
-#ifdef _KERNEL
 	default:
 		cmn_err(CE_PANIC,
 		    "sha2_init: failed to find a supported algorithm: 0x%x",
 		    (uint32_t)mech);
-
-#endif /* _KERNEL */
 	}
 
-	ctx->algotype = mech;
+	ctx->algotype = (uint32_t)mech;
 	ctx->count.c64[0] = ctx->count.c64[1] = 0;
 }
-
-#ifndef _KERNEL
 
 void
 SHA256Init(SHA256_CTX *ctx)
 {
 	SHA2Init(SHA256, ctx);
 }
-
-#endif /* _KERNEL */
 
 /*
  * SHA2Update()
@@ -416,6 +408,10 @@ SHA2Update(SHA2_CTX *ctx, const void *inptr, size_t input_len)
 	uint32_t	i, buf_index, buf_len, buf_limit;
 	const uint8_t	*input = inptr;
 	uint32_t	algotype = ctx->algotype;
+#if defined(__amd64)
+	uint32_t	block_count;
+#endif	/* !__amd64 */
+
 
 	/* check for noop */
 	if (input_len == 0)
@@ -469,11 +465,23 @@ SHA2Update(SHA2_CTX *ctx, const void *inptr, size_t input_len)
 			i = buf_len;
 		}
 
+#if !defined(__amd64)
 		if (algotype <= SHA256_HMAC_GEN_MECH_INFO_TYPE) {
 			for (; i + buf_limit - 1 < input_len; i += buf_limit) {
 				SHA256Transform(ctx, &input[i]);
 			}
 		}
+
+#else
+		if (algotype <= SHA256_HMAC_GEN_MECH_INFO_TYPE) {
+			block_count = (input_len - i) >> 6;
+			if (block_count > 0) {
+				SHA256TransformBlocks(ctx, &input[i],
+				    block_count);
+				i += block_count << 6;
+			}
+		}
+#endif	/* !__amd64 */
 
 		/*
 		 * general optimization:
@@ -519,7 +527,6 @@ SHA2Final(void *digest, SHA2_CTX *ctx)
 		SHA2Update(ctx, PADDING, ((index < 56) ? 56 : 120) - index);
 		SHA2Update(ctx, bitcount_be, sizeof (bitcount_be));
 		Encode(digest, ctx->state.s32, sizeof (ctx->state.s32));
-
 	}
 
 	/* zeroize sensitive information */

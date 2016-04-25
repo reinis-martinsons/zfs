@@ -10,6 +10,7 @@ ASM_SOURCES := asm-x86_64/aes/aeskey.o
 ASM_SOURCES += asm-x86_64/aes/aes_amd64.o
 ASM_SOURCES += asm-x86_64/aes/aes_intel.o
 ASM_SOURCES += asm-x86_64/modes/gcm_intel.o
+ASM_SOURCES += asm-x86_64/sha2/sha256_impl.o
 endif
 
 ifeq ($(TARGET_ASM_DIR), asm-i386)

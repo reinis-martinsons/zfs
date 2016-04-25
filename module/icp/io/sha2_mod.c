@@ -20,7 +20,7 @@
  */
 
 /*
- * Copyright 2008 Sun Microsystems, Inc.  All rights reserved.
+ * Copyright 2010 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
  */
 
@@ -31,6 +31,7 @@
 #include <sys/crypto/icp.h>
 #define	_SHA2_IMPL
 #include <sha2/sha2.h>
+#include <sha2/sha2_impl.h>
 
 /*
  * The sha2 module is created with two modlinkages:
@@ -49,28 +50,6 @@ static struct modlcrypto modlcrypto = {
 static struct modlinkage modlinkage = {
 	MODREV_1, {&modlcrypto, NULL}
 };
-
-/*
- * CSPI information (entry points, provider info, etc.)
- */
-
-/*
- * Context for SHA2 mechanism.
- */
-typedef struct sha2_ctx {
-	sha2_mech_type_t	sc_mech_type;	/* type of context */
-	SHA2_CTX		sc_sha2_ctx;	/* SHA2 context */
-} sha2_ctx_t;
-
-/*
- * Context for SHA2 HMAC and HMAC GENERAL mechanisms.
- */
-typedef struct sha2_hmac_ctx {
-	sha2_mech_type_t	hc_mech_type;	/* type of context */
-	uint32_t		hc_digest_len;	/* digest len in bytes */
-	SHA2_CTX		hc_icontext;	/* inner SHA2 context */
-	SHA2_CTX		hc_ocontext;	/* outer SHA2 context */
-} sha2_hmac_ctx_t;
 
 /*
  * Macros to access the SHA2 or SHA2-HMAC contexts from a context passed
@@ -109,12 +88,12 @@ static crypto_mech_info_t sha2_mech_info_tab[] = {
 	{SUN_CKM_SHA256_HMAC, SHA256_HMAC_MECH_INFO_TYPE,
 	    CRYPTO_FG_MAC | CRYPTO_FG_MAC_ATOMIC,
 	    SHA2_HMAC_MIN_KEY_LEN, SHA2_HMAC_MAX_KEY_LEN,
-	    CRYPTO_KEYSIZE_UNIT_IN_BITS},
+	    CRYPTO_KEYSIZE_UNIT_IN_BYTES},
 	/* SHA256-HMAC GENERAL */
 	{SUN_CKM_SHA256_HMAC_GENERAL, SHA256_HMAC_GEN_MECH_INFO_TYPE,
 	    CRYPTO_FG_MAC | CRYPTO_FG_MAC_ATOMIC,
 	    SHA2_HMAC_MIN_KEY_LEN, SHA2_HMAC_MAX_KEY_LEN,
-	    CRYPTO_KEYSIZE_UNIT_IN_BITS}
+	    CRYPTO_KEYSIZE_UNIT_IN_BYTES}
 };
 
 static void sha2_provider_status(crypto_provider_handle_t, uint_t *);
@@ -959,7 +938,7 @@ sha2_mac_atomic(crypto_provider_handle_t provider,
 	uint_t keylen_in_bytes = CRYPTO_BITS2BYTES(key->ck_length);
 
 	/*
-	 * Set the digest length and block size to values approriate to the
+	 * Set the digest length and block size to values appropriate to the
 	 * mechanism
 	 */
 	switch (mechanism->cm_type) {
@@ -1082,7 +1061,7 @@ sha2_mac_verify_atomic(crypto_provider_handle_t provider,
 	uint_t keylen_in_bytes = CRYPTO_BITS2BYTES(key->ck_length);
 
 	/*
-	 * Set the digest length and block size to values approriate to the
+	 * Set the digest length and block size to values appropriate to the
 	 * mechanism
 	 */
 	switch (mechanism->cm_type) {
@@ -1103,6 +1082,7 @@ sha2_mac_verify_atomic(crypto_provider_handle_t provider,
 		/* reuse context template */
 		bcopy(ctx_template, &sha2_hmac_ctx, sizeof (sha2_hmac_ctx_t));
 	} else {
+		sha2_hmac_ctx.hc_mech_type = mechanism->cm_type;
 		/* no context template, initialize context */
 		if (keylen_in_bytes > sha_hmac_block_size) {
 			/*
@@ -1248,7 +1228,7 @@ sha2_create_ctx_template(crypto_provider_handle_t provider,
 	uint32_t sha_digest_len, sha_hmac_block_size;
 
 	/*
-	 * Set the digest length and block size to values approriate to the
+	 * Set the digest length and block size to values appropriate to the
 	 * mechanism
 	 */
 	switch (mechanism->cm_type) {

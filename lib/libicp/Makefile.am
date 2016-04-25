@@ -19,7 +19,8 @@ ASM_SOURCES_C = asm-x86_64/aes/aeskey.c
 ASM_SOURCES_AS = \
 	asm-x86_64/aes/aes_amd64.S \
 	asm-x86_64/aes/aes_intel.S \
-	asm-x86_64/modes/gcm_intel.S
+	asm-x86_64/modes/gcm_intel.S \
+	asm-x86_64/sha2/sha256_impl.S
 endif
 
 if TARGET_ASM_I386
@@ -74,9 +75,3 @@ nodist_libicp_la_SOURCES = \
 	$(KERNEL_ASM)
 	
 libicp_la_LIBADD = -lrt
-
-# libicp_la_LIBADD = \
-# 	$(top_builddir)/lib/libzpool/libzpool.la
-
-EXTRA_DIST = $(USER_C)
-
