@@ -32,6 +32,7 @@
 #include <sys/spa.h>
 #include <sys/zio.h>
 #include <sys/dmu.h>
+#include <sys/zio_crypt.h>
 
 #ifdef	__cplusplus
 extern "C" {
@@ -85,8 +86,6 @@ typedef struct zil_header {
  * The zec_cksum is checked by the SPA against the sequence
  * number passed in the blk_cksum field of the blkptr_t
  */
-#define	ZIL_MAC_LEN 8
-
 typedef struct zil_chain {
 	uint8_t zc_mac[ZIL_MAC_LEN]; /* mac for encryption */
 	blkptr_t zc_next_blk;	/* next block in chain */
