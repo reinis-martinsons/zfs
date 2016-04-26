@@ -15,7 +15,7 @@
 #include <sys/crypto/icp.h>
 
 void __exit
-icp_exit(void)
+icp_fini(void)
 {
 	sha2_mod_fini();
 	aes_mod_fini();
@@ -52,7 +52,7 @@ icp_init(void)
 }
 
 #if defined(_KERNEL) && defined(HAVE_SPL)
+module_exit(icp_fini);
 module_init(icp_init);
-module_exit(icp_exit);
 MODULE_LICENSE("CDDL");
 #endif

@@ -429,7 +429,7 @@ zio_crypt_generate_iv_dd(zio_crypt_key_t *key, uint8_t *plainbuf,
 	crypto_data_t pb_data, digest_data;
 	uint8_t digestbuf[SHA_256_DIGEST_LEN];
 
-	/* initialize sha 256 mechanism */
+	/* initialize sha 256 hmac mechanism */
 	mech.cm_type = crypto_mech2id(SUN_CKM_SHA256_HMAC);
 	mech.cm_param = NULL;
 	mech.cm_param_len = 0;

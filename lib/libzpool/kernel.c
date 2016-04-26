@@ -1073,6 +1073,23 @@ highbit64(uint64_t i)
 
 static int random_fd = -1, urandom_fd = -1;
 
+void
+random_init(void)
+{
+	VERIFY((random_fd = open("/dev/random", O_RDONLY)) != -1);
+	VERIFY((urandom_fd = open("/dev/urandom", O_RDONLY)) != -1);
+}
+
+void
+random_fini(void)
+{
+	close(random_fd);
+	close(urandom_fd);
+
+	random_fd = -1;
+	urandom_fd = -1;
+}
+
 static int
 random_get_bytes_common(uint8_t *ptr, size_t len, int fd)
 {
@@ -1185,8 +1202,8 @@ kernel_init(int mode)
 	(void) snprintf(hw_serial, sizeof (hw_serial), "%ld",
 	    (mode & FWRITE) ? get_system_hostid() : 0);
 
-	VERIFY((random_fd = open("/dev/random", O_RDONLY)) != -1);
-	VERIFY((urandom_fd = open("/dev/urandom", O_RDONLY)) != -1);
+	random_init();
+
 	VERIFY0(uname(&hw_utsname));
 
 	thread_init();
@@ -1205,11 +1222,7 @@ kernel_fini(void)
 	system_taskq_fini();
 	thread_fini();
 
-	close(random_fd);
-	close(urandom_fd);
-
-	random_fd = -1;
-	urandom_fd = -1;
+	random_fini();
 }
 
 uid_t

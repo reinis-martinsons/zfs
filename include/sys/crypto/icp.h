@@ -29,6 +29,6 @@ int sha2_mod_init(void);
 int sha2_mod_fini(void);
 
 int icp_init(void);
-void icp_exit(void);
+void icp_fini(void);
 
 #endif /* _SYS_CRYPTO_ALGS_H */

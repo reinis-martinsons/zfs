@@ -406,7 +406,10 @@ mod_hash_fini(void)
 {
 	mutex_destroy(&mh_head_lock);
 
-	if (mh_e_cache) kmem_cache_destroy(mh_e_cache);
+	if (mh_e_cache) {
+		kmem_cache_destroy(mh_e_cache);
+		mh_e_cache = NULL;
+	}
 }
 
 /*

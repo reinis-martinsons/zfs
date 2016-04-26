@@ -31,6 +31,9 @@
 #include <sys/dsl_keychain.h>
 #include <sys/crypto/icp.h>
 #include <libintl.h>
+#include <termios.h>
+#include <signal.h>
+#include <errno.h>
 #include <libzfs.h>
 #include "libzfs_impl.h"
 #include "zfeature_common.h"
@@ -48,19 +51,11 @@ typedef enum key_locator {
 	KEY_LOCATOR_URI
 } key_locator_t;
 
-static char *
-get_key_format_name(key_format_t format) {
-	switch (format) {
-	case KEY_FORMAT_RAW:
-		return ("raw");
-	case KEY_FORMAT_HEX:
-		return ("hex");
-	case KEY_FORMAT_PASSPHRASE:
-		return ("passphrase");
-	default:
-		return ("");
-	}
-}
+#define	MIN_PASSPHRASE_LEN 8
+#define	MAX_PASSPHRASE_LEN 64
+#define	PBKDF2_ITERATIONS 1000
+
+static int caught_interrupt;
 
 static int
 parse_format(key_format_t *format, char *s, int len)
@@ -150,31 +145,143 @@ error:
 	return (ret);
 }
 
+
+static void
+catch_signal(int sig)
+{
+	caught_interrupt = sig;
+}
+
+static char *
+get_format_prompt_string(key_format_t format)
+{
+	switch(format) {
+	case KEY_FORMAT_RAW:
+		return "raw key";
+	case KEY_FORMAT_HEX:
+		return "hex key";
+	case KEY_FORMAT_PASSPHRASE:
+		return "passphrase";
+	default:
+		/* shouldn't happen */
+		return NULL;
+	}
+
+}
+
 static int
-get_key_material(libzfs_handle_t *hdl, key_format_t format,
-	key_locator_t locator, char *uri, const char *fsname, uint8_t **km_out,
-	size_t *kmlen_out)
+get_key_material_raw(FILE *fd, const char *fsname, key_format_t format,
+    uint8_t *buf, size_t buf_len, boolean_t again, size_t *len_out)
+{
+	int ret = 0, bytes;
+	char c;
+	struct termios old_term, new_term;
+	struct sigaction act, osigint, osigtstp;
+
+	*len_out = 0;
+
+	if (isatty(fileno(fd))) {
+		/* handle SIGINT and ignore SIGSTP. This is necessary to
+		 * restore the state of the terminal.
+		 */
+		caught_interrupt = 0;
+		act.sa_flags = 0;
+		(void) sigemptyset(&act.sa_mask);
+		act.sa_handler = catch_signal;
+
+		(void) sigaction(SIGINT, &act, &osigint);
+		act.sa_handler = SIG_IGN;
+		(void) sigaction(SIGTSTP, &act, &osigtstp);
+
+		/* prompt for the passphrase */
+		if (fsname) {
+			(void) printf("%s %s for '%s': ",
+			    (!again) ? "Enter" : "Renter",
+			    get_format_prompt_string(format), fsname);
+		} else {
+			(void) printf("%s %s: ",
+			    (!again) ? "Enter" : "Renter",
+			    get_format_prompt_string(format));
+
+		}
+		(void) fflush(stdout);
+
+		/* disable the terminal echo for passphrase input*/
+		(void) tcgetattr(fileno(fd), &old_term);
+
+		new_term = old_term;
+		new_term.c_lflag &= ~(ECHO | ECHOE | ECHOK | ECHONL);
+
+		ret = tcsetattr(fileno(fd), TCSAFLUSH, &new_term);
+		if (ret) {
+			ret = errno;
+			errno = 0;
+			goto out;
+		}
+	}
+
+	/* read the key material */
+	if (format == KEY_FORMAT_PASSPHRASE) {
+		bytes = getline((char **)&buf, &buf_len, fd);
+		if (bytes < 0) {
+			ret = errno;
+			errno = 0;
+			goto out;
+		}
+
+		/* trim the ending newline if it exists */
+		if(buf[bytes - 1] == '\n')
+			buf[bytes - 1] = '\0';
+	} else {
+		bytes = read(fileno(fd), buf, buf_len);
+		if (bytes < 0) {
+			ret = errno;
+			errno = 0;
+			goto out;
+		}
+
+		/* clean off the newline from stdin if needed */
+		if (isatty(fileno(fd)))
+			while ((c = getc(fd)) != '\n' && c != EOF);
+	}
+	*len_out = bytes;
+
+out:
+	if (isatty(fileno(fd))) {
+		/* reset the teminal */
+		(void) tcsetattr(fileno(fd), TCSAFLUSH, &old_term);
+		(void) sigaction(SIGINT, &osigint, NULL);
+		(void) sigaction(SIGTSTP, &osigtstp, NULL);
+
+		/* if we caught a signal, re-throw it now */
+		if (caught_interrupt != 0) {
+			(void) kill(getpid(), caught_interrupt);
+		}
+
+		/* print the newline that was not echo'ed */
+		printf("\n");
+	}
+
+	return (ret);
+
+}
+
+static int
+get_key_material(libzfs_handle_t *hdl, boolean_t do_verify, key_format_t format,
+    key_locator_t locator, char *uri, const char *fsname, uint8_t **km_out,
+    size_t *kmlen_out)
 {
 	int ret;
 	FILE *fd = NULL;
-	size_t kmlen, bytes;
-	char c;
-	uint8_t *km = NULL;
+	uint8_t *km = NULL, *km2 = NULL;
+	size_t buflen, kmlen, kmlen2;
 
+	/* open the appropriate file descriptor */
 	switch (locator) {
 	case KEY_LOCATOR_PROMPT:
 		fd = stdin;
-
-		/* prompt for the key */
-		if (fsname && isatty(fileno(fd))) {
-			(void) printf("Enter %s key for '%s': ",
-			    get_key_format_name(format), fsname);
-			(void) fflush(stdout);
-		}
-
 		break;
 	case KEY_LOCATOR_URI:
-		/* open the file specified in the uri */
 		fd = fopen(&uri[7], "r");
 		if (!fd) {
 			ret = errno;
@@ -183,7 +290,6 @@ get_key_material(libzfs_handle_t *hdl, key_format_t format,
 			    "Failed to open key material file"));
 			goto error;
 		}
-
 		break;
 	default:
 		ret = EINVAL;
@@ -192,48 +298,17 @@ get_key_material(libzfs_handle_t *hdl, key_format_t format,
 		goto error;
 	}
 
+	/* allocate memory for the key material */
 	switch (format) {
 	case KEY_FORMAT_RAW:
+		buflen = WRAPPING_KEY_LEN;
+		break;
 	case KEY_FORMAT_HEX:
-		if (format == KEY_FORMAT_RAW) {
-			kmlen = WRAPPING_KEY_LEN;
-		} else {
-			kmlen = WRAPPING_KEY_LEN * 2;
-		}
-
-		km = zfs_alloc(hdl, kmlen);
-		if (!km) {
-			ret = ENOMEM;
-			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			    "Failed to allocate memory for key material."));
-			goto error;
-		}
-
-		bytes = read(fileno(fd), km, kmlen);
-
-		/* clean off the newline from stdin if needed */
-		if (isatty(fileno(fd)))
-			while ((c = getc(fd)) != '\n' && c != EOF);
-
-		if (bytes != kmlen && bytes > 0) {
-			ret = EINVAL;
-			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			    "Key material too short."));
-			goto error;
-		} else if (bytes <= 0) {
-			ret = errno;
-			errno = 0;
-			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			    "Failed to read key."));
-			goto error;
-		}
-
+		buflen = WRAPPING_KEY_LEN * 2;
 		break;
 	case KEY_FORMAT_PASSPHRASE:
-		ret = EOPNOTSUPP;
-		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-		    "passphrase key format not yet supported."));
-		goto error;
+		buflen = MAX_PASSPHRASE_LEN;
+		break;
 	default:
 		ret = EINVAL;
 		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
@@ -241,8 +316,84 @@ get_key_material(libzfs_handle_t *hdl, key_format_t format,
 		goto error;
 	}
 
+	km = zfs_alloc(hdl, buflen);
+	if (!km) {
+		ret = ENOMEM;
+		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+		    "Failed to allocate memory for key material."));
+		goto error;
+	}
+
+	/* fetch the key material into the buffer */
+	ret = get_key_material_raw(fd, fsname, format, km, buflen,
+	    B_FALSE, &kmlen);
+	if (ret)
+		goto error;
+
+	/* do basic validation of the key material */
+	switch (format) {
+	case KEY_FORMAT_RAW:
+	case KEY_FORMAT_HEX:
+		/* just verify the key length is correct */
+		if (kmlen != buflen) {
+			ret = EINVAL;
+			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+			    "Invalid key length."));
+			goto error;
+		}
+		break;
+	case KEY_FORMAT_PASSPHRASE:
+		/* just verify the keylength is correct */
+		if (kmlen > MAX_PASSPHRASE_LEN) {
+			ret = EINVAL;
+			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+			    "Passphrase too long (max 64)."));
+			goto error;
+		}
+
+		if (kmlen < MIN_PASSPHRASE_LEN) {
+			ret = EINVAL;
+			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+			    "Passphrase too short (min 8)."));
+			goto error;
+		}
+
+		if (do_verify) {
+			/* prompt for the key again to make sure it is valid */
+			km2 = zfs_alloc(hdl, buflen);
+			if (!km2) {
+				ret = ENOMEM;
+				zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+				    "Failed to allocate memory "
+				    "for key material."));
+				goto error;
+			}
+
+			ret = get_key_material_raw(fd, fsname, format, km2,
+			    buflen, B_TRUE, &kmlen2);
+			if (ret)
+				goto error;
+
+			if (kmlen2 != kmlen ||
+			    (strncmp((char *)km, (char *)km2, kmlen) != 0)) {
+				ret = EINVAL;
+				zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+				    "Passphrases do not match."));
+				goto error;
+			}
+		}
+		break;
+	default:
+		/* can't happen */
+		break;
+	}
+
+
 	if (fd != stdin)
 		fclose(fd);
+
+	if (km2)
+		free(km2);
 
 	*km_out = km;
 	*kmlen_out = kmlen;
@@ -251,6 +402,9 @@ get_key_material(libzfs_handle_t *hdl, key_format_t format,
 error:
 	if (km)
 		free(km);
+
+	if (km2)
+		free(km2);
 
 	if (fd && fd != stdin)
 		fclose(fd);
@@ -261,11 +415,147 @@ error:
 }
 
 static int
+pbkdf2(uint8_t *passphrase, size_t passphraselen, uint8_t *salt,
+    size_t saltlen, uint32_t iterations, uint8_t *output,
+    size_t outputlen)
+{
+	int ret;
+	uint32_t blockptr, i, iter;
+	uint16_t hmac_key_len;
+	uint8_t *hmac_key;
+	uint8_t block[SHA_256_DIGEST_LEN * 2];
+	uint8_t *hmacresult = block + SHA_256_DIGEST_LEN;
+	crypto_mechanism_t mech;
+	crypto_key_t key;
+	crypto_data_t in_data, out_data;
+	crypto_ctx_template_t tmpl = NULL;
+
+	/* initialize output */
+	memset(output, 0, outputlen);
+
+	/* initialize icp for use */
+	thread_init();
+	icp_init();
+
+	/* HMAC key size is max(sizeof(uint32_t) + salt len, sha 256 len) */
+	if (saltlen > SHA_256_DIGEST_LEN) {
+		hmac_key_len = saltlen + sizeof(uint32_t);
+	} else {
+		hmac_key_len = SHA_256_DIGEST_LEN;
+	}
+
+	hmac_key = calloc(hmac_key_len, 1);
+	if (!hmac_key) {
+		ret = ENOMEM;
+		goto error;
+	}
+
+	/* initialize sha 256 hmac mechanism */
+	mech.cm_type = crypto_mech2id(SUN_CKM_SHA256_HMAC);
+	mech.cm_param = NULL;
+	mech.cm_param_len = 0;
+
+	/* initialize passphrase as a crypto key */
+	key.ck_format = CRYPTO_KEY_RAW;
+	key.ck_length = BYTES_TO_BITS(passphraselen);
+	key.ck_data = passphrase;
+
+	/*
+	 * initialize crypto data for the input data. length will change
+	 * after the first iteration, so we will initialize it in the loop.
+	 */
+	in_data.cd_format = CRYPTO_DATA_RAW;
+	in_data.cd_offset = 0;
+	in_data.cd_raw.iov_base = (char *)hmac_key;
+
+	/* initialize crypto data for the output data */
+	out_data.cd_format = CRYPTO_DATA_RAW;
+	out_data.cd_offset = 0;
+	out_data.cd_length = SHA_256_DIGEST_LEN;
+	out_data.cd_raw.iov_base = (char *)hmacresult;
+	out_data.cd_raw.iov_len = SHA_256_DIGEST_LEN;
+
+	/* initialize the context template */
+	ret = crypto_create_ctx_template(&mech, &key, &tmpl, KM_SLEEP);
+	if (ret != CRYPTO_SUCCESS) {
+		ret = EIO;
+		goto error;
+	}
+
+	/* main loop */
+	for (blockptr = 0; blockptr < outputlen;
+	    blockptr += SHA_256_DIGEST_LEN) {
+
+		/*
+		 * for the first iteration, the HMAC key is the user-provided
+		 * salt concatenated with the block index (1-indexed)
+		 */
+		i = htobe32(1 + (blockptr / SHA_256_DIGEST_LEN));
+		memmove(hmac_key, salt, saltlen);
+		memmove(hmac_key + saltlen, (uint8_t *)(&i), sizeof(uint32_t));
+
+		/* block initializes to zeroes (no XOR) */
+		memset(block, 0, SHA_256_DIGEST_LEN);
+
+		for (iter = 0; iter < iterations; iter++) {
+			if (iter > 0) {
+				in_data.cd_length = SHA_256_DIGEST_LEN;
+				in_data.cd_raw.iov_len = SHA_256_DIGEST_LEN;
+			} else {
+				in_data.cd_length = saltlen + sizeof(uint32_t);
+				in_data.cd_raw.iov_len = saltlen + sizeof(uint32_t);
+			}
+
+			ret = crypto_mac(&mech, &in_data, &key, tmpl,
+			&out_data, NULL);
+			if (ret != CRYPTO_SUCCESS) {
+				ret = EIO;
+				goto error;
+			}
+
+			/* HMAC key now becomes the output of this iteration */
+			memmove(hmac_key, hmacresult, SHA_256_DIGEST_LEN);
+
+			/* XOR this iteration's result with the current block */
+			for (i = 0; i < SHA_256_DIGEST_LEN; i++) {
+				block[i] ^= hmacresult[i];
+			}
+		}
+
+		/*
+		 * compute length of this block, make sure we don't write
+		 * beyond the end of the output, truncating if necessary
+		 */
+		if (blockptr + SHA_256_DIGEST_LEN > outputlen) {
+			memmove(output + blockptr, block, outputlen - blockptr);
+		} else {
+			memmove(output + blockptr, block, SHA_256_DIGEST_LEN);
+		}
+	}
+
+	crypto_destroy_ctx_template(tmpl);
+	free(hmac_key);
+	icp_fini();
+	thread_fini();
+
+	return 0;
+
+error:
+	crypto_destroy_ctx_template(tmpl);
+	if(hmac_key)
+		free(hmac_key);
+	icp_fini();
+	thread_fini();
+
+	return ret;
+}
+
+static int
 derive_key(libzfs_handle_t *hdl, key_format_t format,
 	uint8_t *key_material, size_t key_material_len, uint64_t salt,
 	uint8_t **key_out)
 {
-	int ret;
+	int ret, i;
 	uint8_t *key;
 
 	*key_out = NULL;
@@ -281,12 +571,27 @@ derive_key(libzfs_handle_t *hdl, key_format_t format,
 	case KEY_FORMAT_HEX:
 		ret = hex_key_to_raw((char *) key_material,
 		    WRAPPING_KEY_LEN * 2, key);
-		if (ret)
+		if (ret) {
+			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+			    "Invalid hex key provided."));
 			goto error;
+		}
 		break;
 	case KEY_FORMAT_PASSPHRASE:
-		ret = EOPNOTSUPP;
-		goto error;
+		ret = pbkdf2(key_material, strlen((char *)key_material),
+		    ((uint8_t *)&salt), sizeof (uint64_t), PBKDF2_ITERATIONS,
+		    key, WRAPPING_KEY_LEN);
+		if (ret) {
+			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+			    "Failed to generate key from passphrase."));
+			goto error;
+		}
+
+		for (i = 0; i < WRAPPING_KEY_LEN; i++) {
+			printf("%02x", key[i] & 0xff);
+		}
+		printf("\n");
+		break;
 	default:
 		ret = EINVAL;
 		goto error;
@@ -344,19 +649,21 @@ populate_create_encryption_params_nvlists(libzfs_handle_t *hdl, char *keysource,
 	}
 
 	/* get key material from keysource */
-	ret = get_key_material(hdl, keyformat, keylocator, uri, fsname,
-		&key_material, &key_material_len);
+	ret = get_key_material(hdl, B_TRUE, keyformat, keylocator, uri,
+	    fsname, &key_material, &key_material_len);
 	if (ret)
 		goto error;
 
 	/* passphrase formats require a salt property */
 	if (keyformat == KEY_FORMAT_PASSPHRASE) {
+		random_init();
 		ret = random_get_bytes((uint8_t *) &salt, sizeof (uint64_t));
 		if (ret) {
 			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
 			    "Failed to generate salt."));
 			goto error;
 		}
+		random_fini();
 	}
 
 	ret = nvlist_add_uint64(props, zfs_prop_to_name(ZFS_PROP_SALT), salt);
@@ -498,8 +805,8 @@ zfs_crypto_create(libzfs_handle_t *hdl, char *parent_name, nvlist_t *props,
 	if (keysource) {
 		ha = fnvlist_alloc();
 
-		ret = populate_create_encryption_params_nvlists(hdl,
-		    keysource, NULL, props, ha);
+		ret = populate_create_encryption_params_nvlists(hdl, keysource,
+		    NULL, props, ha);
 		if (ret)
 			goto error;
 	}
@@ -616,8 +923,8 @@ zfs_crypto_clone(libzfs_handle_t *hdl, zfs_handle_t *origin_zhp,
 	if (keysource) {
 		ha = fnvlist_alloc();
 
-		ret = populate_create_encryption_params_nvlists(hdl,
-		    keysource, NULL, props, ha);
+		ret = populate_create_encryption_params_nvlists(hdl,keysource,
+		    NULL, props, ha);
 		if (ret)
 			goto out;
 	}
@@ -715,7 +1022,7 @@ zfs_crypto_load_key(zfs_handle_t *zhp)
 	}
 
 	/* get key material from keysource */
-	ret = get_key_material(zhp->zfs_hdl, format, locator, uri,
+	ret = get_key_material(zhp->zfs_hdl, B_FALSE, format, locator, uri,
 	    zfs_get_name(zhp), &key_material, &key_material_len);
 	if (ret)
 		goto error;
