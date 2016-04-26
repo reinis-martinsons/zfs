@@ -129,6 +129,11 @@ hex_key_to_raw(char *hex, int hexlen, uint8_t *out)
 	unsigned int c;
 
 	for (i = 0; i < hexlen; i += 2) {
+		if (!isxdigit(hex[i]) || !isxdigit(hex[i + 1])) {
+			ret = EINVAL;
+			goto error;
+		}
+
 		ret = sscanf(&hex[i], "%02x", &c);
 		if (ret != 1) {
 			ret = EINVAL;
@@ -180,7 +185,8 @@ get_key_material_raw(FILE *fd, const char *fsname, key_format_t format,
 	*len_out = 0;
 
 	if (isatty(fileno(fd))) {
-		/* handle SIGINT and ignore SIGSTP. This is necessary to
+		/*
+		 * handle SIGINT and ignore SIGSTP. This is necessary to
 		 * restore the state of the terminal.
 		 */
 		caught_interrupt = 0;
@@ -357,7 +363,7 @@ get_key_material(libzfs_handle_t *hdl, boolean_t do_verify, key_format_t format,
 			goto error;
 		}
 
-		if (do_verify) {
+		if (do_verify && locator == KEY_LOCATOR_PROMPT) {
 			/* prompt for the key again to make sure it is valid */
 			km2 = zfs_alloc(hdl, buflen);
 			if (!km2) {
@@ -554,7 +560,7 @@ derive_key(libzfs_handle_t *hdl, key_format_t format,
 	uint8_t *key_material, size_t key_material_len, uint64_t salt,
 	uint8_t **key_out)
 {
-	int ret, i;
+	int ret;
 	uint8_t *key;
 
 	*key_out = NULL;
@@ -585,11 +591,6 @@ derive_key(libzfs_handle_t *hdl, key_format_t format,
 			    "Failed to generate key from passphrase."));
 			goto error;
 		}
-
-		for (i = 0; i < WRAPPING_KEY_LEN; i++) {
-			printf("%02x", key[i] & 0xff);
-		}
-		printf("\n");
 		break;
 	default:
 		ret = EINVAL;
