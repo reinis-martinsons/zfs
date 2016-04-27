@@ -31,6 +31,19 @@
 #include <sys/zio.h>
 #include <sys/zil.h>
 
+zio_crypt_info_t zio_crypt_table[ZIO_CRYPT_FUNCTIONS] = {
+	{"",			ZC_TYPE_NONE,	0,  "inherit"},
+	{SUN_CKM_AES_CCM,	ZC_TYPE_CCM,	32, "on"},
+	{"",			ZC_TYPE_NONE,	0,  "off"},
+	{SUN_CKM_AES_CCM,	ZC_TYPE_CCM,	16, "aes-128-ccm"},
+	{SUN_CKM_AES_CCM,	ZC_TYPE_CCM,	24, "aes-192-ccm"},
+	{SUN_CKM_AES_CCM,	ZC_TYPE_CCM,	32, "aes-256-ccm"},
+	{SUN_CKM_AES_GCM,	ZC_TYPE_GCM,	16, "aes-128-gcm"},
+	{SUN_CKM_AES_GCM,	ZC_TYPE_GCM,	24, "aes-192-gcm"},
+	{SUN_CKM_AES_GCM,	ZC_TYPE_GCM,	32, "aes-256-gcm"}
+};
+
+
 void
 print_iovec(const iovec_t *iov)
 {

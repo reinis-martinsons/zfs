@@ -74,7 +74,6 @@ $(MODULE)-objs += vdev_root.o
 $(MODULE)-objs += zap.o
 $(MODULE)-objs += zap_leaf.o
 $(MODULE)-objs += zap_micro.o
-$(MODULE)-objs += zcrypt_common.o
 $(MODULE)-objs += zfeature.o
 $(MODULE)-objs += zfeature_common.o
 $(MODULE)-objs += zfs_acl.o
