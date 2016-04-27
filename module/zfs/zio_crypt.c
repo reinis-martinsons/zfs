@@ -326,12 +326,13 @@ zio_do_crypt_raw(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
 	cipherdata.cd_raw.iov_len = datalen + WRAPPING_MAC_LEN;
 
 	/* perform the actual encryption */
-	if (encrypt)
+	if (encrypt) {
 		ret = crypto_encrypt(&mech, &plaindata, key, tmpl, &cipherdata,
 			NULL);
-	else
+	} else {
 		ret = crypto_decrypt(&mech, &cipherdata, key, tmpl, &plaindata,
 			NULL);
+	}	
 
 	if (ret != CRYPTO_SUCCESS) {
 		LOG_ERROR(ret, "");
