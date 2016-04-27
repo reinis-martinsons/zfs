@@ -89,6 +89,66 @@ print_crypto_data(char *name, crypto_data_t *cd)
 }
 
 void
+l2arc_crypt_key_destroy(l2arc_crypt_key_t *key)
+{
+	if (key->l2ck_ctx_tmpl)
+		crypto_destroy_ctx_template(key->l2ck_ctx_tmpl);
+	if (key->l2ck_key.ck_data) {
+		bzero(key->l2ck_key.ck_data,
+			BITS_TO_BYTES(key->l2ck_key.ck_length));
+		kmem_free(key->l2ck_key.ck_data,
+			BITS_TO_BYTES(key->l2ck_key.ck_length));
+	}
+}
+
+int
+l2arc_crypt_key_init(l2arc_crypt_key_t *key)
+{
+	int ret;
+	crypto_mechanism_t mech;
+	uint64_t keydata_len, crypt = L2ARC_DEFAULT_CRYPT;
+
+	key->l2ck_crypt = crypt;
+
+	/* get the key length from the crypt table */
+	keydata_len = zio_crypt_table[crypt].ci_keylen;
+
+	/* allocate the key data's new buffer */
+	key->l2ck_key.ck_data = kmem_alloc(keydata_len, KM_SLEEP);
+	if (!key->l2ck_key.ck_data) {
+		ret = ENOMEM;
+		goto error;
+	}
+
+	/* set values for the key */
+	key->l2ck_key.ck_format = CRYPTO_KEY_RAW;
+	key->l2ck_key.ck_length = BYTES_TO_BITS(keydata_len);
+
+	/* create the data */
+	ret = random_get_bytes(key->l2ck_key.ck_data, keydata_len);
+	if (ret)
+		goto error;
+
+	/* create the key's context template */
+	mech.cm_type = crypto_mech2id(zio_crypt_table[crypt].ci_mechname);
+	ret = crypto_create_ctx_template(&mech, &key->l2ck_key,
+	    &key->l2ck_ctx_tmpl, KM_SLEEP);
+	if (ret != CRYPTO_SUCCESS) {
+		LOG_DEBUG("Failed to create L2ARC context");
+		key->l2ck_ctx_tmpl = NULL;
+	}
+
+	return (0);
+
+error:
+	LOG_ERROR(ret, "");
+	if (key->l2ck_key.ck_data)
+		kmem_free(key->l2ck_key.ck_data, keydata_len);
+
+	return (ret);
+}
+
+void
 zio_crypt_key_destroy(zio_crypt_key_t *key)
 {
 	if (key->zk_ctx_tmpl)
@@ -150,7 +210,7 @@ zio_crypt_key_init(uint64_t crypt, uint8_t *keydata, uint8_t *dd_keydata,
 	ret = crypto_create_ctx_template(&mech, &key->zk_key,
 	    &key->zk_ctx_tmpl, KM_SLEEP);
 	if (ret != CRYPTO_SUCCESS) {
-		LOG_DEBUG("Failed to create context, consider CCM encryption");
+		LOG_DEBUG("Failed to create context");
 		key->zk_ctx_tmpl = NULL;
 	}
 
@@ -166,7 +226,7 @@ zio_crypt_key_init(uint64_t crypt, uint8_t *keydata, uint8_t *dd_keydata,
 	ret = crypto_create_ctx_template(&mech, &key->zk_dd_key,
 	    &key->zk_dd_ctx_tmpl, KM_SLEEP);
 	if (ret != CRYPTO_SUCCESS) {
-		LOG_DEBUG("Failed to create context, consider CCM encryption");
+		LOG_DEBUG("Failed to create context");
 		key->zk_dd_ctx_tmpl = NULL;
 	}
 
@@ -352,36 +412,24 @@ zio_crypt_generate_iv(zbookmark_phys_t *bookmark, uint64_t txgid,
 	int ret;
 	crypto_mechanism_t mech;
 	crypto_context_t ctx;
-	crypto_data_t bm_data, txg_data, digest_data;
+	crypto_data_t in_data, digest_data;
 	uint8_t digestbuf[SHA_256_DIGEST_LEN];
 
-	/* initialize sha 256 mechanism */
+	/* initialize sha 256 mechanism and crypto data */
 	mech.cm_type = crypto_mech2id(SUN_CKM_SHA256);
 	mech.cm_param = NULL;
 	mech.cm_param_len = 0;
 
-	/* initialize crypto data for the bookmark */
-	bm_data.cd_format = CRYPTO_DATA_RAW;
-	bm_data.cd_offset = 0;
-	bm_data.cd_length = sizeof (zbookmark_phys_t);
-	bm_data.cd_raw.iov_base = (char *)bookmark;
-	bm_data.cd_raw.iov_len = sizeof (zbookmark_phys_t);
+	in_data.cd_format = CRYPTO_DATA_RAW;
+	in_data.cd_offset = 0;
 
-	/* initialize crypto data for the txgid */
-	txg_data.cd_format = CRYPTO_DATA_RAW;
-	txg_data.cd_offset = 0;
-	txg_data.cd_length = sizeof (uint64_t);
-	txg_data.cd_raw.iov_base = (char *)&txgid;
-	txg_data.cd_raw.iov_len = sizeof (uint64_t);
-
-	/* initialize crypto data for the output digest */
 	digest_data.cd_format = CRYPTO_DATA_RAW;
 	digest_data.cd_offset = 0;
 	digest_data.cd_length = SHA_256_DIGEST_LEN;
 	digest_data.cd_raw.iov_base = (char *)digestbuf;
 	digest_data.cd_raw.iov_len = SHA_256_DIGEST_LEN;
 
-	/* perform the sha256 digest */
+	/* initialize the context */
 	ret = crypto_digest_init(&mech, &ctx, NULL);
 	if (ret != CRYPTO_SUCCESS) {
 		LOG_ERROR(ret, "crypto_digest_init() failed");
@@ -389,23 +437,34 @@ zio_crypt_generate_iv(zbookmark_phys_t *bookmark, uint64_t txgid,
 		goto error;
 	}
 
-	ret = crypto_digest_update(ctx, &bm_data, NULL);
+	/* add in the bookmark */
+	in_data.cd_length = sizeof (zbookmark_phys_t);
+	in_data.cd_raw.iov_base = (char *)bookmark;
+	in_data.cd_raw.iov_len = sizeof (zbookmark_phys_t);
+
+	ret = crypto_digest_update(ctx, &in_data, NULL);
 	if (ret != CRYPTO_SUCCESS) {
 		LOG_ERROR(ret, "crypto_digest_update() failed for bookmark");
 		ret = SET_ERROR(EIO);
 		goto error;
 	}
 
-	ret = crypto_digest_update(ctx, &txg_data, NULL);
+	/* add in the txgid */
+	in_data.cd_length = sizeof (uint64_t);
+	in_data.cd_raw.iov_base = (char *)&txgid;
+	in_data.cd_raw.iov_len = sizeof (uint64_t);
+
+	ret = crypto_digest_update(ctx, &in_data, NULL);
 	if (ret != CRYPTO_SUCCESS) {
 		LOG_ERROR(ret, "crypto_digest_update() failed for txgid");
 		ret = SET_ERROR(EIO);
 		goto error;
 	}
 
+	/* finish the hash */
 	ret = crypto_digest_final(ctx, &digest_data, NULL);
 	if (ret != CRYPTO_SUCCESS) {
-		LOG_ERROR(ret, "crypto_digest_update() failed for txgid");
+		LOG_ERROR(ret, "crypto_digest_final() failed");
 		ret = SET_ERROR(EIO);
 		goto error;
 	}
@@ -467,7 +526,105 @@ error:
 	return (ret);
 }
 
-static int
+int
+zio_crypt_generate_iv_l2arc(uint64_t spa, dva_t *dva, uint64_t birth,
+    uint64_t daddr, uint8_t *ivbuf)
+{
+	int ret;
+	crypto_mechanism_t mech;
+	crypto_context_t ctx;
+	crypto_data_t in_data, digest_data;
+	uint8_t digestbuf[SHA_256_DIGEST_LEN];
+
+	/* initialize sha 256 mechanism and crypto data */
+	mech.cm_type = crypto_mech2id(SUN_CKM_SHA256);
+	mech.cm_param = NULL;
+	mech.cm_param_len = 0;
+
+	in_data.cd_format = CRYPTO_DATA_RAW;
+	in_data.cd_offset = 0;
+
+	digest_data.cd_format = CRYPTO_DATA_RAW;
+	digest_data.cd_offset = 0;
+	digest_data.cd_length = SHA_256_DIGEST_LEN;
+	digest_data.cd_raw.iov_base = (char *)digestbuf;
+	digest_data.cd_raw.iov_len = SHA_256_DIGEST_LEN;
+
+	/* initialize the context */
+	ret = crypto_digest_init(&mech, &ctx, NULL);
+	if (ret != CRYPTO_SUCCESS) {
+		LOG_ERROR(ret, "crypto_digest_init() failed");
+		ret = SET_ERROR(EIO);
+		goto error;
+	}
+
+	/* add in the spa */
+	in_data.cd_length = sizeof (uint64_t);
+	in_data.cd_raw.iov_base = (char *)&spa;
+	in_data.cd_raw.iov_len = sizeof (uint64_t);
+
+	ret = crypto_digest_update(ctx, &in_data, NULL);
+	if (ret != CRYPTO_SUCCESS) {
+		LOG_ERROR(ret, "crypto_digest_update() failed for spa");
+		ret = SET_ERROR(EIO);
+		goto error;
+	}
+
+	/* add in the dva */
+	in_data.cd_length = sizeof (dva_t);
+	in_data.cd_raw.iov_base = (char *)dva;
+	in_data.cd_raw.iov_len = sizeof (dva_t);
+
+	ret = crypto_digest_update(ctx, &in_data, NULL);
+	if (ret != CRYPTO_SUCCESS) {
+		LOG_ERROR(ret, "crypto_digest_update() failed for dva");
+		ret = SET_ERROR(EIO);
+		goto error;
+	}
+
+	/* add in the birth */
+	in_data.cd_length = sizeof (uint64_t);
+	in_data.cd_raw.iov_base = (char *)&birth;
+	in_data.cd_raw.iov_len = sizeof (uint64_t);
+
+	ret = crypto_digest_update(ctx, &in_data, NULL);
+	if (ret != CRYPTO_SUCCESS) {
+		LOG_ERROR(ret, "crypto_digest_update() failed for birth");
+		ret = SET_ERROR(EIO);
+		goto error;
+	}
+
+	/* add in the daddr */
+	in_data.cd_length = sizeof (uint64_t);
+	in_data.cd_raw.iov_base = (char *)&daddr;
+	in_data.cd_raw.iov_len = sizeof (uint64_t);
+
+	ret = crypto_digest_update(ctx, &in_data, NULL);
+	if (ret != CRYPTO_SUCCESS) {
+		LOG_ERROR(ret, "crypto_digest_update() failed for daddr");
+		ret = SET_ERROR(EIO);
+		goto error;
+	}
+
+	/* finish the hash */
+	ret = crypto_digest_final(ctx, &digest_data, NULL);
+	if (ret != CRYPTO_SUCCESS) {
+		LOG_ERROR(ret, "crypto_digest_final() failed");
+		ret = SET_ERROR(EIO);
+		goto error;
+	}
+
+	/* truncate and copy the digest into the output buffer */
+	bcopy(digestbuf, ivbuf, L2ARC_IV_LEN);
+
+	return (0);
+
+error:
+	LOG_ERROR(ret, "");
+	return (ret);
+}
+
+int
 zio_do_crypt_uio(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
     crypto_ctx_template_t tmpl, uint8_t *ivbuf, uint_t datalen,
     uio_t *puio, uio_t *cuio)
@@ -527,26 +684,33 @@ zio_do_crypt_uio(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
 		mech.cm_param_len = sizeof (CK_AES_GCM_PARAMS);
 	}
 
-	/* populate the cipher and plain data structs */
-	plaindata.cd_format = CRYPTO_DATA_UIO;
-	plaindata.cd_offset = 0;
-	plaindata.cd_uio = puio;
-	plaindata.cd_miscdata = NULL;
-	plaindata.cd_length = plain_full_len;
+	/*
+	 * populate the cipher and plain data structs.
+	 * if puio == cuio we are doing in-place crypto.
+	 */
+	if (puio != cuio || encrypt) {
+		plaindata.cd_format = CRYPTO_DATA_UIO;
+		plaindata.cd_offset = 0;
+		plaindata.cd_uio = puio;
+		plaindata.cd_miscdata = NULL;
+		plaindata.cd_length = plain_full_len;
+	}
 
-	cipherdata.cd_format = CRYPTO_DATA_UIO;
-	cipherdata.cd_offset = 0;
-	cipherdata.cd_uio = cuio;
-	cipherdata.cd_miscdata = NULL;
-	cipherdata.cd_length = datalen + maclen;
+	if (puio != cuio || !encrypt) {
+		cipherdata.cd_format = CRYPTO_DATA_UIO;
+		cipherdata.cd_offset = 0;
+		cipherdata.cd_uio = cuio;
+		cipherdata.cd_miscdata = NULL;
+		cipherdata.cd_length = datalen + maclen;
+	}
 
 	/* perform the actual encryption */
 	if (encrypt) {
-		ret = crypto_encrypt(&mech, &plaindata, key, tmpl, &cipherdata,
-		    NULL);
+		ret = crypto_encrypt(&mech, &plaindata, key, tmpl,
+		    (puio == cuio) ? NULL : &cipherdata, NULL);
 	} else {
-		ret = crypto_decrypt(&mech, &cipherdata, key, tmpl, &plaindata,
-		    NULL);
+		ret = crypto_decrypt(&mech, &cipherdata, key, tmpl,
+		    (puio == cuio) ? NULL : &plaindata, NULL);
 	}
 
 	if (ret != CRYPTO_SUCCESS) {

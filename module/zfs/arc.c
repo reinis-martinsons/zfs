@@ -148,6 +148,7 @@
 #include <sys/callb.h>
 #include <sys/kstat.h>
 #include <sys/dmu_tx.h>
+#include <sys/zio_crypt.h>
 #include <zfs_fletcher.h>
 #include <sys/arc_impl.h>
 #include <sys/trace_arc.h>
@@ -675,6 +676,7 @@ static arc_buf_hdr_t arc_eviction_hdr;
 #define	HDR_L2_WRITING(hdr)	((hdr)->b_flags & ARC_FLAG_L2_WRITING)
 #define	HDR_L2_EVICTED(hdr)	((hdr)->b_flags & ARC_FLAG_L2_EVICTED)
 #define	HDR_L2_WRITE_HEAD(hdr)	((hdr)->b_flags & ARC_FLAG_L2_WRITE_HEAD)
+#define	HDR_L2_ENCRYPT(hdr)	((hdr)->b_flags & ARC_FLAG_L2_ENCRYPT)
 
 #define	HDR_ISTYPE_METADATA(hdr)	\
 	    ((hdr)->b_flags & ARC_FLAG_BUFC_METADATA)
@@ -776,6 +778,7 @@ static list_t L2ARC_free_on_write;		/* free after write buf list */
 static list_t *l2arc_free_on_write;		/* free after write list ptr */
 static kmutex_t l2arc_free_on_write_mtx;	/* mutex for list */
 static uint64_t l2arc_ndev;			/* number of devices */
+static l2arc_crypt_key_t l2arc_crypto_key;	/* global encryption key */
 
 typedef struct l2arc_read_callback {
 	arc_buf_t		*l2rcb_buf;		/* read buffer */
@@ -812,6 +815,9 @@ static void l2arc_read_done(zio_t *);
 
 static boolean_t l2arc_compress_buf(arc_buf_hdr_t *);
 static void l2arc_decompress_zio(zio_t *, arc_buf_hdr_t *, enum zio_compress);
+static int l2arc_do_crypt(boolean_t encrypt, l2arc_crypt_key_t *key,
+    arc_buf_hdr_t *hdr);
+
 static void l2arc_release_cdata_buf(arc_buf_hdr_t *);
 
 static uint64_t
@@ -4416,6 +4422,8 @@ top:
 				hdr->b_flags |= ARC_FLAG_L2COMPRESS;
 			if (BP_GET_LEVEL(bp) > 0)
 				hdr->b_flags |= ARC_FLAG_INDIRECT;
+			if (BP_IS_ENCRYPTED(bp))
+				hdr->b_flags |= ARC_FLAG_L2_ENCRYPT;
 		} else {
 			/*
 			 * This block is in the ghost cache. If it was L2-only
@@ -5094,6 +5102,8 @@ arc_write(zio_t *pio, spa_t *spa, uint64_t txg,
 		hdr->b_flags |= ARC_FLAG_L2CACHE;
 	if (l2arc_compress)
 		hdr->b_flags |= ARC_FLAG_L2COMPRESS;
+	if (BP_IS_ENCRYPTED(bp))
+		hdr->b_flags |= ARC_FLAG_L2_ENCRYPT;
 	callback = kmem_zalloc(sizeof (arc_write_callback_t), KM_SLEEP);
 	callback->awcb_ready = ready;
 	callback->awcb_physdone = physdone;
@@ -6105,7 +6115,13 @@ l2arc_read_done(zio_t *zio)
 	ASSERT3P(hash_lock, ==, HDR_LOCK(hdr));
 
 	/*
-	 * If the buffer was compressed, decompress it first.
+	 * If the buffer was encrypted, decrypt it.
+	 */
+	if (HDR_L2_ENCRYPT(hdr))
+		VERIFY0(l2arc_do_crypt(B_FALSE, &l2arc_crypto_key, hdr));
+
+	/*
+	 * If the buffer was compressed, decompress it.
 	 */
 	if (cb->l2rcb_compress != ZIO_COMPRESS_OFF)
 		l2arc_decompress_zio(zio, hdr, cb->l2rcb_compress);
@@ -6568,6 +6584,9 @@ l2arc_write_buffers(spa_t *spa, l2arc_dev_t *dev, uint64_t target_sz,
 			}
 		}
 
+		if (HDR_L2_ENCRYPT(hdr) && hdr->b_l2hdr.b_asize != 0)
+			VERIFY0(l2arc_do_crypt(B_TRUE, &l2arc_crypto_key, hdr));
+
 		/*
 		 * Pick up the buffer data we had previously stashed away
 		 * (and now potentially also compressed).
@@ -6776,6 +6795,49 @@ l2arc_decompress_zio(zio_t *zio, arc_buf_hdr_t *hdr, enum zio_compress c)
 
 	/* Restore the expected uncompressed IO size. */
 	zio->io_orig_size = zio->io_size = hdr->b_size;
+}
+
+static int
+l2arc_do_crypt(boolean_t encrypt, l2arc_crypt_key_t *key,
+    arc_buf_hdr_t *hdr)
+{
+	int ret;
+	uio_t uio;
+	iovec_t iovs[2];
+	uint8_t ivbuf[L2ARC_IV_LEN];
+
+	/*
+	 * initiailze a uio_t with the cipher data + mac. We encrypt L2ARC
+	 * buffers in place so we only need one
+	 */
+	iovs[0].iov_base = hdr->b_l1hdr.b_tmp_cdata;
+	iovs[0].iov_len = hdr->b_l2hdr.b_asize;
+	iovs[1].iov_base = hdr->b_l2hdr.b_mac;
+	iovs[1].iov_len = L2ARC_MAC_LEN;
+
+	uio.uio_iov = iovs;
+	uio.uio_iovcnt = 2;
+
+#ifdef _KERNEL
+	uio.uio_segflg = UIO_SYSSPACE;
+#else
+	uio.uio_segflg = UIO_USERSPACE;
+#endif
+
+	ret = zio_crypt_generate_iv_l2arc(hdr->b_spa, &hdr->b_dva,
+	    hdr->b_birth, hdr->b_l2hdr.b_daddr, ivbuf);
+	if (ret)
+		goto error;
+
+	ret = zio_do_crypt_uio(encrypt, key->l2ck_crypt, &key->l2ck_key,
+	    key->l2ck_ctx_tmpl, ivbuf, hdr->b_l2hdr.b_asize, &uio, &uio);
+	if (ret)
+		goto error;
+
+	return (0);
+
+error:
+	return (ret);
 }
 
 /*
@@ -7034,6 +7096,8 @@ l2arc_init(void)
 	mutex_init(&l2arc_dev_mtx, NULL, MUTEX_DEFAULT, NULL);
 	mutex_init(&l2arc_free_on_write_mtx, NULL, MUTEX_DEFAULT, NULL);
 
+	(void) l2arc_crypt_key_init(&l2arc_crypto_key);
+
 	l2arc_dev_list = &L2ARC_dev_list;
 	l2arc_free_on_write = &L2ARC_free_on_write;
 	list_create(l2arc_dev_list, sizeof (l2arc_dev_t),
@@ -7057,6 +7121,8 @@ l2arc_fini(void)
 	cv_destroy(&l2arc_feed_thr_cv);
 	mutex_destroy(&l2arc_dev_mtx);
 	mutex_destroy(&l2arc_free_on_write_mtx);
+
+	l2arc_crypt_key_destroy(&l2arc_crypto_key);
 
 	list_destroy(l2arc_dev_list);
 	list_destroy(l2arc_free_on_write);

@@ -29,6 +29,7 @@
 #define	_SYS_ARC_IMPL_H
 
 #include <sys/arc.h>
+#include <sys/zio_crypt.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -187,6 +188,7 @@ typedef struct l2arc_buf_hdr {
 	/* real alloc'd buffer size depending on b_compress applied */
 	uint32_t		b_hits;
 	int32_t			b_asize;
+	uint8_t			b_mac[L2ARC_MAC_LEN];
 	uint8_t			b_compress;
 
 	list_node_t		b_l2node;

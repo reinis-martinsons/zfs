@@ -40,8 +40,7 @@ typedef enum zfs_keystatus {
 } zfs_keystatus_t;
 
 /* in memory representation of a wrapping key */
-typedef struct dsl_wrapping_key
-{
+typedef struct dsl_wrapping_key {
 	/* link into the keystore's tree of wrapping keys */
 	avl_node_t wk_avl_link;
 
@@ -56,8 +55,7 @@ typedef struct dsl_wrapping_key
 } dsl_wrapping_key_t;
 
 /* structure for passing around encryption params from userspace */
-typedef struct dsl_crypto_params
-{
+typedef struct dsl_crypto_params {
 	/* command to be executed */
 	zfs_ioc_crypto_cmd_t cp_cmd;
 
@@ -75,8 +73,7 @@ typedef struct dsl_crypto_params
 } dsl_crypto_params_t;
 
 /* in memory representation of an entry in the DSL Keychain */
-typedef struct dsl_keychain_entry
-{
+typedef struct dsl_keychain_entry {
 	/* link into the keychain */
 	list_node_t ke_link;
 
@@ -88,8 +85,7 @@ typedef struct dsl_keychain_entry
 } dsl_keychain_entry_t;
 
 /* in memory representation of a DSL keychain */
-typedef struct dsl_keychain
-{
+typedef struct dsl_keychain {
 	/* avl node for linking into the keystore */
 	avl_node_t kc_avl_link;
 
@@ -113,8 +109,7 @@ typedef struct dsl_keychain
 } dsl_keychain_t;
 
 /* in memory mapping of a dataset to a DSL keychain */
-typedef struct dsl_keychain_record
-{
+typedef struct dsl_keychain_record {
 	/* avl node for linking into the keystore dataset index */
 	avl_node_t kr_avl_link;
 
@@ -126,8 +121,7 @@ typedef struct dsl_keychain_record
 } dsl_keychain_record_t;
 
 /* in memory structure for holding all keychains loaded into memory */
-typedef struct spa_keystore
-{
+typedef struct spa_keystore {
 	/* lock for protecting structure of sk_keychains */
 	krwlock_t sk_kc_lock;
 
@@ -160,9 +154,9 @@ void dsl_crypto_params_destroy(dsl_crypto_params_t *dcp);
 void spa_keystore_init(spa_keystore_t *sk);
 void spa_keystore_fini(spa_keystore_t *sk);
 int spa_keystore_wkey_hold_ddobj(spa_t *spa, uint64_t ddobj, void *tag,
-	dsl_wrapping_key_t **wkey_out);
+    dsl_wrapping_key_t **wkey_out);
 int spa_keystore_keychain_hold_dd(spa_t *spa, dsl_dir_t *dd, void *tag,
-	dsl_keychain_t **kc_out);
+    dsl_keychain_t **kc_out);
 void spa_keystore_keychain_rele(spa_t *spa, dsl_keychain_t *kc, void *tag);
 int spa_keystore_load_wkey_impl(spa_t *spa, dsl_wrapping_key_t *wkey);
 int spa_keystore_load_wkey(const char *dsname, dsl_crypto_params_t *dcp);
@@ -173,24 +167,24 @@ int spa_keystore_rewrap(const char *dsname, dsl_crypto_params_t *dcp);
 int spa_keystore_create_keychain_record(spa_t *spa, dsl_dataset_t *ds);
 int spa_keystore_remove_keychain_record(spa_t *spa, dsl_dataset_t *ds);
 int spa_keystore_lookup_keychain_record(spa_t *spa, uint64_t dsobj,
-	dsl_keychain_t **kc_out);
+    dsl_keychain_t **kc_out);
 zfs_keystatus_t dsl_dataset_keystore_keystatus(dsl_dataset_t *ds);
 
 int spa_encrypt_data(spa_t *spa, zbookmark_phys_t *bookmark, uint64_t txgid,
-	dmu_object_type_t ot, blkptr_t *bp, uint_t datalen, boolean_t dedup,
-	uint8_t *iv, uint8_t *mac, uint8_t *plainbuf, uint8_t *cipherbuf);
+    dmu_object_type_t ot, blkptr_t *bp, uint_t datalen, boolean_t dedup,
+    uint8_t *iv, uint8_t *mac, uint8_t *plainbuf, uint8_t *cipherbuf);
 int spa_decrypt_data(spa_t *spa, zbookmark_phys_t *bookmark, uint64_t txgid,
-	dmu_object_type_t ot, blkptr_t *bp, uint_t datalen, uint8_t *plainbuf,
-	uint8_t *cipherbuf);
+    dmu_object_type_t ot, blkptr_t *bp, uint_t datalen, uint8_t *plainbuf,
+    uint8_t *cipherbuf);
 
 int dmu_objset_create_encryption_check(dsl_dir_t *pdd,
-	dsl_crypto_params_t *dcp);
+    dsl_crypto_params_t *dcp);
 int dmu_objset_clone_encryption_check(dsl_dir_t *pdd, dsl_dir_t *odd,
-	dsl_crypto_params_t *dcp);
+    dsl_crypto_params_t *dcp);
 uint64_t dsl_keychain_create_sync(uint64_t crypt, dsl_wrapping_key_t *wkey,
-	dmu_tx_t *tx);
+    dmu_tx_t *tx);
 uint64_t dsl_keychain_clone_sync(dsl_dir_t *orig_dd, dsl_wrapping_key_t *wkey,
-	boolean_t add_key, dmu_tx_t *tx);
+    boolean_t add_key, dmu_tx_t *tx);
 void dsl_keychain_destroy_sync(uint64_t kcobj, dmu_tx_t *tx);
 
 #endif

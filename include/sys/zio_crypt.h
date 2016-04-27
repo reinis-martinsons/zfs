@@ -71,11 +71,14 @@
 #define	WRAPPING_KEY_LEN 32
 #define	WRAPPING_IV_LEN 13
 #define	WRAPPING_MAC_LEN 16
-#define	ZIL_MAC_LEN 8
+#define	L2ARC_IV_LEN 32
 #define	L2ARC_MAC_LEN 8
+#define	ZIL_MAC_LEN 8
 
 #define	SHA_256_DIGEST_LEN 32
 #define	HMAC_SHA256_KEYLEN 32
+
+#define	L2ARC_DEFAULT_CRYPT ZIO_CRYPT_AES_256_CCM
 
 #define	ZIO_NO_ENCRYPTION_NEEDED -1
 
@@ -92,16 +95,14 @@ typedef enum zfs_ioc_crypto_cmd {
 	ZFS_IOC_CRYPTO_REWRAP,
 } zfs_ioc_crypto_cmd_t;
 
-typedef enum zio_crypt_type
-{
+typedef enum zio_crypt_type {
 	ZC_TYPE_NONE = 0,
 	ZC_TYPE_CCM,
 	ZC_TYPE_GCM
 } zio_crypt_type_t;
 
 /* table of supported crypto algorithms, modes and keylengths. */
-typedef struct zio_crypt_info
-{
+typedef struct zio_crypt_info {
 	/* mechanism name, needed by ICP */
 	crypto_mech_name_t ci_mechname;
 
@@ -118,8 +119,7 @@ typedef struct zio_crypt_info
 extern zio_crypt_info_t zio_crypt_table[ZIO_CRYPT_FUNCTIONS];
 
 /* physical representation of a wrapped key in the DSL Keychain */
-typedef struct dsl_crypto_key_phys
-{
+typedef struct dsl_crypto_key_phys {
 	/* encryption algorithm (see zio_encrypt enum) */
 	uint64_t dk_crypt_alg;
 
@@ -141,8 +141,7 @@ typedef struct dsl_crypto_key_phys
 } dsl_crypto_key_phys_t;
 
 /* in memory representation of an unwrapped key that is loaded into memory */
-typedef struct zio_crypt_key
-{
+typedef struct zio_crypt_key {
 	/* encryption algorithm */
 	enum zio_encrypt zk_crypt;
 
@@ -159,8 +158,22 @@ typedef struct zio_crypt_key
 	crypto_ctx_template_t zk_dd_ctx_tmpl;
 } zio_crypt_key_t;
 
+/* in memory representation of the global L2ARC encryption key */
+typedef struct l2arc_crypt_key {
+	/* encryption algorithm */
+	enum zio_encrypt l2ck_crypt;
+
+	/* illumos crypto api key representation */
+	crypto_key_t l2ck_key;
+
+	/* private data for illumos crypto api */
+	crypto_ctx_template_t l2ck_ctx_tmpl;
+} l2arc_crypt_key_t;
+
 typedef struct zbookmark_phys zbookmark_phys_t;
 
+void l2arc_crypt_key_destroy(l2arc_crypt_key_t *key);
+int l2arc_crypt_key_init(l2arc_crypt_key_t *key);
 void zio_crypt_key_destroy(zio_crypt_key_t *key);
 int zio_crypt_key_init(uint64_t crypt, uint8_t *keydata, uint8_t *dd_keydata,
     zio_crypt_key_t *key);
@@ -174,6 +187,8 @@ int zio_crypt_generate_iv(zbookmark_phys_t *bookmark, uint64_t txgid,
     uint_t ivlen, uint8_t *ivbuf);
 int zio_crypt_generate_iv_dd(zio_crypt_key_t *key, uint8_t *plainbuf,
     uint_t datalen, uint_t ivlen, uint8_t *ivbuf);
+int zio_crypt_generate_iv_l2arc(uint64_t spa, dva_t *dva, uint64_t birth,
+    uint64_t daddr, uint8_t *ivbuf);
 
 int zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key,
     dmu_object_type_t ot, uint8_t *iv, uint8_t *mac, uint_t datalen,
@@ -182,5 +197,13 @@ int zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key,
     zio_do_crypt_data(B_TRUE, key, ot, iv, mac, datalen, pb, cb)
 #define	zio_decrypt_data(key, ot, iv, mac, datalen, pb, cb) \
     zio_do_crypt_data(B_FALSE, key, ot, iv, mac, datalen, pb, cb)
+
+int zio_do_crypt_uio(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
+    crypto_ctx_template_t tmpl, uint8_t *ivbuf, uint_t datalen,
+    uio_t *puio, uio_t *cuio);
+#define	zio_encrypt_uio(crypt, key, tmpl, iv, datalen, pu, cu) \
+    zio_do_crypt_uio(B_TRUE, crypt, key, tmpl, iv, datalen, pu, cu)
+#define	zio_decrypt_uio(crypt, key, tmpl, iv, datalen, pu, cu) \
+    zio_do_crypt_uio(B_FALSE, crypt, key, tmpl, iv, datalen, pu, cu)
 
 #endif
