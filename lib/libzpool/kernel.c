@@ -1208,6 +1208,7 @@ kernel_init(int mode)
 
 	thread_init();
 	system_taskq_init();
+	icp_init();
 
 	spa_init(mode);
 
@@ -1219,6 +1220,7 @@ kernel_fini(void)
 {
 	spa_fini();
 
+	icp_fini();
 	system_taskq_fini();
 	thread_fini();
 

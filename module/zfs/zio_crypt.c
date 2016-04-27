@@ -697,33 +697,26 @@ zio_do_crypt_uio(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
 		mech.cm_param_len = sizeof (CK_AES_GCM_PARAMS);
 	}
 
-	/*
-	 * populate the cipher and plain data structs.
-	 * if puio == cuio we are doing in-place crypto.
-	 */
-	if (puio != cuio || encrypt) {
-		plaindata.cd_format = CRYPTO_DATA_UIO;
-		plaindata.cd_offset = 0;
-		plaindata.cd_uio = puio;
-		plaindata.cd_miscdata = NULL;
-		plaindata.cd_length = plain_full_len;
-	}
+	/* populate the cipher and plain data structs. */
+	plaindata.cd_format = CRYPTO_DATA_UIO;
+	plaindata.cd_offset = 0;
+	plaindata.cd_uio = puio;
+	plaindata.cd_miscdata = NULL;
+	plaindata.cd_length = plain_full_len;
 
-	if (puio != cuio || !encrypt) {
-		cipherdata.cd_format = CRYPTO_DATA_UIO;
-		cipherdata.cd_offset = 0;
-		cipherdata.cd_uio = cuio;
-		cipherdata.cd_miscdata = NULL;
-		cipherdata.cd_length = datalen + maclen;
-	}
+	cipherdata.cd_format = CRYPTO_DATA_UIO;
+	cipherdata.cd_offset = 0;
+	cipherdata.cd_uio = cuio;
+	cipherdata.cd_miscdata = NULL;
+	cipherdata.cd_length = datalen + maclen;
 
 	/* perform the actual encryption */
 	if (encrypt) {
-		ret = crypto_encrypt(&mech, &plaindata, key, tmpl,
-		    (puio == cuio) ? NULL : &cipherdata, NULL);
+		ret = crypto_encrypt(&mech, &plaindata, key, tmpl, &cipherdata,
+		    NULL);
 	} else {
-		ret = crypto_decrypt(&mech, &cipherdata, key, tmpl,
-		    (puio == cuio) ? NULL : &plaindata, NULL);
+		ret = crypto_decrypt(&mech, &cipherdata, key, tmpl, &plaindata,
+		    NULL);
 	}
 
 	if (ret != CRYPTO_SUCCESS) {

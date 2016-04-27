@@ -6802,26 +6802,54 @@ l2arc_do_crypt(boolean_t encrypt, l2arc_crypt_key_t *key,
     arc_buf_hdr_t *hdr)
 {
 	int ret;
-	uio_t uio;
-	iovec_t iovs[2];
+	uio_t puio, cuio;
+	iovec_t plain_iovs[2];
+	iovec_t cipher_iovs[2];
 	uint8_t ivbuf[L2ARC_IV_LEN];
+	uint8_t outmac[L2ARC_MAC_LEN];
+	uint_t datalen = hdr->b_l2hdr.b_asize;
+	void *crypt_buf = NULL;
 
-	/*
-	 * initiailze a uio_t with the cipher data + mac. We encrypt L2ARC
-	 * buffers in place so we only need one
-	 */
-	iovs[0].iov_base = hdr->b_l1hdr.b_tmp_cdata;
-	iovs[0].iov_len = hdr->b_l2hdr.b_asize;
-	iovs[1].iov_base = hdr->b_l2hdr.b_mac;
-	iovs[1].iov_len = L2ARC_MAC_LEN;
+	crypt_buf = zio_data_buf_alloc(hdr->b_size);
+	if (!crypt_buf) {
+		ret = ENOMEM;
+		goto error;
+	}
 
-	uio.uio_iov = iovs;
-	uio.uio_iovcnt = 2;
+	if (encrypt) {
+		plain_iovs[0].iov_base = hdr->b_l1hdr.b_tmp_cdata;
+		plain_iovs[0].iov_len = datalen;
+		cipher_iovs[0].iov_base = crypt_buf;
+		cipher_iovs[0].iov_len = datalen;
+		cipher_iovs[1].iov_base = hdr->b_l2hdr.b_mac;
+		cipher_iovs[1].iov_len = L2ARC_MAC_LEN;
+
+		puio.uio_iov = plain_iovs;
+		puio.uio_iovcnt = 1;
+		cuio.uio_iov = cipher_iovs;
+		cuio.uio_iovcnt = 2;
+	} else {
+		plain_iovs[0].iov_base = crypt_buf;
+		plain_iovs[0].iov_len = datalen;
+		plain_iovs[1].iov_base = outmac;
+		plain_iovs[1].iov_len = L2ARC_MAC_LEN;
+		cipher_iovs[0].iov_base = hdr->b_l1hdr.b_tmp_cdata;
+		cipher_iovs[0].iov_len = datalen;
+		cipher_iovs[1].iov_base = hdr->b_l2hdr.b_mac;
+		cipher_iovs[1].iov_len = L2ARC_MAC_LEN;
+
+		puio.uio_iov = plain_iovs;
+		puio.uio_iovcnt = 2;
+		cuio.uio_iov = cipher_iovs;
+		cuio.uio_iovcnt = 2;
+	}
 
 #ifdef _KERNEL
-	uio.uio_segflg = UIO_SYSSPACE;
+	puio.uio_segflg = UIO_SYSSPACE;
+	cuio.uio_segflg = UIO_SYSSPACE;
 #else
-	uio.uio_segflg = UIO_USERSPACE;
+	puio.uio_segflg = UIO_USERSPACE;
+	cuio.uio_segflg = UIO_USERSPACE;
 #endif
 
 	ret = zio_crypt_generate_iv_l2arc(hdr->b_spa, &hdr->b_dva,
@@ -6830,13 +6858,28 @@ l2arc_do_crypt(boolean_t encrypt, l2arc_crypt_key_t *key,
 		goto error;
 
 	ret = zio_do_crypt_uio(encrypt, key->l2ck_crypt, &key->l2ck_key,
-	    key->l2ck_ctx_tmpl, ivbuf, hdr->b_l2hdr.b_asize, &uio, &uio);
+	    key->l2ck_ctx_tmpl, ivbuf, datalen, &puio, &cuio);
 	if (ret)
 		goto error;
+
+	/*
+	 * if the data was compressed before we encrypted it, the buffer will
+	 * have a separately allocated buffer for the compressed data. We need
+	 * to free this and replace it with our own buffer, which (for freeing
+	 * purposes) must be the same size.
+	 */
+	if (hdr->b_l2hdr.b_compress != ZIO_COMPRESS_OFF) {
+		ASSERT(hdr->b_l2hdr.b_compress != ZIO_COMPRESS_EMPTY);
+		zio_data_buf_free(hdr->b_l1hdr.b_tmp_cdata, hdr->b_size);
+	}
+
+	hdr->b_l1hdr.b_tmp_cdata = crypt_buf;
 
 	return (0);
 
 error:
+	if (crypt_buf)
+		zio_data_buf_free(crypt_buf, datalen);
 	return (ret);
 }
 
@@ -6856,24 +6899,24 @@ l2arc_release_cdata_buf(arc_buf_hdr_t *hdr)
 	comp = hdr->b_l2hdr.b_compress;
 	ASSERT(comp == ZIO_COMPRESS_OFF || L2ARC_IS_VALID_COMPRESS(comp));
 
-	if (comp == ZIO_COMPRESS_OFF) {
+	if (hdr->b_l1hdr.b_tmp_cdata == hdr->b_l1hdr.b_buf->b_data) {
 		/*
 		 * In this case, b_tmp_cdata points to the same buffer
 		 * as the arc_buf_t's b_data field. We don't want to
 		 * free it, since the arc_buf_t will handle that.
 		 */
 		hdr->b_l1hdr.b_tmp_cdata = NULL;
-	} else if (comp == ZIO_COMPRESS_EMPTY) {
+	} else if (hdr->b_l1hdr.b_tmp_cdata == NULL) {
 		/*
 		 * In this case, b_tmp_cdata was compressed to an empty
 		 * buffer, thus there's nothing to free and b_tmp_cdata
 		 * should have been set to NULL in l2arc_write_buffers().
 		 */
-		ASSERT3P(hdr->b_l1hdr.b_tmp_cdata, ==, NULL);
+		ASSERT3P(comp, ==, ZIO_COMPRESS_EMPTY);
 	} else {
 		/*
-		 * If the data was compressed, then we've allocated a
-		 * temporary buffer for it, so now we need to release it.
+		 * If the data was compressed or encrypted, then we've allocated
+		 * a temporary buffer for it, so now we need to release it.
 		 */
 		ASSERT(hdr->b_l1hdr.b_tmp_cdata != NULL);
 		zio_data_buf_free(hdr->b_l1hdr.b_tmp_cdata,
