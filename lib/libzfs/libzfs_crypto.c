@@ -386,7 +386,7 @@ get_key_material(libzfs_handle_t *hdl, boolean_t do_verify, key_format_t format,
 		break;
 	}
 
-	if (do_verify && locator == KEY_LOCATOR_PROMPT) {
+	if (do_verify && isatty(fileno(fd))) {
 		/* prompt for the key again to make sure it is valid */
 		km2 = zfs_alloc(hdl, buflen);
 		if (!km2) {
