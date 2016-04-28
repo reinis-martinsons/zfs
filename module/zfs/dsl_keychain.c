@@ -485,7 +485,7 @@ spa_keystore_wkey_hold_ddobj(spa_t *spa, uint64_t ddobj, void *tag,
 		rw_enter(&spa->spa_keystore.sk_wkeys_lock, RW_READER);
 		locked = B_TRUE;
 	}
-	
+
 	/*
 	 * There is a special case in zfs_create_fs() where the wrapping key
 	 * is needed before the filesystem's properties are set. This is
@@ -498,16 +498,16 @@ spa_keystore_wkey_hold_ddobj(spa_t *spa, uint64_t ddobj, void *tag,
 	if (ret == 0) {
 		if (locked)
 			rw_exit(&spa->spa_keystore.sk_wkeys_lock);
-		
+
 		*wkey_out = wkey;
 		return (0);
 	}
-		
+
 	/* hold the dsl dir */
 	ret = dsl_dir_hold_obj(dp, ddobj, NULL, FTAG, &dd);
 	if (ret)
 		goto error;
-	
+
 	/* get the dd that the keysource property was inherited from */
 	ret = dsl_dir_hold_keysource_source_dd(dd, FTAG, &inherit_dd);
 	if (ret)

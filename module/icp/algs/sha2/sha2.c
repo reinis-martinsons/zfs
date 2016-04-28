@@ -41,8 +41,7 @@
 #include <sha2/sha2.h>
 #include <sha2/sha2_consts.h>
 
-#define _RESTRICT_KYWD
-
+#define	_RESTRICT_KYWD
 
 #ifdef _LITTLE_ENDIAN
 #include <sys/byteorder.h>

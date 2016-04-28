@@ -159,18 +159,17 @@ catch_signal(int sig)
 static char *
 get_format_prompt_string(key_format_t format)
 {
-	switch(format) {
+	switch (format) {
 	case KEY_FORMAT_RAW:
-		return "raw key";
+		return ("raw key");
 	case KEY_FORMAT_HEX:
-		return "hex key";
+		return ("hex key");
 	case KEY_FORMAT_PASSPHRASE:
-		return "passphrase";
+		return ("passphrase");
 	default:
 		/* shouldn't happen */
-		return NULL;
+		return (NULL);
 	}
-
 }
 
 static int
@@ -211,7 +210,7 @@ get_key_material_raw(FILE *fd, const char *fsname, key_format_t format,
 		}
 		(void) fflush(stdout);
 
-		/* disable the terminal echo for passphrase input*/
+		/* disable the terminal echo for passphrase input */
 		(void) tcgetattr(fileno(fd), &old_term);
 
 		new_term = old_term;
@@ -305,14 +304,16 @@ get_key_material(libzfs_handle_t *hdl, boolean_t do_verify, key_format_t format,
 		if (kmlen < WRAPPING_KEY_LEN) {
 			ret = EINVAL;
 			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			    "Raw key too short (expected %u)."), WRAPPING_KEY_LEN);
+			    "Raw key too short (expected %u)."),
+			    WRAPPING_KEY_LEN);
 			goto error;
 		}
 
 		if (kmlen > WRAPPING_KEY_LEN) {
 			ret = EINVAL;
 			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			    "Raw key too long (expected %u)."), WRAPPING_KEY_LEN);
+			    "Raw key too long (expected %u)."),
+			    WRAPPING_KEY_LEN);
 			goto error;
 		}
 		break;
@@ -430,7 +431,7 @@ pbkdf2(uint8_t *passphrase, size_t passphraselen, uint8_t *salt,
 
 	/* HMAC key size is max(sizeof(uint32_t) + salt len, sha 256 len) */
 	if (saltlen > SHA_256_DIGEST_LEN) {
-		hmac_key_len = saltlen + sizeof(uint32_t);
+		hmac_key_len = saltlen + sizeof (uint32_t);
 	} else {
 		hmac_key_len = SHA_256_DIGEST_LEN;
 	}
@@ -483,7 +484,7 @@ pbkdf2(uint8_t *passphrase, size_t passphraselen, uint8_t *salt,
 		 */
 		i = htobe32(1 + (blockptr / SHA_256_DIGEST_LEN));
 		memmove(hmac_key, salt, saltlen);
-		memmove(hmac_key + saltlen, (uint8_t *)(&i), sizeof(uint32_t));
+		memmove(hmac_key + saltlen, (uint8_t *)(&i), sizeof (uint32_t));
 
 		/* block initializes to zeroes (no XOR) */
 		memset(block, 0, SHA_256_DIGEST_LEN);
@@ -493,13 +494,13 @@ pbkdf2(uint8_t *passphrase, size_t passphraselen, uint8_t *salt,
 				in_data.cd_length = SHA_256_DIGEST_LEN;
 				in_data.cd_raw.iov_len = SHA_256_DIGEST_LEN;
 			} else {
-				in_data.cd_length = saltlen + sizeof(uint32_t);
+				in_data.cd_length = saltlen + sizeof (uint32_t);
 				in_data.cd_raw.iov_len =
-				    saltlen + sizeof(uint32_t);
+				    saltlen + sizeof (uint32_t);
 			}
 
 			ret = crypto_mac(&mech, &in_data, &key, tmpl,
-			&out_data, NULL);
+			    &out_data, NULL);
 			if (ret != CRYPTO_SUCCESS) {
 				ret = EIO;
 				goto error;
@@ -530,16 +531,16 @@ pbkdf2(uint8_t *passphrase, size_t passphraselen, uint8_t *salt,
 	icp_fini();
 	thread_fini();
 
-	return 0;
+	return (0);
 
 error:
 	crypto_destroy_ctx_template(tmpl);
-	if(hmac_key)
+	if (hmac_key)
 		free(hmac_key);
 	icp_fini();
 	thread_fini();
 
-	return ret;
+	return (ret);
 }
 
 static int
@@ -910,7 +911,7 @@ zfs_crypto_clone(libzfs_handle_t *hdl, zfs_handle_t *origin_zhp,
 	if (keysource) {
 		ha = fnvlist_alloc();
 
-		ret = populate_create_encryption_params_nvlists(hdl,keysource,
+		ret = populate_create_encryption_params_nvlists(hdl, keysource,
 		    NULL, props, ha);
 		if (ret)
 			goto out;

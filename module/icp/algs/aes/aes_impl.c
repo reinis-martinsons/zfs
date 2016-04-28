@@ -76,16 +76,6 @@
  * EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-/*
-#if defined(sun4u)
-extern void aes_encrypt_impl(const uint32_t rk[], int Nr, const uint32_t pt[4],
-	uint32_t ct[4]);
-extern void aes_decrypt_impl(const uint32_t rk[], int Nr, const uint32_t ct[4],
-	uint32_t pt[4]);
-
-#define	AES_ENCRYPT_IMPL(a, b, c, d, e)	aes_encrypt_impl(a, b, c, d)
-#define	AES_DECRYPT_IMPL(a, b, c, d, e)	aes_decrypt_impl(a, b, c, d)
-*/
 #if defined(__amd64)
 
 /* These functions are used to execute amd64 instructions for AMD or Intel: */
@@ -1579,7 +1569,7 @@ aes_alloc_keysched(size_t *size, int kmflag)
 
 #ifdef __amd64
 
-#define INTEL_AESNI_FLAG (1 << 25)
+#define	INTEL_AESNI_FLAG (1 << 25)
 
 /*
  * Return 1 if executing on Intel with AES-NI instructions,
@@ -1598,7 +1588,7 @@ intel_aes_instructions_present(void)
 		func = 0;
 		subfunc = 0;
 
-		__asm__ __volatile__ (
+		__asm__ __volatile__(
 		    "cpuid"
 		    : "=a" (eax), "=b" (ebx), "=c" (ecx), "=d" (edx)
 		    : "a"(func), "c"(subfunc));
@@ -1611,7 +1601,7 @@ intel_aes_instructions_present(void)
 			subfunc = 0;
 
 			/* check for aes-ni instruction set */
-			__asm__ __volatile__ (
+			__asm__ __volatile__(
 				"cpuid"
 				: "=a" (eax), "=b" (ebx), "=c" (ecx), "=d" (edx)
 				: "a"(func), "c"(subfunc));

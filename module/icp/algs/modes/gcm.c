@@ -674,11 +674,7 @@ gcm_alloc_ctx(int kmflag)
 {
 	gcm_ctx_t *gcm_ctx;
 
-#ifdef _KERNEL
 	if ((gcm_ctx = kmem_zalloc(sizeof (gcm_ctx_t), kmflag)) == NULL)
-#else
-	if ((gcm_ctx = calloc(1, sizeof (gcm_ctx_t))) == NULL)
-#endif
 		return (NULL);
 
 	gcm_ctx->gcm_flags = GCM_MODE;
@@ -690,11 +686,7 @@ gmac_alloc_ctx(int kmflag)
 {
 	gcm_ctx_t *gcm_ctx;
 
-#ifdef _KERNEL
 	if ((gcm_ctx = kmem_zalloc(sizeof (gcm_ctx_t), kmflag)) == NULL)
-#else
-	if ((gcm_ctx = calloc(1, sizeof (gcm_ctx_t))) == NULL)
-#endif
 		return (NULL);
 
 	gcm_ctx->gcm_flags = GMAC_MODE;
@@ -710,7 +702,7 @@ gcm_set_kmflag(gcm_ctx_t *ctx, int kmflag)
 
 #ifdef __amd64
 
-#define INTEL_PCLMULQDQ_FLAG (1 << 1)
+#define	INTEL_PCLMULQDQ_FLAG (1 << 1)
 
 /*
  * Return 1 if executing on Intel with PCLMULQDQ instructions,
@@ -732,7 +724,7 @@ intel_pclmulqdq_instruction_present(void)
 		func = 0;
 		subfunc = 0;
 
-		__asm__ __volatile__ (
+		__asm__ __volatile__(
 		    "cpuid"
 		    : "=a" (eax), "=b" (ebx), "=c" (ecx), "=d" (edx)
 		    : "a"(func), "c"(subfunc));
@@ -745,7 +737,7 @@ intel_pclmulqdq_instruction_present(void)
 			subfunc = 0;
 
 			/* check for aes-ni instruction set */
-			__asm__ __volatile__ (
+			__asm__ __volatile__(
 				"cpuid"
 				: "=a" (eax), "=b" (ebx), "=c" (ecx), "=d" (edx)
 				: "a"(func), "c"(subfunc));

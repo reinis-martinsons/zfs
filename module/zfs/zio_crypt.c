@@ -332,7 +332,7 @@ zio_do_crypt_raw(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
 	} else {
 		ret = crypto_decrypt(&mech, &cipherdata, key, tmpl, &plaindata,
 			NULL);
-	}	
+	}
 
 	if (ret != CRYPTO_SUCCESS) {
 		LOG_ERROR(ret, "");
