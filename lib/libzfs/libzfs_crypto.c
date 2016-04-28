@@ -232,13 +232,13 @@ get_key_material_raw(FILE *fd, const char *fsname, key_format_t format,
 		errno = 0;
 		goto out;
 	}
-	
+
 	/* trim the ending newline if it exists */
-	if(*buf[bytes - 1] == '\n') {
-		*buf[bytes - 1] = '\0';
+	if ((*buf)[bytes - 1] == '\n') {
+		(*buf)[bytes - 1] = '\0';
 		bytes--;
 	}
-	
+
 	*len_out = bytes;
 
 out:
@@ -266,10 +266,10 @@ get_key_material(libzfs_handle_t *hdl, boolean_t do_verify, key_format_t format,
     key_locator_t locator, char *uri, const char *fsname, uint8_t **km_out,
     size_t *kmlen_out)
 {
-	int ret;
+	int ret, i;
 	FILE *fd = NULL;
 	uint8_t *km = NULL, *km2 = NULL;
-	size_t expected_len, kmlen, kmlen2;
+	size_t kmlen, kmlen2;
 
 	/* open the appropriate file descriptor */
 	switch (locator) {
@@ -301,26 +301,47 @@ get_key_material(libzfs_handle_t *hdl, boolean_t do_verify, key_format_t format,
 	/* do basic validation of the key material */
 	switch (format) {
 	case KEY_FORMAT_RAW:
+		/* verify the key length is correct */
+		if (kmlen < WRAPPING_KEY_LEN) {
+			ret = EINVAL;
+			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+			    "Raw key too short (expected %u)."), WRAPPING_KEY_LEN);
+			goto error;
+		}
+
+		if (kmlen > WRAPPING_KEY_LEN) {
+			ret = EINVAL;
+			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+			    "Raw key too long (expected %u)."), WRAPPING_KEY_LEN);
+			goto error;
+		}
+		break;
 	case KEY_FORMAT_HEX:
 		/* verify the key length is correct */
-		if (format == KEY_FORMAT_RAW) {
-			expected_len = WRAPPING_KEY_LEN;
-		} else {
-			expected_len = WRAPPING_KEY_LEN * 2;
-		}
-		
-		if (kmlen < expected_len) {
+		if (kmlen < WRAPPING_KEY_LEN * 2) {
 			ret = EINVAL;
 			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			    "Key too short (expected %u)."), expected_len);
+			    "Hex key too short (expected %u)."),
+			    WRAPPING_KEY_LEN * 2);
 			goto error;
 		}
-		
-		if (kmlen > expected_len) {
+
+		if (kmlen > WRAPPING_KEY_LEN * 2) {
 			ret = EINVAL;
 			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			    "Key too long (expected %u)."), expected_len);
+			    "Hex key too long (expected %u)."),
+			    WRAPPING_KEY_LEN * 2);
 			goto error;
+		}
+
+		/* check for invalid hex digits */
+		for (i = 0; i < WRAPPING_KEY_LEN * 2; i++) {
+			if (!isxdigit((char)km[i])) {
+				ret = EINVAL;
+				zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+				    "Invalid hex character %c."), (char)km[i]));
+				goto error;
+			}
 		}
 		break;
 	case KEY_FORMAT_PASSPHRASE:
