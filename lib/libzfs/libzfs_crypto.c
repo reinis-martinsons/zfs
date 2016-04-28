@@ -178,7 +178,6 @@ get_key_material_raw(FILE *fd, const char *fsname, key_format_t format,
     uint8_t *buf, size_t buf_len, boolean_t again, size_t *len_out)
 {
 	int ret = 0, bytes;
-	char c;
 	struct termios old_term, new_term;
 	struct sigaction act, osigint, osigtstp;
 
@@ -244,10 +243,6 @@ get_key_material_raw(FILE *fd, const char *fsname, key_format_t format,
 			errno = 0;
 			goto out;
 		}
-
-		/* clean off the newline from stdin if needed */
-		if (isatty(fileno(fd)))
-			while ((c = getc(fd)) != '\n' && c != EOF);
 	}
 	*len_out = bytes;
 
@@ -276,7 +271,7 @@ get_key_material(libzfs_handle_t *hdl, boolean_t do_verify, key_format_t format,
     key_locator_t locator, char *uri, const char *fsname, uint8_t **km_out,
     size_t *kmlen_out)
 {
-	int ret;
+	int ret, c;
 	FILE *fd = NULL;
 	uint8_t *km = NULL, *km2 = NULL;
 	size_t buflen, kmlen, kmlen2;
@@ -339,16 +334,39 @@ get_key_material(libzfs_handle_t *hdl, boolean_t do_verify, key_format_t format,
 	switch (format) {
 	case KEY_FORMAT_RAW:
 	case KEY_FORMAT_HEX:
-		/* just verify the key length is correct */
+		/* verify the key length is correct */
 		if (kmlen != buflen) {
 			ret = EINVAL;
 			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			    "Invalid key length."));
+			    "Key too short."));
 			goto error;
 		}
+
+		/* make sure the key wasn't too long */
+		if (isatty(fileno(fd)) && fgetc(fd) != '\n') {
+			ret = EINVAL;
+			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+			    "Key too long."));
+
+			/* clean off the newline from stdin if needed */
+			if (isatty(fileno(fd)))
+				while ((c = getc(fd)) != '\n' && c != EOF);
+
+			goto error;
+		} else if (!isatty(fileno(fd)) && fgetc(fd) != EOF) {
+			ret = EINVAL;
+			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+			    "Key too long."));
+			goto error;
+		}
+
+		/* clean off the newline from stdin if needed */
+		if (isatty(fileno(fd)))
+			while ((c = getc(fd)) != '\n' && c != EOF);
+
 		break;
 	case KEY_FORMAT_PASSPHRASE:
-		/* just verify the keylength is correct */
+		/* verify the length is correct */
 		if (kmlen > MAX_PASSPHRASE_LEN) {
 			ret = EINVAL;
 			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
@@ -362,35 +380,35 @@ get_key_material(libzfs_handle_t *hdl, boolean_t do_verify, key_format_t format,
 			    "Passphrase too short (min 8)."));
 			goto error;
 		}
-
-		if (do_verify && locator == KEY_LOCATOR_PROMPT) {
-			/* prompt for the key again to make sure it is valid */
-			km2 = zfs_alloc(hdl, buflen);
-			if (!km2) {
-				ret = ENOMEM;
-				zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-				    "Failed to allocate memory "
-				    "for key material."));
-				goto error;
-			}
-
-			ret = get_key_material_raw(fd, fsname, format, km2,
-			    buflen, B_TRUE, &kmlen2);
-			if (ret)
-				goto error;
-
-			if (kmlen2 != kmlen ||
-			    (strncmp((char *)km, (char *)km2, kmlen) != 0)) {
-				ret = EINVAL;
-				zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-				    "Passphrases do not match."));
-				goto error;
-			}
-		}
 		break;
 	default:
 		/* can't happen */
 		break;
+	}
+
+	if (do_verify && isatty(fileno(fd))) {
+		/* prompt for the key again to make sure it is valid */
+		km2 = zfs_alloc(hdl, buflen);
+		if (!km2) {
+			ret = ENOMEM;
+			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+			    "Failed to allocate memory "
+			    "for key material."));
+			goto error;
+		}
+
+		ret = get_key_material_raw(fd, fsname, format, km2,
+		    buflen, B_TRUE, &kmlen2);
+		if (ret)
+			goto error;
+
+		if (kmlen2 != kmlen ||
+		    (strncmp((char *)km, (char *)km2, kmlen) != 0)) {
+			ret = EINVAL;
+			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+			    "Passphrases do not match."));
+			goto error;
+		}
 	}
 
 
@@ -508,7 +526,8 @@ pbkdf2(uint8_t *passphrase, size_t passphraselen, uint8_t *salt,
 				in_data.cd_raw.iov_len = SHA_256_DIGEST_LEN;
 			} else {
 				in_data.cd_length = saltlen + sizeof(uint32_t);
-				in_data.cd_raw.iov_len = saltlen + sizeof(uint32_t);
+				in_data.cd_raw.iov_len =
+				    saltlen + sizeof(uint32_t);
 			}
 
 			ret = crypto_mac(&mech, &in_data, &key, tmpl,
@@ -1192,7 +1211,7 @@ zfs_crypto_add_key(zfs_handle_t *zhp)
 	ret = lzc_crypto(zhp->zfs_name, ZFS_IOC_CRYPTO_ADD_KEY, NULL, NULL);
 	if (ret) {
 		switch (ret) {
-		case ENOENT:
+		case EPERM:
 			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
 			    "Keychain is not currently loaded."));
 			break;
