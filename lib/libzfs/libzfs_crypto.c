@@ -339,7 +339,7 @@ get_key_material(libzfs_handle_t *hdl, boolean_t do_verify, key_format_t format,
 			if (!isxdigit((char)km[i])) {
 				ret = EINVAL;
 				zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-				    "Invalid hex character %c."), (char)km[i]));
+				    "Invalid hex character detected."));
 				goto error;
 			}
 		}
