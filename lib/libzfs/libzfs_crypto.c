@@ -175,9 +175,10 @@ get_format_prompt_string(key_format_t format)
 
 static int
 get_key_material_raw(FILE *fd, const char *fsname, key_format_t format,
-    uint8_t *buf, size_t buf_len, boolean_t again, size_t *len_out)
+    uint8_t **buf, boolean_t again, size_t *len_out)
 {
 	int ret = 0, bytes;
+	size_t buflen = 0;
 	struct termios old_term, new_term;
 	struct sigaction act, osigint, osigtstp;
 
@@ -225,25 +226,19 @@ get_key_material_raw(FILE *fd, const char *fsname, key_format_t format,
 	}
 
 	/* read the key material */
-	if (format == KEY_FORMAT_PASSPHRASE) {
-		bytes = getline((char **)&buf, &buf_len, fd);
-		if (bytes < 0) {
-			ret = errno;
-			errno = 0;
-			goto out;
-		}
-
-		/* trim the ending newline if it exists */
-		if(buf[bytes - 1] == '\n')
-			buf[bytes - 1] = '\0';
-	} else {
-		bytes = read(fileno(fd), buf, buf_len);
-		if (bytes < 0) {
-			ret = errno;
-			errno = 0;
-			goto out;
-		}
+	bytes = getline((char **)buf, &buflen, fd);
+	if (bytes < 0) {
+		ret = errno;
+		errno = 0;
+		goto out;
 	}
+	
+	/* trim the ending newline if it exists */
+	if(*buf[bytes - 1] == '\n') {
+		*buf[bytes - 1] = '\0';
+		bytes--;
+	}
+	
 	*len_out = bytes;
 
 out:
@@ -271,10 +266,10 @@ get_key_material(libzfs_handle_t *hdl, boolean_t do_verify, key_format_t format,
     key_locator_t locator, char *uri, const char *fsname, uint8_t **km_out,
     size_t *kmlen_out)
 {
-	int ret, c;
+	int ret;
 	FILE *fd = NULL;
 	uint8_t *km = NULL, *km2 = NULL;
-	size_t buflen, kmlen, kmlen2;
+	size_t expected_len, kmlen, kmlen2;
 
 	/* open the appropriate file descriptor */
 	switch (locator) {
@@ -298,35 +293,8 @@ get_key_material(libzfs_handle_t *hdl, boolean_t do_verify, key_format_t format,
 		goto error;
 	}
 
-	/* allocate memory for the key material */
-	switch (format) {
-	case KEY_FORMAT_RAW:
-		buflen = WRAPPING_KEY_LEN;
-		break;
-	case KEY_FORMAT_HEX:
-		buflen = WRAPPING_KEY_LEN * 2;
-		break;
-	case KEY_FORMAT_PASSPHRASE:
-		buflen = MAX_PASSPHRASE_LEN;
-		break;
-	default:
-		ret = EINVAL;
-		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-		    "Invalid key format."));
-		goto error;
-	}
-
-	km = zfs_alloc(hdl, buflen);
-	if (!km) {
-		ret = ENOMEM;
-		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-		    "Failed to allocate memory for key material."));
-		goto error;
-	}
-
 	/* fetch the key material into the buffer */
-	ret = get_key_material_raw(fd, fsname, format, km, buflen,
-	    B_FALSE, &kmlen);
+	ret = get_key_material_raw(fd, fsname, format, &km, B_FALSE, &kmlen);
 	if (ret)
 		goto error;
 
@@ -335,35 +303,25 @@ get_key_material(libzfs_handle_t *hdl, boolean_t do_verify, key_format_t format,
 	case KEY_FORMAT_RAW:
 	case KEY_FORMAT_HEX:
 		/* verify the key length is correct */
-		if (kmlen != buflen) {
+		if (format == KEY_FORMAT_RAW) {
+			expected_len = WRAPPING_KEY_LEN;
+		} else {
+			expected_len = WRAPPING_KEY_LEN * 2;
+		}
+		
+		if (kmlen < expected_len) {
 			ret = EINVAL;
 			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			    "Key too short."));
+			    "Key too short (expected %u)."), expected_len);
 			goto error;
 		}
-
-		/* make sure the key wasn't too long */
-		if (isatty(fileno(fd)) && fgetc(fd) != '\n') {
+		
+		if (kmlen > expected_len) {
 			ret = EINVAL;
 			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			    "Key too long."));
-
-			/* clean off the newline from stdin if needed */
-			if (isatty(fileno(fd)))
-				while ((c = getc(fd)) != '\n' && c != EOF);
-
-			goto error;
-		} else if (!isatty(fileno(fd)) && fgetc(fd) != EOF) {
-			ret = EINVAL;
-			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			    "Key too long."));
+			    "Key too long (expected %u)."), expected_len);
 			goto error;
 		}
-
-		/* clean off the newline from stdin if needed */
-		if (isatty(fileno(fd)))
-			while ((c = getc(fd)) != '\n' && c != EOF);
-
 		break;
 	case KEY_FORMAT_PASSPHRASE:
 		/* verify the length is correct */
@@ -387,18 +345,8 @@ get_key_material(libzfs_handle_t *hdl, boolean_t do_verify, key_format_t format,
 	}
 
 	if (do_verify && isatty(fileno(fd))) {
-		/* prompt for the key again to make sure it is valid */
-		km2 = zfs_alloc(hdl, buflen);
-		if (!km2) {
-			ret = ENOMEM;
-			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			    "Failed to allocate memory "
-			    "for key material."));
-			goto error;
-		}
-
-		ret = get_key_material_raw(fd, fsname, format, km2,
-		    buflen, B_TRUE, &kmlen2);
+		ret = get_key_material_raw(fd, fsname, format, &km2,
+		    B_TRUE, &kmlen2);
 		if (ret)
 			goto error;
 
@@ -410,7 +358,6 @@ get_key_material(libzfs_handle_t *hdl, boolean_t do_verify, key_format_t format,
 			goto error;
 		}
 	}
-
 
 	if (fd != stdin)
 		fclose(fd);
