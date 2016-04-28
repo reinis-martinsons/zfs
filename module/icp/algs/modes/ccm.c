@@ -897,12 +897,8 @@ ccm_init_ctx(ccm_ctx_t *ccm_ctx, char *param, int kmflag,
 	}
 	if (!is_encrypt_init) {
 		/* allocate buffer for storing decrypted plaintext */
-#ifdef _KERNEL
 		ccm_ctx->ccm_pt_buf = kmem_alloc(ccm_ctx->ccm_data_len,
 		    kmflag);
-#else
-		ccm_ctx->ccm_pt_buf = malloc(ccm_ctx->ccm_data_len);
-#endif
 		if (ccm_ctx->ccm_pt_buf == NULL) {
 			rv = CRYPTO_HOST_MEMORY;
 		}
@@ -916,11 +912,7 @@ ccm_alloc_ctx(int kmflag)
 {
 	ccm_ctx_t *ccm_ctx;
 
-#ifdef _KERNEL
 	if ((ccm_ctx = kmem_zalloc(sizeof (ccm_ctx_t), kmflag)) == NULL)
-#else
-	if ((ccm_ctx = calloc(1, sizeof (ccm_ctx_t))) == NULL)
-#endif
 		return (NULL);
 
 	ccm_ctx->ccm_flags = CCM_MODE;

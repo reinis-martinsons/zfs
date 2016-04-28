@@ -230,11 +230,7 @@ ctr_alloc_ctx(int kmflag)
 {
 	ctr_ctx_t *ctr_ctx;
 
-#ifdef _KERNEL
 	if ((ctr_ctx = kmem_zalloc(sizeof (ctr_ctx_t), kmflag)) == NULL)
-#else
-	if ((ctr_ctx = calloc(1, sizeof (ctr_ctx_t))) == NULL)
-#endif
 		return (NULL);
 
 	ctr_ctx->ctr_flags = CTR_MODE;

@@ -44,8 +44,6 @@ extern "C" {
 #define	DRIVER			"dca"
 #define	DCA_MANUFACTURER_ID	"SUNWdca"
 
-#ifdef _KERNEL
-
 /*
  * Tunables.
  */
@@ -917,8 +915,6 @@ int	dca_numcmp(caddr_t, int, caddr_t, int);
 int dca_check_dma_handle(dca_t *dca, ddi_dma_handle_t handle,
 	dca_fma_eclass_t eclass_index);
 int dca_free_context(crypto_ctx_t *ctx);
-
-#endif	/* _KERNEL */
 
 #ifdef	__cplusplus
 }

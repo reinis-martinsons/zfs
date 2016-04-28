@@ -128,11 +128,7 @@ struct filesignatures {
 #define	FILESIG_VERSION3	3	/* version3, all but sig section */
 #define	FILESIG_VERSION4	4	/* version3 format, SHF_ALLOC only */
 
-#ifndef	_KERNEL
-
 #define	_PATH_KCFD_DOOR	"/etc/svc/volatile/kcfd_door"
-
-#endif	/* _KERNEL */
 
 #ifdef __cplusplus
 }

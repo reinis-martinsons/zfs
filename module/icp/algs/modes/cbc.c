@@ -282,11 +282,7 @@ cbc_init_ctx(cbc_ctx_t *cbc_ctx, char *param, size_t param_len,
 	 * cd_miscdata field in the crypto_data structure.
 	 */
 	if (param != NULL) {
-#ifdef _KERNEL
 		ASSERT(param_len == block_size);
-#else
-		assert(param_len == block_size);
-#endif
 		copy_block((uchar_t *)param, cbc_ctx->cbc_iv);
 	}
 
@@ -301,11 +297,7 @@ cbc_alloc_ctx(int kmflag)
 {
 	cbc_ctx_t *cbc_ctx;
 
-#ifdef _KERNEL
 	if ((cbc_ctx = kmem_zalloc(sizeof (cbc_ctx_t), kmflag)) == NULL)
-#else
-	if ((cbc_ctx = calloc(1, sizeof (cbc_ctx_t))) == NULL)
-#endif
 		return (NULL);
 
 	cbc_ctx->cbc_flags = CBC_MODE;

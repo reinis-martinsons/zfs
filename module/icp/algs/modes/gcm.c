@@ -367,15 +367,9 @@ gcm_mode_decrypt_contiguous_blocks(gcm_ctx_t *ctx, char *data, size_t length,
 	 */
 	if (length > 0) {
 		new_len = ctx->gcm_pt_buf_len + length;
-#ifdef _KERNEL
 		new = kmem_alloc(new_len, ctx->gcm_kmflag);
 		bcopy(ctx->gcm_pt_buf, new, ctx->gcm_pt_buf_len);
 		kmem_free(ctx->gcm_pt_buf, ctx->gcm_pt_buf_len);
-#else
-		new = malloc(new_len);
-		bcopy(ctx->gcm_pt_buf, new, ctx->gcm_pt_buf_len);
-		free(ctx->gcm_pt_buf);
-#endif
 		if (new == NULL)
 			return (CRYPTO_HOST_MEMORY);
 

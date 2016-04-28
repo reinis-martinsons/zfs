@@ -135,11 +135,7 @@ ecb_alloc_ctx(int kmflag)
 {
 	ecb_ctx_t *ecb_ctx;
 
-#ifdef _KERNEL
 	if ((ecb_ctx = kmem_zalloc(sizeof (ecb_ctx_t), kmflag)) == NULL)
-#else
-	if ((ecb_ctx = calloc(1, sizeof (ecb_ctx_t))) == NULL)
-#endif
 		return (NULL);
 
 	ecb_ctx->ecb_flags = ECB_MODE;
