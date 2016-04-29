@@ -787,7 +787,7 @@ typedef struct l2arc_read_callback {
 	blkptr_t		l2rcb_bp;		/* original blkptr */
 	zbookmark_phys_t	l2rcb_zb;		/* original bookmark */
 	int			l2rcb_flags;		/* original flags */
-	uint8_t			l2rcb_compress;		/* applied comp / enc */
+	uint8_t			l2rcb_transforms;	/* applied comp / enc */
 } l2arc_read_callback_t;
 
 typedef struct l2arc_data_free {
@@ -816,8 +816,8 @@ static void l2arc_read_done(zio_t *);
 
 static boolean_t l2arc_compress_buf(arc_buf_hdr_t *);
 static void l2arc_decompress_zio(zio_t *, arc_buf_hdr_t *, enum zio_compress);
-static int l2arc_do_crypt(boolean_t encrypt, l2arc_crypt_key_t *key,
-    arc_buf_hdr_t *hdr);
+static int l2arc_encrypt_buf(l2arc_crypt_key_t *, arc_buf_hdr_t *);
+static int l2arc_decrypt_zio(l2arc_crypt_key_t *, zio_t *, arc_buf_hdr_t *);
 
 static void l2arc_release_cdata_buf(arc_buf_hdr_t *);
 
@@ -1978,7 +1978,11 @@ arc_buf_l2_cdata_free(arc_buf_hdr_t *hdr)
 		return;
 	}
 
-	ASSERT(L2ARC_IS_VALID_COMPRESS(hdr->b_l2hdr.b_transforms));
+	LOG_DEBUG("------- b_transforms = %02x", hdr->b_l2hdr.b_transforms);
+	//ASSERT(L2ARC_IS_VALID_COMPRESS(hdr->b_l2hdr.b_transforms) || );
+
+	ASSERT(L2ARC_IS_VALID_COMPRESS(hdr->b_l2hdr.b_transforms) ||
+		L2TRANS_GET_ENC(hdr->b_l2hdr.b_transforms));
 
 	arc_buf_free_on_write(hdr->b_l1hdr.b_tmp_cdata,
 	    hdr->b_size, zio_data_buf_free);
@@ -4539,7 +4543,7 @@ top:
 				cb->l2rcb_bp = *bp;
 				cb->l2rcb_zb = *zb;
 				cb->l2rcb_flags = zio_flags;
-				cb->l2rcb_compress = b_transforms;
+				cb->l2rcb_transforms = b_transforms;
 
 				ASSERT(addr >= VDEV_LABEL_START_SIZE &&
 				    addr + size < vd->vdev_psize -
@@ -6120,15 +6124,17 @@ l2arc_read_done(zio_t *zio)
 	/*
 	 * If the buffer was encrypted, decrypt it.
 	 */
-	if (HDR_L2_ENCRYPT(hdr))
-		VERIFY0(l2arc_do_crypt(B_FALSE, &l2arc_crypto_key, hdr));
+	if (L2TRANS_GET_ENC(cb->l2rcb_transforms)) {
+		LOG_DEBUG("here1");
+		VERIFY0(l2arc_decrypt_zio(&l2arc_crypto_key, zio, hdr));
+	}
 
 	/*
 	 * If the buffer was compressed, decompress it.
 	 */
-	if (L2TRANS_GET_COMP(cb->l2rcb_compress) != ZIO_COMPRESS_OFF){
+	if (L2TRANS_GET_COMP(cb->l2rcb_transforms) != ZIO_COMPRESS_OFF){
 		l2arc_decompress_zio(zio, hdr,
-		    L2TRANS_GET_COMP(cb->l2rcb_compress));
+		    L2TRANS_GET_COMP(cb->l2rcb_transforms));
 	}
 
 	ASSERT(zio->io_data != NULL);
@@ -6590,8 +6596,10 @@ l2arc_write_buffers(spa_t *spa, l2arc_dev_t *dev, uint64_t target_sz,
 			}
 		}
 
-		if (HDR_L2_ENCRYPT(hdr) && hdr->b_l2hdr.b_asize != 0)
-			VERIFY0(l2arc_do_crypt(B_TRUE, &l2arc_crypto_key, hdr));
+		if (HDR_L2_ENCRYPT(hdr) && hdr->b_l2hdr.b_asize != 0) {
+			VERIFY0(l2arc_encrypt_buf(&l2arc_crypto_key, hdr));
+			L2TRANS_SET_ENC(hdr->b_l2hdr.b_transforms, B_TRUE);
+		}
 
 		/*
 		 * Pick up the buffer data we had previously stashed away
@@ -6804,51 +6812,37 @@ l2arc_decompress_zio(zio_t *zio, arc_buf_hdr_t *hdr, enum zio_compress c)
 }
 
 static int
-l2arc_do_crypt(boolean_t encrypt, l2arc_crypt_key_t *key,
-    arc_buf_hdr_t *hdr)
+l2arc_encrypt_buf(l2arc_crypt_key_t *key, arc_buf_hdr_t *hdr)
 {
 	int ret;
 	uio_t puio, cuio;
-	iovec_t plain_iovs[2];
+	iovec_t plain_iov;
 	iovec_t cipher_iovs[2];
 	uint8_t ivbuf[L2ARC_IV_LEN];
-	uint8_t outmac[L2ARC_MAC_LEN];
 	uint_t datalen = hdr->b_l2hdr.b_asize;
 	void *crypt_buf = NULL;
 
-	crypt_buf = zio_data_buf_alloc(hdr->b_size);
+	ASSERT(L2TRANS_GET_COMP(hdr->b_l2hdr.b_transforms) !=
+	    ZIO_COMPRESS_EMPTY);
+
+	crypt_buf = zio_data_buf_alloc(datalen);
 	if (!crypt_buf) {
 		ret = ENOMEM;
 		goto error;
 	}
 
-	if (encrypt) {
-		plain_iovs[0].iov_base = hdr->b_l1hdr.b_tmp_cdata;
-		plain_iovs[0].iov_len = datalen;
-		cipher_iovs[0].iov_base = crypt_buf;
-		cipher_iovs[0].iov_len = datalen;
-		cipher_iovs[1].iov_base = hdr->b_l2hdr.b_mac;
-		cipher_iovs[1].iov_len = L2ARC_MAC_LEN;
+	plain_iov.iov_base = hdr->b_l1hdr.b_tmp_cdata;
+	plain_iov.iov_len = datalen;
+	cipher_iovs[0].iov_base = crypt_buf;
+	cipher_iovs[0].iov_len = datalen;
+	cipher_iovs[1].iov_base = hdr->b_l2hdr.b_mac;
+	cipher_iovs[1].iov_len = L2ARC_MAC_LEN;
 
-		puio.uio_iov = plain_iovs;
-		puio.uio_iovcnt = 1;
-		cuio.uio_iov = cipher_iovs;
-		cuio.uio_iovcnt = 2;
-	} else {
-		plain_iovs[0].iov_base = crypt_buf;
-		plain_iovs[0].iov_len = datalen;
-		plain_iovs[1].iov_base = outmac;
-		plain_iovs[1].iov_len = L2ARC_MAC_LEN;
-		cipher_iovs[0].iov_base = hdr->b_l1hdr.b_tmp_cdata;
-		cipher_iovs[0].iov_len = datalen;
-		cipher_iovs[1].iov_base = hdr->b_l2hdr.b_mac;
-		cipher_iovs[1].iov_len = L2ARC_MAC_LEN;
+	puio.uio_iov = &plain_iov;
+	puio.uio_iovcnt = 1;
+	cuio.uio_iov = cipher_iovs;
+	cuio.uio_iovcnt = 2;
 
-		puio.uio_iov = plain_iovs;
-		puio.uio_iovcnt = 2;
-		cuio.uio_iov = cipher_iovs;
-		cuio.uio_iovcnt = 2;
-	}
 
 #ifdef _KERNEL
 	puio.uio_segflg = UIO_SYSSPACE;
@@ -6863,7 +6857,7 @@ l2arc_do_crypt(boolean_t encrypt, l2arc_crypt_key_t *key,
 	if (ret)
 		goto error;
 
-	ret = zio_do_crypt_uio(encrypt, key->l2ck_crypt, &key->l2ck_key,
+	ret = zio_encrypt_uio(key->l2ck_crypt, &key->l2ck_key,
 	    key->l2ck_ctx_tmpl, ivbuf, datalen, &puio, &cuio);
 	if (ret)
 		goto error;
@@ -6874,13 +6868,70 @@ l2arc_do_crypt(boolean_t encrypt, l2arc_crypt_key_t *key,
 	 * to free this and replace it with our own buffer, which (for freeing
 	 * purposes) must be the same size.
 	 */
-	if (L2TRANS_GET_COMP(hdr->b_l2hdr.b_transforms) != ZIO_COMPRESS_OFF) {
-		ASSERT(L2TRANS_GET_COMP(hdr->b_l2hdr.b_transforms)
-		    != ZIO_COMPRESS_EMPTY);
+	if (L2TRANS_GET_COMP(hdr->b_l2hdr.b_transforms) != ZIO_COMPRESS_OFF)
 		zio_data_buf_free(hdr->b_l1hdr.b_tmp_cdata, hdr->b_size);
-	}
 
 	hdr->b_l1hdr.b_tmp_cdata = crypt_buf;
+
+	return (0);
+
+error:
+	if (crypt_buf)
+		zio_data_buf_free(crypt_buf, datalen);
+	return (ret);
+}
+
+static int
+l2arc_decrypt_zio(l2arc_crypt_key_t *key, zio_t *zio, arc_buf_hdr_t *hdr) {
+	int ret;
+	uio_t puio, cuio;
+	iovec_t plain_iovs[2];
+	iovec_t cipher_iovs[2];
+	uint8_t ivbuf[L2ARC_IV_LEN];
+	uint8_t outmac[L2ARC_MAC_LEN];
+	uint_t datalen = zio->io_size;
+	void *crypt_buf = NULL;
+
+	crypt_buf = zio_data_buf_alloc(datalen);
+	if (!crypt_buf) {
+		ret = ENOMEM;
+		goto error;
+	}
+	bcopy(zio->io_data, crypt_buf, datalen);
+
+	plain_iovs[0].iov_base = zio->io_data;
+	plain_iovs[0].iov_len = datalen;
+	plain_iovs[1].iov_base = outmac;
+	plain_iovs[1].iov_len = L2ARC_MAC_LEN;
+	cipher_iovs[0].iov_base = crypt_buf;
+	cipher_iovs[0].iov_len = datalen;
+	cipher_iovs[1].iov_base = hdr->b_l2hdr.b_mac;
+	cipher_iovs[1].iov_len = L2ARC_MAC_LEN;
+
+	puio.uio_iov = plain_iovs;
+	puio.uio_iovcnt = 2;
+	cuio.uio_iov = cipher_iovs;
+	cuio.uio_iovcnt = 2;
+
+#ifdef _KERNEL
+	puio.uio_segflg = UIO_SYSSPACE;
+	cuio.uio_segflg = UIO_SYSSPACE;
+#else
+	puio.uio_segflg = UIO_USERSPACE;
+	cuio.uio_segflg = UIO_USERSPACE;
+#endif
+
+	ret = zio_crypt_generate_iv_l2arc(hdr->b_spa, &hdr->b_dva,
+	    hdr->b_birth, hdr->b_l2hdr.b_daddr, ivbuf);
+	if (ret)
+		goto error;
+
+	ret = zio_decrypt_uio(key->l2ck_crypt, &key->l2ck_key,
+	    key->l2ck_ctx_tmpl, ivbuf, datalen, &puio, &cuio);
+	if (ret)
+		goto error;
+
+	zio_data_buf_free(crypt_buf, datalen);
 
 	return (0);
 

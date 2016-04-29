@@ -1200,11 +1200,11 @@ out:
 
 	if (aes_ctx.ac_flags & CCM_MODE) {
 		if (aes_ctx.ac_pt_buf != NULL) {
-			kmem_free(aes_ctx.ac_pt_buf, aes_ctx.ac_data_len);
+			vmem_free(aes_ctx.ac_pt_buf, aes_ctx.ac_data_len);
 		}
 	} else if (aes_ctx.ac_flags & (GCM_MODE|GMAC_MODE)) {
 		if (((gcm_ctx_t *)&aes_ctx)->gcm_pt_buf != NULL) {
-			kmem_free(((gcm_ctx_t *)&aes_ctx)->gcm_pt_buf,
+			vmem_free(((gcm_ctx_t *)&aes_ctx)->gcm_pt_buf,
 			    ((gcm_ctx_t *)&aes_ctx)->gcm_pt_buf_len);
 		}
 	}

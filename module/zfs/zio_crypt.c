@@ -1031,8 +1031,6 @@ zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key,
 	bzero(&puio, sizeof (uio_t));
 	bzero(&cuio, sizeof (uio_t));
 
-	LOG_DEBUG("ot = %u", (unsigned)ot);
-
 	/* create uios for encryption */
 	ret = zio_crypt_init_uios(encrypt, ot, plainbuf, cipherbuf, datalen,
 		mac, out_mac, &puio, &cuio, &enc_len);
