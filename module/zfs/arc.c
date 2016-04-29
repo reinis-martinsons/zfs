@@ -1978,9 +1978,6 @@ arc_buf_l2_cdata_free(arc_buf_hdr_t *hdr)
 		return;
 	}
 
-	LOG_DEBUG("------- b_transforms = %02x", hdr->b_l2hdr.b_transforms);
-	//ASSERT(L2ARC_IS_VALID_COMPRESS(hdr->b_l2hdr.b_transforms) || );
-
 	ASSERT(L2ARC_IS_VALID_COMPRESS(hdr->b_l2hdr.b_transforms) ||
 		L2TRANS_GET_ENC(hdr->b_l2hdr.b_transforms));
 
@@ -6124,10 +6121,8 @@ l2arc_read_done(zio_t *zio)
 	/*
 	 * If the buffer was encrypted, decrypt it.
 	 */
-	if (L2TRANS_GET_ENC(cb->l2rcb_transforms)) {
-		LOG_DEBUG("here1");
+	if (L2TRANS_GET_ENC(cb->l2rcb_transforms))
 		VERIFY0(l2arc_decrypt_zio(&l2arc_crypto_key, zio, hdr));
-	}
 
 	/*
 	 * If the buffer was compressed, decompress it.
@@ -6686,7 +6681,7 @@ l2arc_write_buffers(spa_t *spa, l2arc_dev_t *dev, uint64_t target_sz,
  *    set to zero and b_compress is set to ZIO_COMPRESS_EMPTY.
  * *) Compression succeeded and b_tmp_cdata was replaced with a temporary
  *    data buffer which holds the compressed data to be written, and b_asize
- *    tells us how much data there is. b_compress is set to the appropriate
+ *    tells us how much data there is. b_transforms is set with the appropriate
  *    compression algorithm. Once writing is done, invoke
  *    l2arc_release_cdata_buf on this l2hdr to free this temporary buffer.
  *
@@ -6842,7 +6837,6 @@ l2arc_encrypt_buf(l2arc_crypt_key_t *key, arc_buf_hdr_t *hdr)
 	puio.uio_iovcnt = 1;
 	cuio.uio_iov = cipher_iovs;
 	cuio.uio_iovcnt = 2;
-
 
 #ifdef _KERNEL
 	puio.uio_segflg = UIO_SYSSPACE;
