@@ -200,7 +200,7 @@ typedef struct l2arc_buf_hdr {
 #define	L2TRANS_SET_COMP(t, comp) ((t) |= ((comp) & L2TRANS_COMP_MASK))
 
 #define	L2TRANS_GET_ENC(t) (!!((t) & (1 << 7)))
-#define	L2TRANS_SET_ENC(t, enc) ((t) |= ((enc) << 7))
+#define	L2TRANS_SET_ENC(t, enc) ((t) |= ((!!(enc)) << 7))
 
 typedef struct l2arc_write_callback {
 	l2arc_dev_t	*l2wcb_dev;		/* device info */

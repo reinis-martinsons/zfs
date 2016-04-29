@@ -6715,7 +6715,7 @@ l2arc_compress_buf(arc_buf_hdr_t *hdr)
 	if (csize == 0) {
 		/* zero block, indicate that there's nothing to write */
 		zio_data_buf_free(cdata, len);
-		L2TRANS_SET_ENC(l2hdr->b_transforms, ZIO_COMPRESS_EMPTY);
+		L2TRANS_SET_COMP(l2hdr->b_transforms, ZIO_COMPRESS_EMPTY);
 		l2hdr->b_asize = 0;
 		hdr->b_l1hdr.b_tmp_cdata = NULL;
 		ARCSTAT_BUMP(arcstat_l2_compress_zeros);
@@ -6725,7 +6725,7 @@ l2arc_compress_buf(arc_buf_hdr_t *hdr)
 		 * Compression succeeded, we'll keep the cdata around for
 		 * writing and release it afterwards.
 		 */
-		L2TRANS_SET_ENC(l2hdr->b_transforms, ZIO_COMPRESS_LZ4);
+		L2TRANS_SET_COMP(l2hdr->b_transforms, ZIO_COMPRESS_LZ4);
 		l2hdr->b_asize = csize;
 		hdr->b_l1hdr.b_tmp_cdata = cdata;
 		ARCSTAT_BUMP(arcstat_l2_compress_successes);
