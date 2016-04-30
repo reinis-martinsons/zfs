@@ -21,8 +21,7 @@
  */
 
 /*
- * Copyright 2016 Datto, Inc.  All rights reserved.
- * Use is subject to license terms.
+ * Copyright (c) 2016, Datto, Inc. All rights reserved.
  */
 
 #include <sys/zfs_context.h>
