@@ -817,7 +817,7 @@ static void l2arc_read_done(zio_t *);
 static boolean_t l2arc_compress_buf(arc_buf_hdr_t *);
 static void l2arc_decompress_zio(zio_t *, arc_buf_hdr_t *, enum zio_compress);
 static int l2arc_encrypt_buf(l2arc_crypt_key_t *, arc_buf_hdr_t *);
-static int l2arc_decrypt_zio(l2arc_crypt_key_t *, zio_t *, arc_buf_hdr_t *);
+static void l2arc_decrypt_zio(l2arc_crypt_key_t *, zio_t *, arc_buf_hdr_t *);
 
 static void l2arc_release_cdata_buf(arc_buf_hdr_t *);
 
@@ -6122,7 +6122,7 @@ l2arc_read_done(zio_t *zio)
 	 * If the buffer was encrypted, decrypt it.
 	 */
 	if (L2TRANS_GET_ENC(cb->l2rcb_transforms))
-		VERIFY0(l2arc_decrypt_zio(&l2arc_crypto_key, zio, hdr));
+		l2arc_decrypt_zio(&l2arc_crypto_key, zio, hdr);
 
 	/*
 	 * If the buffer was compressed, decompress it.
@@ -6875,7 +6875,7 @@ error:
 	return (ret);
 }
 
-static int
+static void
 l2arc_decrypt_zio(l2arc_crypt_key_t *key, zio_t *zio, arc_buf_hdr_t *hdr) {
 	int ret;
 	uio_t puio, cuio;
@@ -6887,10 +6887,6 @@ l2arc_decrypt_zio(l2arc_crypt_key_t *key, zio_t *zio, arc_buf_hdr_t *hdr) {
 	void *crypt_buf = NULL;
 
 	crypt_buf = zio_data_buf_alloc(datalen);
-	if (!crypt_buf) {
-		ret = ENOMEM;
-		goto error;
-	}
 	bcopy(zio->io_data, crypt_buf, datalen);
 
 	plain_iovs[0].iov_base = zio->io_data;
@@ -6927,12 +6923,12 @@ l2arc_decrypt_zio(l2arc_crypt_key_t *key, zio_t *zio, arc_buf_hdr_t *hdr) {
 
 	zio_data_buf_free(crypt_buf, datalen);
 
-	return (0);
+	return;
 
 error:
 	if (crypt_buf)
 		zio_data_buf_free(crypt_buf, datalen);
-	return (ret);
+	zio->io_error = EIO;
 }
 
 /*
@@ -6953,14 +6949,14 @@ l2arc_release_cdata_buf(arc_buf_hdr_t *hdr)
 	encrypted = L2TRANS_GET_ENC(hdr->b_l2hdr.b_transforms);
 	ASSERT(comp == ZIO_COMPRESS_OFF || L2ARC_IS_VALID_COMPRESS(comp));
 
-	if (comp == ZIO_COMPRESS_OFF && encrypted == B_FALSE) {
+	if (comp == ZIO_COMPRESS_OFF && !encrypted) {
 		/*
 		 * In this case, b_tmp_cdata points to the same buffer
 		 * as the arc_buf_t's b_data field. We don't want to
 		 * free it, since the arc_buf_t will handle that.
 		 */
 		hdr->b_l1hdr.b_tmp_cdata = NULL;
-	} else if (comp == ZIO_COMPRESS_EMPTY && encrypted == B_FALSE) {
+	} else if (comp == ZIO_COMPRESS_EMPTY && !encrypted) {
 		/*
 		 * In this case, b_tmp_cdata was compressed to an empty
 		 * buffer, thus there's nothing to free and b_tmp_cdata
@@ -6969,8 +6965,8 @@ l2arc_release_cdata_buf(arc_buf_hdr_t *hdr)
 		ASSERT3P(hdr->b_l1hdr.b_tmp_cdata, ==, NULL);
 	} else {
 		/*
-		 * If the data was compressed, then we've allocated a
-		 * temporary buffer for it, so now we need to release it.
+		 * If the data was compressed or encrypted, then we've allocated
+		 * a temporary buffer for it, so now we need to release it.
 		 */
 		ASSERT(hdr->b_l1hdr.b_tmp_cdata != NULL);
 		zio_data_buf_free(hdr->b_l1hdr.b_tmp_cdata,
