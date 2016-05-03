@@ -4366,6 +4366,8 @@ top:
 			hdr->b_flags |= ARC_FLAG_L2CACHE;
 		if (*arc_flags & ARC_FLAG_L2COMPRESS)
 			hdr->b_flags |= ARC_FLAG_L2COMPRESS;
+		if (BP_IS_ENCRYPTED(bp))
+			hdr->b_flags |= ARC_FLAG_L2_ENCRYPT;
 		mutex_exit(hash_lock);
 		ARCSTAT_BUMP(arcstat_hits);
 		ARCSTAT_CONDSTAT(!HDR_PREFETCH(hdr),
@@ -4457,6 +4459,8 @@ top:
 				hdr->b_flags |= ARC_FLAG_L2CACHE;
 			if (*arc_flags & ARC_FLAG_L2COMPRESS)
 				hdr->b_flags |= ARC_FLAG_L2COMPRESS;
+			if (BP_IS_ENCRYPTED(bp))
+				hdr->b_flags |= ARC_FLAG_L2_ENCRYPT;
 			buf = kmem_cache_alloc(buf_cache, KM_PUSHPAGE);
 			buf->b_hdr = hdr;
 			buf->b_data = NULL;
@@ -6867,8 +6871,6 @@ l2arc_encrypt_buf(l2arc_crypt_key_t *key, arc_buf_hdr_t *hdr)
 	hdr->b_l1hdr.b_tmp_cdata = crypt_buf;
 	L2TRANS_SET_ENC(hdr->b_l2hdr.b_transforms, B_TRUE);
 
-	LOG_DEBUG("encrypt hdr = %p, transforms = 0x%02x, tmp = %p", hdr, hdr->b_l2hdr.b_transforms, hdr->b_l1hdr.b_tmp_cdata);
-
 	return (0);
 
 error:
@@ -6890,8 +6892,6 @@ l2arc_decrypt_zio(l2arc_crypt_key_t *key, zio_t *zio, arc_buf_hdr_t *hdr) {
 
 	if (zio->io_error != 0)
 		return;
-
-	LOG_DEBUG("decrypt hdr = %p, transforms = 0x%02x, tmp = %p", hdr, hdr->b_l2hdr.b_transforms, hdr->b_l1hdr.b_tmp_cdata);
 
 	crypt_buf = zio_data_buf_alloc(datalen);
 	bcopy(zio->io_data, crypt_buf, datalen);
@@ -6976,9 +6976,6 @@ l2arc_release_cdata_buf(arc_buf_hdr_t *hdr)
 		 * a temporary buffer for it, so now we need to release it.
 		 */
 		ASSERT(hdr->b_l1hdr.b_tmp_cdata != NULL);
-
-		if (encrypted)
-			LOG_DEBUG("free hdr = %p, transforms = 0x%02x, tmp = %p", hdr, hdr->b_l2hdr.b_transforms, hdr->b_l1hdr.b_tmp_cdata);
 		ASSERT(comp == ZIO_COMPRESS_LZ4 || encrypted);
 
 		zio_data_buf_free(hdr->b_l1hdr.b_tmp_cdata, hdr->b_size);
