@@ -1978,6 +1978,8 @@ arc_buf_l2_cdata_free(arc_buf_hdr_t *hdr)
 		return;
 	}
 
+	ASSERT(L2TRANS_GET_COMP(hdr->b_l2hdr.b_transforms) != ZIO_COMPRESS_EMPTY);
+
 	ASSERT(L2ARC_IS_VALID_COMPRESS(hdr->b_l2hdr.b_transforms) ||
 		L2TRANS_GET_ENC(hdr->b_l2hdr.b_transforms));
 
@@ -6591,10 +6593,8 @@ l2arc_write_buffers(spa_t *spa, l2arc_dev_t *dev, uint64_t target_sz,
 			}
 		}
 
-		if (HDR_L2_ENCRYPT(hdr) && hdr->b_l2hdr.b_asize != 0) {
+		if (HDR_L2_ENCRYPT(hdr) && hdr->b_l2hdr.b_asize != 0)
 			VERIFY0(l2arc_encrypt_buf(&l2arc_crypto_key, hdr));
-			L2TRANS_SET_ENC(hdr->b_l2hdr.b_transforms, B_TRUE);
-		}
 
 		/*
 		 * Pick up the buffer data we had previously stashed away
@@ -6815,16 +6815,13 @@ l2arc_encrypt_buf(l2arc_crypt_key_t *key, arc_buf_hdr_t *hdr)
 	iovec_t cipher_iovs[2];
 	uint8_t ivbuf[L2ARC_IV_LEN];
 	uint_t datalen = hdr->b_l2hdr.b_asize;
+	uint_t bufsize = hdr->b_size;
 	void *crypt_buf = NULL;
 
 	ASSERT(L2TRANS_GET_COMP(hdr->b_l2hdr.b_transforms) !=
 	    ZIO_COMPRESS_EMPTY);
 
-	crypt_buf = zio_data_buf_alloc(datalen);
-	if (!crypt_buf) {
-		ret = ENOMEM;
-		goto error;
-	}
+	crypt_buf = zio_data_buf_alloc(bufsize);
 
 	plain_iov.iov_base = hdr->b_l1hdr.b_tmp_cdata;
 	plain_iov.iov_len = datalen;
@@ -6862,16 +6859,21 @@ l2arc_encrypt_buf(l2arc_crypt_key_t *key, arc_buf_hdr_t *hdr)
 	 * to free this and replace it with our own buffer, which (for freeing
 	 * purposes) must be the same size.
 	 */
-	if (L2TRANS_GET_COMP(hdr->b_l2hdr.b_transforms) != ZIO_COMPRESS_OFF)
-		zio_data_buf_free(hdr->b_l1hdr.b_tmp_cdata, hdr->b_size);
+	if (L2TRANS_GET_COMP(hdr->b_l2hdr.b_transforms) != ZIO_COMPRESS_OFF) {
+		ASSERT3U(L2TRANS_GET_COMP(hdr->b_l2hdr.b_transforms), ==, ZIO_COMPRESS_LZ4);
+		zio_data_buf_free(hdr->b_l1hdr.b_tmp_cdata, bufsize);
+	}
 
 	hdr->b_l1hdr.b_tmp_cdata = crypt_buf;
+	L2TRANS_SET_ENC(hdr->b_l2hdr.b_transforms, B_TRUE);
+
+	LOG_DEBUG("encrypt hdr = %p, transforms = 0x%02x, tmp = %p", hdr, hdr->b_l2hdr.b_transforms, hdr->b_l1hdr.b_tmp_cdata);
 
 	return (0);
 
 error:
 	if (crypt_buf)
-		zio_data_buf_free(crypt_buf, datalen);
+		zio_data_buf_free(crypt_buf, bufsize);
 	return (ret);
 }
 
@@ -6885,6 +6887,11 @@ l2arc_decrypt_zio(l2arc_crypt_key_t *key, zio_t *zio, arc_buf_hdr_t *hdr) {
 	uint8_t outmac[L2ARC_MAC_LEN];
 	uint_t datalen = zio->io_size;
 	void *crypt_buf = NULL;
+
+	if (zio->io_error != 0)
+		return;
+
+	LOG_DEBUG("decrypt hdr = %p, transforms = 0x%02x, tmp = %p", hdr, hdr->b_l2hdr.b_transforms, hdr->b_l1hdr.b_tmp_cdata);
 
 	crypt_buf = zio_data_buf_alloc(datalen);
 	bcopy(zio->io_data, crypt_buf, datalen);
@@ -6969,8 +6976,12 @@ l2arc_release_cdata_buf(arc_buf_hdr_t *hdr)
 		 * a temporary buffer for it, so now we need to release it.
 		 */
 		ASSERT(hdr->b_l1hdr.b_tmp_cdata != NULL);
-		zio_data_buf_free(hdr->b_l1hdr.b_tmp_cdata,
-		    hdr->b_size);
+
+		if (encrypted)
+			LOG_DEBUG("free hdr = %p, transforms = 0x%02x, tmp = %p", hdr, hdr->b_l2hdr.b_transforms, hdr->b_l1hdr.b_tmp_cdata);
+		ASSERT(comp == ZIO_COMPRESS_LZ4 || encrypted);
+
+		zio_data_buf_free(hdr->b_l1hdr.b_tmp_cdata, hdr->b_size);
 		hdr->b_l1hdr.b_tmp_cdata = NULL;
 	}
 

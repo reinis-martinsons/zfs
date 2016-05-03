@@ -722,6 +722,7 @@ zio_do_crypt_uio(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
 
 	if (ret != CRYPTO_SUCCESS) {
 		LOG_ERROR(ret, "");
+		dump_stack();
 		ret = EIO;
 		goto error;
 	}
