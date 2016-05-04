@@ -1,7 +1,7 @@
 dnl #
 dnl # Set the target arch for libspl atomic implementation and the icp
 dnl #
-AC_DEFUN([ZFS_AC_CONFIG_USER_ARCH], [
+AC_DEFUN([ZFS_AC_CONFIG_ALWAYS_ARCH], [
 	AC_MSG_CHECKING(for target asm dir)
 	TARGET_ARCH=`echo ${target_cpu} | sed -e s/i.86/i386/`
 
