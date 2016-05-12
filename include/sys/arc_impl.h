@@ -29,6 +29,7 @@
 #define	_SYS_ARC_IMPL_H
 
 #include <sys/arc.h>
+#include <sys/zio_crypt.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -169,6 +170,21 @@ typedef struct l1arc_buf_hdr {
 	void			*b_pdata;
 } l1arc_buf_hdr_t;
 
+/*
+ * Encrypted blocks will need to be stored encrypted on the L2ARC
+ * disk as they appear in the main pool. In order for this to work we
+ * need to pass around the encryption parameters so they can be used
+ * to write data to the L2ARC. This struct is only defined in the
+ * arc_buf_hdr_t if the L1 header is defined and the has the
+ * ARC_FLAG_L2_ENCRYPT flag set.
+ */
+typedef struct arc_buf_hdr_crypt {
+	uint64_t		b_dsobj;
+	uint8_t			b_salt[DATA_SALT_LEN];
+	uint8_t			b_iv[DATA_IV_LEN];
+	uint8_t			b_mac[DATA_MAC_LEN];
+} arc_buf_hdr_crypt_t;
+
 typedef struct l2arc_dev {
 	vdev_t			*l2ad_vdev;	/* vdev */
 	spa_t			*l2ad_spa;	/* spa */
@@ -237,6 +253,11 @@ struct arc_buf_hdr {
 	l2arc_buf_hdr_t		b_l2hdr;
 	/* L1ARC fields. Undefined when in l2arc_only state */
 	l1arc_buf_hdr_t		b_l1hdr;
+	/*
+	 * Encryption parameters. Defined only when ARC_FLAG_L2_ENCRYPT
+	 * is set and the L1 header exists.
+	 */
+	arc_buf_hdr_crypt_t b_crypt_hdr;
 };
 #ifdef __cplusplus
 }
