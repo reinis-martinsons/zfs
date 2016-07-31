@@ -100,13 +100,50 @@ error:
 	return (ret);
 }
 
-/*
- * HKDF is designed to be a relatively fast function for deriving keys from a
- * master key + a salt. We use this function to generate new encryption keys
- * so as to avoid hitting the cryptographic limits of the underlying
- * encryption modes. We can omit the extract phase of the normal hkdf function
- * since our master keys should be randomly generated.
- */
+static int
+hkdf_sha256_extract(uint8_t *salt, uint_t salt_len, uint8_t *key_material,
+    uint_t km_len, uint8_t *out_buf)
+{
+	int ret;
+	crypto_mechanism_t mech;
+	crypto_key_t key;
+	crypto_data_t input_cd, output_cd;
+
+	/* initialize sha 256 hmac mechanism */
+	mech.cm_type = crypto_mech2id(SUN_CKM_SHA256_HMAC);
+	mech.cm_param = NULL;
+	mech.cm_param_len = 0;
+
+	/* initialize the salt as a crypto key */
+	key.ck_format = CRYPTO_KEY_RAW;
+	key.ck_length = BYTES_TO_BITS(salt_len);
+	key.ck_data = salt;
+
+	/* initialize crypto data for the input and output data */
+	input_cd.cd_format = CRYPTO_DATA_RAW;
+	input_cd.cd_offset = 0;
+	input_cd.cd_length = km_len;
+	input_cd.cd_raw.iov_base = (char *)key_material;
+	input_cd.cd_raw.iov_len = km_len;
+
+	output_cd.cd_format = CRYPTO_DATA_RAW;
+	output_cd.cd_offset = 0;
+	output_cd.cd_length = SHA_256_DIGEST_LEN;
+	output_cd.cd_raw.iov_base = (char *)out_buf;
+	output_cd.cd_raw.iov_len = SHA_256_DIGEST_LEN;
+
+	ret = crypto_mac(&mech, &input_cd, &key, NULL, &output_cd, NULL);
+	if (ret != CRYPTO_SUCCESS) {
+		ret = SET_ERROR(EIO);
+		goto error;
+	}
+
+	return (0);
+
+error:
+	return (ret);
+}
+
 static int
 hkdf_sha256_expand(uint8_t *extract_key, uint8_t *info, uint_t info_len,
     uint8_t *out_buf, uint_t out_len)
@@ -202,6 +239,37 @@ error:
 	return (ret);
 }
 
+/*
+ * HKDF is designed to be a relatively fast function for deriving keys from a
+ * master key + a salt. We use this function to generate new encryption keys
+ * so as to avoid hitting the cryptographic limits of the underlying
+ * encryption modes. Note that, for the sake of deriving encryption keys, the
+ * info parameter is called the "salt" everywhere else in the code.
+ */
+static int
+hkdf_sha256(uint8_t *key_material, uint_t km_len, uint8_t *salt,
+    uint_t salt_len, uint8_t *info, uint_t info_len, uint8_t *output_key,
+    uint_t out_len)
+{
+	int ret;
+	uint8_t extract_key[SHA_256_DIGEST_LEN];
+
+	ret = hkdf_sha256_extract(salt, salt_len, key_material, km_len,
+	    extract_key);
+	if (ret)
+		goto error;
+
+	ret = hkdf_sha256_expand(extract_key, info, info_len, output_key,
+	    out_len);
+	if (ret)
+		goto error;
+
+	return (0);
+
+error:
+	return (ret);
+}
+
 void
 zio_crypt_key_destroy(zio_crypt_key_t *key)
 {
@@ -239,7 +307,7 @@ zio_crypt_key_init(uint64_t crypt, zio_crypt_key_t *key)
 		goto error;
 
 	/* derive the current key from the master key */
-	ret = hkdf_sha256_expand(key->zk_master_keydata,
+	ret = hkdf_sha256(key->zk_master_keydata, keydata_len, NULL, 0,
 	    (uint8_t *)&key->zk_salt, sizeof (uint64_t),
 	    key->zk_current_keydata, keydata_len);
 	if (ret)
@@ -297,8 +365,9 @@ zio_crypt_key_change_salt(zio_crypt_key_t *key)
 	rw_enter(&key->zk_salt_lock, RW_WRITER);
 
 	/* derive the current key from the master key and the new salt */
-	ret = hkdf_sha256_expand(key->zk_master_keydata, (uint8_t *)&salt,
-	    sizeof (uint64_t), key->zk_current_keydata, keydata_len);
+	ret = hkdf_sha256(key->zk_master_keydata, keydata_len, NULL, 0,
+	    (uint8_t *)&salt, sizeof (uint64_t), key->zk_current_keydata,
+	    keydata_len);
 	if (ret)
 		goto error_unlock;
 
@@ -518,7 +587,7 @@ zio_crypt_key_unwrap(crypto_key_t *cwkey, uint64_t crypt, uint8_t *keydata,
 		goto error;
 
 	/* derive the current key from the master key */
-	ret = hkdf_sha256_expand(key->zk_master_keydata,
+	ret = hkdf_sha256(key->zk_master_keydata, keydata_len, NULL, 0,
 	    (uint8_t *)&key->zk_salt, sizeof (uint64_t),
 	    key->zk_current_keydata, keydata_len);
 	if (ret)
@@ -1081,9 +1150,9 @@ zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key, uint64_t salt,
 		rw_exit(&key->zk_salt_lock);
 		locked = B_FALSE;
 
-		ret = hkdf_sha256_expand(key->zk_master_keydata,
-		    (uint8_t *)&salt, sizeof (uint64_t),
-		    key->zk_current_keydata, keydata_len);
+		ret = hkdf_sha256(key->zk_master_keydata, keydata_len, NULL, 0,
+		    (uint8_t *)&salt, sizeof (uint64_t), enc_keydata,
+		    keydata_len);
 		if (ret)
 			goto error;
 
