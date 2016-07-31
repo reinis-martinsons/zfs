@@ -315,7 +315,7 @@ typedef enum bp_embedded_type {
 typedef struct blkptr {
 	dva_t		blk_dva[SPA_DVAS_PER_BP]; /* Data Virtual Addresses */
 	uint64_t	blk_prop;	/* size, compression, type, etc	    */
-	uint64_t	blk_iv[2];	/* 96 bit IV for encryption	    */
+	uint64_t	blk_pad[2];	/* Extra space for the future	    */
 	uint64_t	blk_phys_birth;	/* txg when block was allocated	    */
 	uint64_t	blk_birth;	/* transaction group at birth	    */
 	uint64_t	blk_fill;	/* fill count			    */
@@ -404,7 +404,8 @@ _NOTE(CONSTCOND) } while (0)
 	(bp)->blk_phys_birth = ((logical) == (physical) ? 0 : (physical)); \
 }
 
-#define	BP_GET_FILL(bp) (BP_IS_EMBEDDED(bp) ? 1 : (bp)->blk_fill)
+#define	BP_GET_FILL(bp) (BP_IS_EMBEDDED(bp) || BP_IS_ENCRYPTED(bp) ? \
+	1 : (bp)->blk_fill)
 
 #define	BP_GET_ASIZE(bp)	\
 	(BP_IS_EMBEDDED(bp) ? 0 : \
@@ -463,8 +464,8 @@ _NOTE(CONSTCOND) } while (0)
 	(bp)->blk_dva[2].dva_word[0] = 0;	\
 	(bp)->blk_dva[2].dva_word[1] = 0;	\
 	(bp)->blk_prop = 0;			\
-	(bp)->blk_iv[0] = 0;			\
-	(bp)->blk_iv[1] = 0;			\
+	(bp)->blk_pad[0] = 0;			\
+	(bp)->blk_pad[1] = 0;			\
 	(bp)->blk_phys_birth = 0;		\
 	(bp)->blk_birth = 0;			\
 	(bp)->blk_fill = 0;			\

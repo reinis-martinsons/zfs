@@ -54,7 +54,7 @@ KERNEL_C = \
 	dsl_deadlist.c \
 	dsl_deleg.c \
 	dsl_dir.c \
-	dsl_keychain.c \
+	dsl_crypt.c \
 	dsl_pool.c \
 	dsl_prop.c \
 	dsl_scan.c \

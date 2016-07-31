@@ -59,7 +59,7 @@
 #include <sys/arc.h>
 #include <sys/ddt.h>
 #include <sys/zfeature.h>
-#include <sys/dsl_keychain.h>
+#include <sys/dsl_crypt.h>
 #include <zfs_comutil.h>
 #include <libzfs.h>
 

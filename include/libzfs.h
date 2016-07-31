@@ -492,10 +492,9 @@ extern nvlist_t *zfs_get_clones_nvl(zfs_handle_t *);
 extern int zfs_crypto_create(libzfs_handle_t *, char *, nvlist_t *, nvlist_t *,
     nvlist_t **);
 extern int zfs_crypto_clone(libzfs_handle_t *, zfs_handle_t *, char *,
-    boolean_t, nvlist_t *, nvlist_t **);
+    nvlist_t *, nvlist_t **);
 extern int zfs_crypto_load_key(zfs_handle_t *);
 extern int zfs_crypto_unload_key(zfs_handle_t *);
-extern int zfs_crypto_add_key(zfs_handle_t *);
 extern int zfs_crypto_rewrap(zfs_handle_t *, nvlist_t *);
 
 typedef struct zprop_list {
@@ -604,7 +603,7 @@ extern int zfs_create_ancestors(libzfs_handle_t *, const char *);
 extern int zfs_destroy(zfs_handle_t *, boolean_t);
 extern int zfs_destroy_snaps(zfs_handle_t *, char *, boolean_t);
 extern int zfs_destroy_snaps_nvl(libzfs_handle_t *, nvlist_t *, boolean_t);
-extern int zfs_clone(zfs_handle_t *, const char *, nvlist_t *, boolean_t);
+extern int zfs_clone(zfs_handle_t *, const char *, nvlist_t *);
 extern int zfs_snapshot(libzfs_handle_t *, const char *, boolean_t, nvlist_t *);
 extern int zfs_snapshot_nvl(libzfs_handle_t *hdl, nvlist_t *snaps,
     nvlist_t *props);

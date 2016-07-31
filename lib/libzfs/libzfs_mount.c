@@ -74,7 +74,7 @@
 #include <sys/mntent.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
-#include <sys/dsl_keychain.h>
+#include <sys/dsl_crypt.h>
 
 #include <libzfs.h>
 

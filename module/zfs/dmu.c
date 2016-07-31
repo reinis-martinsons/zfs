@@ -1370,7 +1370,7 @@ dmu_sync_ready(zio_t *zio, arc_buf_t *buf, void *varg)
 			 * block size still needs to be known for replay.
 			 */
 			BP_SET_LSIZE(bp, db->db_size);
-		} else if (!BP_IS_EMBEDDED(bp)) {
+		} else if (!BP_IS_EMBEDDED(bp) && !BP_IS_ENCRYPTED(bp)) {
 			ASSERT(BP_GET_LEVEL(bp) == 0);
 			bp->blk_fill = 1;
 		}

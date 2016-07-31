@@ -699,7 +699,7 @@ dmu_objset_refresh_ownership(objset_t *os, void *tag)
 	VERIFY(dsl_dataset_long_held(ds));
 
 	if (os->os_encrypted &&
-	    (spa_keystore_lookup_keychain_record(os->os_spa,
+	    (spa_keystore_lookup_key(os->os_spa,
 	    os->os_dsl_dataset->ds_object, NULL) == 0))
 		key_needed = B_TRUE;
 	else

@@ -32,7 +32,7 @@
 #include <sys/zfs_acl.h>
 #include <sys/zfs_ioctl.h>
 #include <sys/zfs_znode.h>
-#include <sys/dsl_keychain.h>
+#include <sys/dsl_crypt.h>
 
 #include "zfs_prop.h"
 #include "zfs_deleg.h"

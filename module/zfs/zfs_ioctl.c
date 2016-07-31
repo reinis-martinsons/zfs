@@ -180,7 +180,7 @@
 #include <sys/dsl_scan.h>
 #include <sharefs/share.h>
 #include <sys/fm/util.h>
-#include <sys/dsl_keychain.h>
+#include <sys/dsl_crypt.h>
 
 #include <sys/dmu_send.h>
 #include <sys/dsl_destroy.h>
@@ -1299,7 +1299,6 @@ zfs_secpolicy_crypto(zfs_cmd_t *zc, nvlist_t *innvl, cred_t *cr)
 		ret = zfs_secpolicy_write_perms(zc->zc_name,
 		    ZFS_DELEG_PERM_LOAD_KEY, cr);
 		break;
-	case ZFS_IOC_CRYPTO_ADD_KEY:
 	case ZFS_IOC_CRYPTO_REWRAP:
 		ret = zfs_secpolicy_write_perms(zc->zc_name,
 		    ZFS_DELEG_PERM_CHANGE_KEY, cr);
@@ -1522,7 +1521,7 @@ zfs_ioc_pool_create(zfs_cmd_t *zc)
 		}
 
 		(void) nvlist_lookup_nvlist(props, ZPOOL_HIDDEN_ARGS, &ha);
-		error = dsl_crypto_params_init_nvlist(rootprops, ha, &dcp);
+		error = dsl_crypto_params_create_nvlist(rootprops, ha, &dcp);
 		if (error != 0) {
 			nvlist_free(config);
 			nvlist_free(props);
@@ -3156,7 +3155,7 @@ zfs_destroy_temp_keychain_record(const char *dsname) {
 		return;
 
 	if (os->os_encrypted)
-		(void) spa_keystore_remove_keychain_record(os->os_spa,
+		(void) spa_keystore_remove_mapping(os->os_spa,
 		    os->os_dsl_dataset);
 
 	dmu_objset_rele(os, FTAG);
@@ -3255,7 +3254,7 @@ zfs_ioc_create(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 		}
 	}
 
-	error = dsl_crypto_params_init_nvlist(nvprops, hidden_args, &dcp);
+	error = dsl_crypto_params_create_nvlist(nvprops, hidden_args, &dcp);
 	if (error != 0) {
 		nvlist_free(zct.zct_zplprops);
 		return (error);
@@ -3331,7 +3330,7 @@ zfs_ioc_clone(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 	if (dataset_namecheck(origin_name, NULL, NULL) != 0)
 		return (SET_ERROR(EINVAL));
 
-	error = dsl_crypto_params_init_nvlist(nvprops, hidden_args, &dcp);
+	error = dsl_crypto_params_create_nvlist(nvprops, hidden_args, &dcp);
 	if (error != 0)
 		return (error);
 
@@ -5667,7 +5666,7 @@ zfs_ioc_crypto(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl) {
 			goto error;
 		}
 
-		ret = dsl_crypto_params_init_nvlist(NULL, hidden_args, &dcp);
+		ret = dsl_crypto_params_create_nvlist(NULL, hidden_args, &dcp);
 		if (ret)
 			goto error;
 
@@ -5678,12 +5677,6 @@ zfs_ioc_crypto(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl) {
 		break;
 	case ZFS_IOC_CRYPTO_UNLOAD_KEY:
 		ret = spa_keystore_unload_wkey(dsname);
-		if (ret)
-			goto error;
-
-		break;
-	case ZFS_IOC_CRYPTO_ADD_KEY:
-		ret = spa_keystore_keychain_add_key(dsname);
 		if (ret)
 			goto error;
 
@@ -5702,7 +5695,7 @@ zfs_ioc_crypto(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl) {
 			goto error;
 		}
 
-		ret = dsl_crypto_params_init_nvlist(args, hidden_args, &dcp);
+		ret = dsl_crypto_params_create_nvlist(args, hidden_args, &dcp);
 		if (ret)
 			goto error;
 

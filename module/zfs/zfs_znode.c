@@ -1756,7 +1756,7 @@ zfs_create_fs(objset_t *os, cred_t *cr, nvlist_t *zplprops, dmu_tx_t *tx)
 	 * that calls this must clean up the keychain record after syncing.
 	 */
 	if (os->os_encrypted) {
-		error = spa_keystore_create_keychain_record(os->os_spa,
+		error = spa_keystore_create_mapping(os->os_spa,
 		    os->os_dsl_dataset);
 		ASSERT(error == 0);
 	}

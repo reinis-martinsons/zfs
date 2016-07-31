@@ -186,7 +186,7 @@ dsl_dir_hold_obj(dsl_pool_t *dp, uint64_t ddobj,
 		    DD_FIELD_DSL_KEYCHAIN_OBJ) == 0) {
 			VERIFY0(zap_lookup(dp->dp_meta_objset,
 			    ddobj, DD_FIELD_DSL_KEYCHAIN_OBJ,
-			    sizeof (uint64_t), 1, &dd->dd_keychain_obj));
+			    sizeof (uint64_t), 1, &dd->dd_crypto_obj));
 		}
 
 		mutex_init(&dd->dd_lock, NULL, MUTEX_DEFAULT, NULL);

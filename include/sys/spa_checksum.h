@@ -70,13 +70,9 @@ typedef struct zio_cksum {
 }
 
 #define	MAX_DATA_MAC_LEN 16
-#define	MAX_DATA_IV_LEN 12
 
 #define	ZIO_SET_MAC(bp, mac)	\
 	bcopy((mac), &(bp)->blk_cksum.zc_word[2], MAX_DATA_MAC_LEN);
-
-#define	ZIO_SET_IV(bp, iv)	\
-	bcopy((iv), (bp)->blk_iv, MAX_DATA_IV_LEN);
 
 #ifdef	__cplusplus
 }

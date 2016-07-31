@@ -3494,8 +3494,7 @@ zfs_destroy_snaps_nvl(libzfs_handle_t *hdl, nvlist_t *snaps, boolean_t defer)
  * Clones the given dataset.  The target must be of the same type as the source.
  */
 int
-zfs_clone(zfs_handle_t *zhp, const char *target, nvlist_t *props,
-	boolean_t add_key)
+zfs_clone(zfs_handle_t *zhp, const char *target, nvlist_t *props)
 {
 	char parent[ZFS_MAX_DATASET_NAME_LEN];
 	int ret;
@@ -3533,10 +3532,8 @@ zfs_clone(zfs_handle_t *zhp, const char *target, nvlist_t *props,
 			return (-1);
 	}
 
-	if (zfs_crypto_clone(hdl, zhp, parent, add_key, props,
-	    &hidden_args) != 0) {
+	if (zfs_crypto_clone(hdl, zhp, parent, props, &hidden_args) != 0)
 		return (zfs_error(hdl, EZFS_CRYPTOFAILED, errbuf));
-	}
 
 	ret = lzc_clone(target, zhp->zfs_name, props, hidden_args);
 	nvlist_free(props);

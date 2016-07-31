@@ -41,7 +41,7 @@
 #include <sys/zfeature.h>
 #include <sys/time.h>
 #include <sys/trace_zio.h>
-#include <sys/dsl_keychain.h>
+#include <sys/dsl_crypt.h>
 
 /*
  * ==========================================================================
@@ -360,12 +360,19 @@ zio_decrypt(zio_t *zio, void *data, uint64_t size)
 {
 	int ret;
 	blkptr_t *bp = zio->io_bp;
+	uint8_t *mac;
 
 	if (zio->io_error != 0)
 		return;
+	
+	if (BP_GET_TYPE(bp) == DMU_OT_INTENT_LOG) {
+		mac = ((zil_chain_t *) zio->io_data)->zc_mac;
+	} else {
+		mac = ((uint8_t *)&bp->blk_cksum.zc_word[2]);
+	}
 
-	ret = spa_decrypt_data(zio->io_spa, &zio->io_bookmark, bp->blk_birth,
-		BP_GET_TYPE(bp), bp, size, data, zio->io_data);
+	ret = spa_decrypt_data(zio->io_spa, &zio->io_bookmark, bp->blk_fill,
+	    bp->blk_birth, BP_GET_TYPE(bp), bp, size, data, zio->io_data, mac);
 	if (ret)
 		zio->io_error = SET_ERROR(EIO);
 }
@@ -1146,8 +1153,8 @@ zio_write_bp_init(zio_t *zio)
 	uint64_t lsize = zio->io_size;
 	uint64_t psize = lsize;
 	int pass = 1;
-	uint8_t iv[MAX_DATA_IV_LEN];
-	uint8_t mac[MAX_DATA_MAC_LEN];
+	uint8_t mac[DATA_MAC_LEN];
+	uint64_t salt;
 
 	/*
 	 * If our children haven't all reached the ready stage,
@@ -1304,19 +1311,19 @@ zio_write_bp_init(zio_t *zio)
 			    zp->zp_type : BP_GET_TYPE(bp);
 
 			VERIFY0(spa_encrypt_data(spa, &zio->io_bookmark,
-				zio->io_txg, ot, bp, psize,
-				zp->zp_dedup, iv, mac, zio->io_data, enc_buf));
+			    zio->io_txg, ot, bp, psize, zio->io_data,
+			    enc_buf, &salt, mac));
 
 			zio_push_transform(zio, enc_buf, psize,
 			    psize, NULL);
 
 			/*
 			 * ZIL blocks are preallocated and so cannot store their
-			 * MAC / IV in the blkptr_t. Instead, the MAC is
-			 * stored in the zil_chain_t and the IV is determined
-			 * from the bookmark. We can safely determine the IV
-			 * using the bookmark because snapshots can not have a
-			 * ZIL.
+			 * MAC / IV in the blkptr_t. Instead, the MAC is stored
+			 * in the zil_chain_t and the IV is determined from the
+			 * bookmark + bp. We can safely determine the IV using
+			 * the bookmark because snapshots can not have ZIL
+			 * blocks.
 			 */
 			if (BP_GET_TYPE(bp) == DMU_OT_INTENT_LOG) {
 				zil_chain_t *zc = enc_buf;
@@ -1382,10 +1389,14 @@ zio_write_bp_init(zio_t *zio)
 			}
 		}
 
-		if (encrypt && BP_GET_TYPE(bp) != DMU_OT_INTENT_LOG) {
-			ZIO_SET_MAC(bp, mac);
-			ZIO_SET_IV(bp, iv);
+		if (encrypt) {
+			bp->blk_fill = salt;
+
+			if (BP_GET_TYPE(bp) != DMU_OT_INTENT_LOG)
+				ZIO_SET_MAC(bp, mac);
 		}
+
+
 	}
 
 	return (ZIO_PIPELINE_CONTINUE);
@@ -3329,6 +3340,8 @@ zio_done(zio_t *zio)
 			ASSERT(zio->io_children[c][w] == 0);
 
 	if (zio->io_bp != NULL && !BP_IS_EMBEDDED(zio->io_bp)) {
+		ASSERT(zio->io_bp->blk_pad[0] == 0);
+		ASSERT(zio->io_bp->blk_pad[1] == 0);
 		ASSERT(bcmp(zio->io_bp, &zio->io_bp_copy,
 		    sizeof (blkptr_t)) == 0 ||
 		    (zio->io_bp == zio_unique_parent(zio)->io_bp));

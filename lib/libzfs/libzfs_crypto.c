@@ -26,7 +26,7 @@
 
 #include <sys/zfs_context.h>
 #include <sys/fs/zfs.h>
-#include <sys/dsl_keychain.h>
+#include <sys/dsl_crypt.h>
 #include <sys/crypto/icp.h>
 #include <libintl.h>
 #include <termios.h>
@@ -818,8 +818,7 @@ error:
 
 int
 zfs_crypto_clone(libzfs_handle_t *hdl, zfs_handle_t *origin_zhp,
-    char *parent_name, boolean_t add_key, nvlist_t *props,
-    nvlist_t **hidden_args)
+    char *parent_name, nvlist_t *props, nvlist_t **hidden_args)
 {
 	int ret;
 	char errbuf[1024];
@@ -873,7 +872,7 @@ zfs_crypto_clone(libzfs_handle_t *hdl, zfs_handle_t *origin_zhp,
 	 * sure no encryption parameters are set
 	 */
 	if (pcrypt == ZIO_CRYPT_OFF && ocrypt == ZIO_CRYPT_OFF) {
-		if (add_key || keysource) {
+		if (keysource) {
 			ret = EINVAL;
 			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
 			    "Encryption properties may not be set "
@@ -914,13 +913,6 @@ zfs_crypto_clone(libzfs_handle_t *hdl, zfs_handle_t *origin_zhp,
 
 		ret = populate_create_encryption_params_nvlists(hdl, keysource,
 		    NULL, props, ha);
-		if (ret)
-			goto out;
-	}
-
-	if (add_key) {
-		ret = nvlist_add_uint64(props, "crypto_cmd",
-		    ZFS_IOC_CRYPTO_ADD_KEY);
 		if (ret)
 			goto out;
 	}
@@ -1139,51 +1131,6 @@ zfs_crypto_unload_key(zfs_handle_t *zhp)
 		case EBUSY:
 			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
 			    "Dataset is busy."));
-			break;
-		}
-		zfs_error(zhp->zfs_hdl, EZFS_CRYPTOFAILED, errbuf);
-	}
-
-	return (ret);
-
-error:
-	zfs_error(zhp->zfs_hdl, EZFS_CRYPTOFAILED, errbuf);
-	return (ret);
-}
-
-int
-zfs_crypto_add_key(zfs_handle_t *zhp)
-{
-	int ret;
-	char errbuf[1024];
-	uint64_t crypt;
-
-	(void) snprintf(errbuf, sizeof (errbuf),
-	    dgettext(TEXT_DOMAIN, "Add key error"));
-
-	if (!encryption_feature_is_enabled(zhp->zpool_hdl)) {
-		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-		    "Encryption feature not enabled."));
-		ret = EINVAL;
-		goto error;
-	}
-
-	/* check that encryption is on for the dataset */
-	crypt = zfs_prop_get_int(zhp, ZFS_PROP_ENCRYPTION);
-	if (crypt == ZIO_CRYPT_OFF) {
-		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-		    "Encryption not enabled."));
-		ret = EINVAL;
-		goto error;
-	}
-
-	/* call the ioctl */
-	ret = lzc_crypto(zhp->zfs_name, ZFS_IOC_CRYPTO_ADD_KEY, NULL, NULL);
-	if (ret) {
-		switch (ret) {
-		case EPERM:
-			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-			    "Keychain is not currently loaded."));
 			break;
 		}
 		zfs_error(zhp->zfs_hdl, EZFS_CRYPTOFAILED, errbuf);
