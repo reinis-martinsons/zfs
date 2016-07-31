@@ -51,7 +51,7 @@ typedef enum key_locator {
 
 #define	MIN_PASSPHRASE_LEN 8
 #define	MAX_PASSPHRASE_LEN 64
-#define	PBKDF2_ITERATIONS 1000
+#define	PBKDF2_ITERATIONS 100000
 
 static int caught_interrupt;
 
