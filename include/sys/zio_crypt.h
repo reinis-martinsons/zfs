@@ -124,28 +124,28 @@ typedef struct zio_crypt_key {
 
 	/* buffer for hmac key */
 	uint8_t zk_hmac_keydata[HMAC_SHA256_KEYLEN];
-	
+
 	/* buffer for currrent encryption key derived from master key */
 	uint8_t zk_current_keydata[MAX_MASTER_KEY_LEN];
-	
+
 	/* current 64 bit salt for deriving an encryption key */
 	uint64_t zk_salt;
-	
+
 	/* count of how many times the current salt has been used */
 	uint64_t zk_salt_count;
-	
+
 	/* illumos crypto api current encryption key */
 	crypto_key_t zk_current_key;
 
 	/* template of current encryption key for illumos crypto api */
 	crypto_ctx_template_t zk_current_tmpl;
-	
+
 	/* illumos crypto api current hmac key */
 	crypto_key_t zk_hmac_key;
 
 	/* template of hmac key for illumos crypto api */
 	crypto_ctx_template_t zk_hmac_tmpl;
-	
+
 	/* lock for changing the salt and dependant values */
 	krwlock_t zk_salt_lock;
 } zio_crypt_key_t;

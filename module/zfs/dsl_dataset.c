@@ -955,7 +955,7 @@ dsl_dataset_create_sync_dd(dsl_dir_t *dd, dsl_dataset_t *origin,
 		    8, 1, &crypt, tx));
 
 		dsl_dir_zapify(dd, tx);
-		kcobj = dsl_crypto_key_clone_sync(origin->ds_dir, wkey,tx);
+		kcobj = dsl_crypto_key_clone_sync(origin->ds_dir, wkey, tx);
 		VERIFY0(zap_add(mos, dd->dd_object, DD_FIELD_DSL_KEYCHAIN_OBJ,
 		    sizeof (uint64_t), 1, &kcobj, tx));
 

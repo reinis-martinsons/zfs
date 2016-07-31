@@ -46,7 +46,7 @@ void
 l2arc_crypt_key_destroy(l2arc_crypt_key_t *key)
 {
 	crypto_destroy_ctx_template(key->l2ck_ctx_tmpl);
-	
+
 	if (key->l2ck_key.ck_data) {
 		bzero(key->l2ck_key.ck_data,
 		    BITS_TO_BYTES(key->l2ck_key.ck_length));
@@ -121,8 +121,8 @@ hkdf_sha256_expand(uint8_t *extract_key, uint8_t *info, uint_t info_len,
 	uint_t N = (out_len + SHA_256_DIGEST_LEN) / SHA_256_DIGEST_LEN;
 	uint8_t T[SHA_256_DIGEST_LEN];
 
-	if(N > 255)
-		return SET_ERROR(EINVAL);
+	if (N > 255)
+		return (SET_ERROR(EINVAL));
 
 	/* initialize sha 256 hmac mechanism */
 	mech.cm_type = crypto_mech2id(SUN_CKM_SHA256_HMAC);
@@ -151,7 +151,7 @@ hkdf_sha256_expand(uint8_t *extract_key, uint8_t *info, uint_t info_len,
 	info_cd.cd_raw.iov_base = (char *)info;
 	info_cd.cd_raw.iov_len = info_len;
 
-	for(i = 1; i <= N; i++){
+	for (i = 1; i <= N; i++) {
 		c = i;
 
 		T_cd.cd_length = T_len;
@@ -206,11 +206,11 @@ void
 zio_crypt_key_destroy(zio_crypt_key_t *key)
 {
 	rw_destroy(&key->zk_salt_lock);
-	
+
 	/* free crypto templates */
 	crypto_destroy_ctx_template(key->zk_current_tmpl);
 	crypto_destroy_ctx_template(key->zk_current_tmpl);
-	
+
 	/* zero out sensitive data */
 	bzero(key, sizeof (zio_crypt_key_t));
 }
@@ -233,27 +233,27 @@ zio_crypt_key_init(uint64_t crypt, zio_crypt_key_t *key)
 	ret = random_get_bytes(key->zk_hmac_keydata, HMAC_SHA256_KEYLEN);
 	if (ret)
 		goto error;
-	
+
 	ret = random_get_bytes((uint8_t *)&key->zk_salt, sizeof (uint64_t));
 	if (ret)
 		goto error;
-	
+
 	/* derive the current key from the master key */
 	ret = hkdf_sha256_expand(key->zk_master_keydata,
 	    (uint8_t *)&key->zk_salt, sizeof (uint64_t),
 	    key->zk_current_keydata, keydata_len);
 	if (ret)
 		goto error;
-	
+
 	/* initialize keys for the ICP */
 	key->zk_current_key.ck_format = CRYPTO_KEY_RAW;
 	key->zk_current_key.ck_data = key->zk_current_keydata;
 	key->zk_current_key.ck_length = BYTES_TO_BITS(keydata_len);
-	
+
 	key->zk_hmac_key.ck_format = CRYPTO_KEY_RAW;
 	key->zk_hmac_key.ck_data = &key->zk_hmac_key;
 	key->zk_hmac_key.ck_length = BYTES_TO_BITS(HMAC_SHA256_KEYLEN);
-	
+
 	/*
 	 * Initialize the crypto templates. It's ok if this fails because
 	 * this is just an optimization.
@@ -263,7 +263,7 @@ zio_crypt_key_init(uint64_t crypt, zio_crypt_key_t *key)
 	    &key->zk_current_tmpl, KM_SLEEP);
 	if (ret != CRYPTO_SUCCESS)
 		key->zk_current_tmpl = NULL;
-	
+
 	mech.cm_type = crypto_mech2id(SUN_CKM_SHA256_HMAC);
 	ret = crypto_create_ctx_template(&mech, &key->zk_hmac_key,
 	    &key->zk_hmac_tmpl, KM_SLEEP);
@@ -273,9 +273,9 @@ zio_crypt_key_init(uint64_t crypt, zio_crypt_key_t *key)
 	key->zk_crypt = crypt;
 	key->zk_salt_count = 0;
 	rw_init(&key->zk_salt_lock, NULL, RW_DEFAULT, NULL);
-	
+
 	return (0);
-	
+
 error:
 	zio_crypt_key_destroy(key);
 	return (ret);
@@ -288,35 +288,35 @@ zio_crypt_key_change_salt(zio_crypt_key_t *key)
 	uint64_t salt;
 	crypto_mechanism_t mech;
 	uint_t keydata_len = zio_crypt_table[key->zk_crypt].ci_keylen;
-	
+
 	/* generate a new salt */
 	ret = random_get_bytes((uint8_t *)&salt, sizeof (uint64_t));
 	if (ret)
 		goto error;
-	
+
 	rw_enter(&key->zk_salt_lock, RW_WRITER);
-	
+
 	/* derive the current key from the master key and the new salt */
 	ret = hkdf_sha256_expand(key->zk_master_keydata, (uint8_t *)&salt,
 	    sizeof (uint64_t), key->zk_current_keydata, keydata_len);
 	if (ret)
 		goto error_unlock;
-	
+
 	/* assign the salt and reset the usage count */
 	key->zk_salt = salt;
 	key->zk_salt_count = 0;
-	
+
 	/* destroy the old context template and create the new one */
 	crypto_destroy_ctx_template(key->zk_current_tmpl);
 	ret = crypto_create_ctx_template(&mech, &key->zk_current_key,
 	    &key->zk_current_tmpl, KM_SLEEP);
 	if (ret != CRYPTO_SUCCESS)
 		key->zk_current_tmpl = NULL;
-	
+
 	rw_exit(&key->zk_salt_lock);
-	
+
 	return (0);
-	
+
 error_unlock:
 	rw_exit(&key->zk_salt_lock);
 error:
@@ -441,20 +441,20 @@ zio_crypt_key_wrap(crypto_key_t *cwkey, zio_crypt_key_t *key, uint8_t *iv,
 	ret = random_get_pseudo_bytes(iv, WRAPPING_IV_LEN);
 	if (ret)
 		goto error;
-	
+
 	/* initialize uio_ts */
 	plain_iovecs[0].iov_base = key->zk_master_keydata;
 	plain_iovecs[0].iov_len = keydata_len;
 	plain_iovecs[1].iov_base = key->zk_hmac_keydata;
 	plain_iovecs[1].iov_len = HMAC_SHA256_KEYLEN;
-	
+
 	cipher_iovecs[0].iov_base = keydata_out;
 	cipher_iovecs[0].iov_len = keydata_len;
 	cipher_iovecs[1].iov_base = hmac_keydata_out;
 	cipher_iovecs[1].iov_len = HMAC_SHA256_KEYLEN;
 	cipher_iovecs[2].iov_base = mac;
 	cipher_iovecs[2].iov_len = WRAPPING_MAC_LEN;
-	
+
 	enc_len = zio_crypt_table[crypt].ci_keylen + HMAC_SHA256_KEYLEN;
 	puio.uio_iov = plain_iovecs;
 	puio.uio_iovcnt = 2;
@@ -485,7 +485,7 @@ zio_crypt_key_unwrap(crypto_key_t *cwkey, uint64_t crypt, uint8_t *keydata,
 
 	ASSERT(crypt < ZIO_CRYPT_FUNCTIONS);
 	ASSERT(cwkey->ck_format == CRYPTO_KEY_RAW);
-	
+
 	/* initialize uio_ts */
 	plain_iovecs[0].iov_base = key->zk_master_keydata;
 	plain_iovecs[0].iov_len = keydata_len;
@@ -493,14 +493,14 @@ zio_crypt_key_unwrap(crypto_key_t *cwkey, uint64_t crypt, uint8_t *keydata,
 	plain_iovecs[1].iov_len = HMAC_SHA256_KEYLEN;
 	plain_iovecs[2].iov_base = outmac;
 	plain_iovecs[2].iov_len = WRAPPING_MAC_LEN;
-	
+
 	cipher_iovecs[0].iov_base = keydata;
 	cipher_iovecs[0].iov_len = keydata_len;
 	cipher_iovecs[1].iov_base = hmac_keydata;
 	cipher_iovecs[1].iov_len = HMAC_SHA256_KEYLEN;
 	cipher_iovecs[2].iov_base = mac;
 	cipher_iovecs[2].iov_len = WRAPPING_MAC_LEN;
-	
+
 	enc_len = keydata_len + HMAC_SHA256_KEYLEN;
 	puio.uio_iov = plain_iovecs;
 	puio.uio_iovcnt = 3;
@@ -511,28 +511,28 @@ zio_crypt_key_unwrap(crypto_key_t *cwkey, uint64_t crypt, uint8_t *keydata,
 	ret = zio_decrypt_uio(crypt, cwkey, NULL, iv, enc_len, &puio, &cuio);
 	if (ret)
 		goto error;
-	
+
 	/* generate a fresh salt */
 	ret = random_get_bytes((uint8_t *)&key->zk_salt, sizeof (uint64_t));
 	if (ret)
 		goto error;
-	
+
 	/* derive the current key from the master key */
 	ret = hkdf_sha256_expand(key->zk_master_keydata,
 	    (uint8_t *)&key->zk_salt, sizeof (uint64_t),
 	    key->zk_current_keydata, keydata_len);
 	if (ret)
 		goto error;
-	
+
 	/* initialize keys for ICP */
 	key->zk_current_key.ck_format = CRYPTO_KEY_RAW;
 	key->zk_current_key.ck_data = key->zk_current_keydata;
 	key->zk_current_key.ck_length = BYTES_TO_BITS(keydata_len);
-	
+
 	key->zk_hmac_key.ck_format = CRYPTO_KEY_RAW;
 	key->zk_hmac_key.ck_data = key->zk_hmac_keydata;
 	key->zk_hmac_key.ck_length = BYTES_TO_BITS(HMAC_SHA256_KEYLEN);
-	
+
 	/*
 	 * Initialize the crypto templates. It's ok if this fails because
 	 * this is just an optimization.
@@ -542,13 +542,13 @@ zio_crypt_key_unwrap(crypto_key_t *cwkey, uint64_t crypt, uint8_t *keydata,
 	    &key->zk_current_tmpl, KM_SLEEP);
 	if (ret != CRYPTO_SUCCESS)
 		key->zk_current_tmpl = NULL;
-	
+
 	mech.cm_type = crypto_mech2id(SUN_CKM_SHA256_HMAC);
 	ret = crypto_create_ctx_template(&mech, &key->zk_hmac_key,
 	    &key->zk_hmac_tmpl, KM_SLEEP);
 	if (ret != CRYPTO_SUCCESS)
 		key->zk_hmac_tmpl = NULL;
-	
+
 	key->zk_crypt = crypt;
 	key->zk_salt_count = 0;
 	rw_init(&key->zk_salt_lock, NULL, RW_DEFAULT, NULL);
@@ -618,13 +618,13 @@ zio_crypt_generate_iv_normal(blkptr_t *bp, dmu_object_type_t ot,
 		in_data.cd_raw.iov_base = (char *)zb;
 		in_data.cd_raw.iov_len = sizeof (zbookmark_phys_t);
 	}
-	
+
 	ret = crypto_digest_update(ctx, &in_data, NULL);
 	if (ret != CRYPTO_SUCCESS) {
 		ret = SET_ERROR(EIO);
 		goto error;
 	}
-	
+
 	/* add in the salt for added protection against pool rewinds */
 	in_data.cd_length = sizeof (uint64_t);
 	in_data.cd_raw.iov_base = (char *)&bp->blk_fill;
@@ -1058,7 +1058,7 @@ zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key, uint64_t salt,
 	} else if (ret) {
 		return (ret);
 	}
-	
+
 	/*
 	 * If the needed key is the current one, just use it. Otherwise we
 	 * need to generate a temporary one from the given salt + master key.
@@ -1067,11 +1067,11 @@ zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key, uint64_t salt,
 	 */
 	rw_enter(&key->zk_salt_lock, RW_READER);
 	locked = B_TRUE;
-	
+
 	if (encrypt || salt == key->zk_salt) {
 		ckey = &key->zk_current_key;
 		tmpl = key->zk_current_tmpl;
-		
+
 		if (encrypt) {
 			salt_change = (atomic_inc_64_nv(&key->zk_salt_count) ==
 			    ZIO_CRYPT_MAX_SALT_USAGE);
@@ -1086,11 +1086,11 @@ zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key, uint64_t salt,
 		    key->zk_current_keydata, keydata_len);
 		if (ret)
 			goto error;
-		
+
 		tmp_ckey.ck_format = CRYPTO_KEY_RAW;
 		tmp_ckey.ck_data = enc_keydata;
 		tmp_ckey.ck_length = BYTES_TO_BITS(keydata_len);
-		
+
 		ckey = &tmp_ckey;
 		tmpl = NULL;
 	}
@@ -1105,14 +1105,14 @@ zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key, uint64_t salt,
 		rw_exit(&key->zk_salt_lock);
 		locked = B_FALSE;
 	}
-	
+
 	/* see comment above ZIO_CRYPT_MAX_SALT_USAGE for details */
 	if (salt_change) {
 		ret = zio_crypt_key_change_salt(key);
 		if (ret)
 			goto error;
 	}
-	
+
 	if (ckey == &tmp_ckey)
 		bzero(enc_keydata, keydata_len);
 	zio_crypt_destroy_uio(&puio);

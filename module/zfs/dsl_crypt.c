@@ -259,9 +259,11 @@ spa_keystore_init(spa_keystore_t *sk) {
 	rw_init(&sk->sk_km_lock, NULL, RW_DEFAULT, NULL);
 	rw_init(&sk->sk_wkeys_lock, NULL, RW_DEFAULT, NULL);
 	avl_create(&sk->sk_dsl_keys, spa_crypto_key_compare,
-	    sizeof (dsl_crypto_key_t), offsetof(dsl_crypto_key_t, dck_avl_link));
+	    sizeof (dsl_crypto_key_t),
+	    offsetof(dsl_crypto_key_t, dck_avl_link));
 	avl_create(&sk->sk_key_mappings, spa_key_mapping_compare,
-	    sizeof (dsl_key_mapping_t), offsetof(dsl_key_mapping_t, km_avl_link));
+	    sizeof (dsl_key_mapping_t),
+	    offsetof(dsl_key_mapping_t, km_avl_link));
 	avl_create(&sk->sk_wkeys, spa_wkey_compare, sizeof (dsl_wrapping_key_t),
 	    offsetof(dsl_wrapping_key_t, wk_avl_link));
 }
@@ -484,27 +486,27 @@ dsl_crypto_key_open(objset_t *mos, dsl_wrapping_key_t *wkey,
 	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_CRYPT, 8, 1, &crypt);
 	if (ret)
 		goto error;
-	
+
 	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_MASTER_BUF, 1,
 	    MAX_MASTER_KEY_LEN, raw_keydata);
 	if (ret)
 		goto error;
-	
+
 	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_HMAC_KEY_BUF, 1,
 	    HMAC_SHA256_KEYLEN, raw_hmac_keydata);
 	if (ret)
 		goto error;
-	
+
 	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_IV, 1, WRAPPING_IV_LEN,
 	    iv);
 	if (ret)
 		goto error;
-	
+
 	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_MAC, 1, WRAPPING_MAC_LEN,
 	    mac);
 	if (ret)
 		goto error;
-	
+
 	/*
 	 * Unwrap the keys. If there is an error return EPERM to indicate
 	 * an authentication failure.
@@ -531,7 +533,7 @@ error:
 		bzero(dck, sizeof (dsl_crypto_key_t));
 		kmem_free(dck, sizeof (dsl_crypto_key_t));
 	}
-	
+
 	*dck_out = NULL;
 	return (ret);
 }
@@ -924,26 +926,26 @@ dsl_crypto_key_sync(dsl_crypto_key_t *dck, dmu_tx_t *tx)
 	uint8_t hmac_keydata[HMAC_SHA256_KEYLEN];
 	uint8_t iv[WRAPPING_IV_LEN];
 	uint8_t mac[WRAPPING_MAC_LEN];
-	
+
 	ASSERT(dmu_tx_is_syncing(tx));
-	
+
 	/* encrypt and store the keys along with the IV and MAC */
 	VERIFY0(zio_crypt_key_wrap(&dck->dck_wkey->wk_key, key, iv, mac,
 	    keydata, hmac_keydata));
-	
+
 	/* update the ZAP with the obtained values */
 	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_CRYPT, 8, 1,
 	    &key->zk_crypt, tx));
-	
+
 	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_IV, 1, WRAPPING_IV_LEN,
 	    iv, tx));
-	
+
 	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_MAC, 1, WRAPPING_MAC_LEN,
 	    mac, tx));
-	
+
 	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_MASTER_BUF, 1,
 	    MAX_MASTER_KEY_LEN, keydata, tx));
-	
+
 	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_HMAC_KEY_BUF, 1,
 	    HMAC_SHA256_KEYLEN, hmac_keydata, tx));
 }
@@ -1084,7 +1086,7 @@ spa_keystore_rewrap_sync(void *arg, dmu_tx_t *tx)
 	 * replace the wrapping key
 	 */
 	found_wkey = avl_find(&spa->spa_keystore.sk_wkeys, wkey, NULL);
-	
+
 	ASSERT0(refcount_count(&found_wkey->wk_refcnt));
 	avl_remove(&spa->spa_keystore.sk_wkeys, found_wkey);
 
@@ -1237,9 +1239,9 @@ dsl_crypto_key_create_sync(uint64_t crypt, dsl_wrapping_key_t *wkey,
     dmu_tx_t *tx)
 {
 	dsl_crypto_key_t dck;
-	
+
 	ASSERT(dmu_tx_is_syncing(tx));
-	
+
 	/* create the DSL Crypto Key ZAP object */
 	dck.dck_obj = zap_create(tx->tx_pool->dp_meta_objset,
 	    DMU_OTN_ZAP_METADATA, DMU_OT_NONE, 0, tx);
@@ -1264,9 +1266,9 @@ dsl_crypto_key_clone_sync(dsl_dir_t *orig_dd, dsl_wrapping_key_t *wkey,
 	dsl_pool_t *dp = tx->tx_pool;
 	dsl_crypto_key_t *orig_dck;
 	dsl_crypto_key_t dck;
-	
+
 	ASSERT(dmu_tx_is_syncing(tx));
-	
+
 	/* get the key from the original dataset */
 	VERIFY0(spa_keystore_dsl_key_hold_dd(dp->dp_spa, orig_dd, FTAG,
 	    &orig_dck));
@@ -1289,7 +1291,7 @@ dsl_crypto_key_clone_sync(dsl_dir_t *orig_dd, dsl_wrapping_key_t *wkey,
 		    &dck.dck_key.zk_hmac_keydata, HMAC_SHA256_KEYLEN);
 
 	dck.dck_key.zk_crypt = orig_dck->dck_key.zk_crypt;
-	
+
 	/* sync the new key, wrapped with the new wrapping key */
 	dsl_crypto_key_sync(&dck, tx);
 	bzero(&dck, sizeof (dsl_crypto_key_t));

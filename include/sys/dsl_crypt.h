@@ -92,7 +92,7 @@ typedef struct dsl_crypto_key {
 	uint64_t dck_obj;
 } dsl_crypto_key_t;
 
-/* 
+/*
  * In memory mapping of a dataset to a DSL Crypto Key. This is used
  * to look up the corresponding dsl_crypto_key_t from the zio layer
  * for performing data encryption and decryption.

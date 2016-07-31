@@ -364,7 +364,7 @@ zio_decrypt(zio_t *zio, void *data, uint64_t size)
 
 	if (zio->io_error != 0)
 		return;
-	
+
 	if (BP_GET_TYPE(bp) == DMU_OT_INTENT_LOG) {
 		mac = ((zil_chain_t *) zio->io_data)->zc_mac;
 	} else {
