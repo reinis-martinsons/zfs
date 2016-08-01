@@ -27,9 +27,11 @@
 #define	_SYS_ZIO_CRYPT_H
 
 #ifdef _KERNEL
-	#define LOG_DEBUG(fmt, args...) printk(KERN_DEBUG  fmt "\n", ## args)
+#define	LOG_DEBUG(fmt, args...) printk(KERN_DEBUG  fmt "\n", ## args)
+#define	DUMP_STACK() dump_stack()
 #else
-	#define LOG_DEBUG(fmt, args...)
+#define	LOG_DEBUG(fmt, args...)
+#define	DUMP_STACK()
 #endif
 
 #include <sys/dmu.h>

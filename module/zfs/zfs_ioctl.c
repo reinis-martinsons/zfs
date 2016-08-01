@@ -3146,7 +3146,7 @@ zfs_fill_zplprops_root(uint64_t spa_vers, nvlist_t *createprops,
 }
 
 static void
-zfs_destroy_temp_keychain_record(const char *dsname) {
+zfs_destroy_temp_key_mapping(const char *dsname) {
 	int error;
 	objset_t *os;
 
@@ -3268,7 +3268,7 @@ zfs_ioc_create(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 
 	/* See comment in zfs_create_fs() for details */
 	if (type == DMU_OST_ZFS && error == 0)
-		zfs_destroy_temp_keychain_record(fsname);
+		zfs_destroy_temp_key_mapping(fsname);
 
 	/*
 	 * It would be nice to do this atomically.

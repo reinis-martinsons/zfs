@@ -1435,7 +1435,7 @@ zvol_create_minor_impl(const char *name)
 	 * Prefetching the blocks commonly scanned by blkid(8) will speed
 	 * up this process. We cannot do this optimization for encrypted blocks
 	 * because we are about to disown the objset, which will release the
-	 * dsl_keychain_record_t.
+	 * dsl_key_mapping_t.
 	 */
 	len = MIN(MAX(zvol_prefetch_bytes, 0), SPA_MAXBLOCKSIZE);
 	if (len > 0 && !os->os_encrypted) {

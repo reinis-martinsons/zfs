@@ -602,14 +602,14 @@ spa_keystore_dsl_key_hold_dd(spa_t *spa, dsl_dir_t *dd, void *tag,
 	ret = spa_keystore_wkey_hold_ddobj(spa, dd->dd_object, FTAG, &wkey);
 	if (ret) {
 		ret = SET_ERROR(EPERM);
-		goto error;
+		goto error_unlock;
 	}
 
 	/* read the key from disk */
 	ret = dsl_crypto_key_open(spa_get_dsl(spa)->dp_meta_objset, wkey,
 	    dckobj, tag, &dck);
 	if (ret)
-		goto error;
+		goto error_unlock;
 
 	/*
 	 * add the key to the keystore (this should always succeed
@@ -626,10 +626,10 @@ spa_keystore_dsl_key_hold_dd(spa_t *spa, dsl_dir_t *dd, void *tag,
 	*dck_out = dck;
 	return (0);
 
-error:
+error_unlock:
+	rw_exit(&spa->spa_keystore.sk_dk_lock);
 	if (wkey)
 		dsl_wrapping_key_rele(wkey, FTAG);
-	rw_exit(&spa->spa_keystore.sk_dk_lock);
 
 	*dck_out = NULL;
 	return (ret);
@@ -896,13 +896,13 @@ spa_keystore_lookup_key(spa_t *spa, uint64_t dsobj, dsl_crypto_key_t **dck_out)
 	dsl_key_mapping_t search_km;
 	dsl_key_mapping_t *found_km;
 
-	/* init the search keychain record */
+	/* init the search key mapping */
 	search_km.km_dsobj = dsobj;
 	LOG_DEBUG("lookup mapping %llu", dsobj);
 
 	rw_enter(&spa->spa_keystore.sk_km_lock, RW_READER);
 
-	/* remove the record from the tree */
+	/* remove the mapping from the tree */
 	found_km = avl_find(&spa->spa_keystore.sk_key_mappings, &search_km,
 	    NULL);
 	if (found_km == NULL) {
@@ -942,7 +942,6 @@ dsl_crypto_key_sync(dsl_crypto_key_t *dck, dmu_tx_t *tx)
 	    keydata, hmac_keydata));
 
 	/* update the ZAP with the obtained values */
-	LOG_DEBUG("CRYPT = %llu", key->zk_crypt);
 	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_CRYPT, 8, 1,
 	    &key->zk_crypt, tx));
 
@@ -1320,7 +1319,7 @@ dsl_crypto_key_clone_sync(dsl_dir_t *orig_dd, dsl_wrapping_key_t *wkey,
 void
 dsl_crypto_key_destroy_sync(uint64_t dckobj, dmu_tx_t *tx)
 {
-	/* destroy the keychain object */
+	/* destroy the DSL Crypto Key object */
 	VERIFY0(zap_destroy(tx->tx_pool->dp_meta_objset, dckobj, tx));
 
 	/* decrement the feature count */
@@ -1336,6 +1335,13 @@ spa_do_crypt_data(boolean_t encrypt, spa_t *spa, zbookmark_phys_t *zb,
 	int ret;
 	dsl_crypto_key_t *dck;
 	uint8_t iv[DATA_IV_LEN];
+
+	char blkbuf[BP_SPRINTF_LEN];
+	BP_SET_EMBEDDED(bp, B_FALSE);
+	snprintf_blkptr(blkbuf, sizeof (blkbuf), bp);
+	LOG_DEBUG("----> %s", blkbuf);
+
+	ASSERT(!BP_IS_EMBEDDED(bp));
 
 	/* look up the key from the spa's keystore */
 	ret = spa_keystore_lookup_key(spa, zb->zb_objset, &dck);

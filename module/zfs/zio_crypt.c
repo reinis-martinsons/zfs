@@ -277,7 +277,7 @@ zio_crypt_key_destroy(zio_crypt_key_t *key)
 
 	/* free crypto templates */
 	crypto_destroy_ctx_template(key->zk_current_tmpl);
-	crypto_destroy_ctx_template(key->zk_current_tmpl);
+	crypto_destroy_ctx_template(key->zk_hmac_tmpl);
 
 	/* zero out sensitive data */
 	bzero(key, sizeof (zio_crypt_key_t));
@@ -485,7 +485,8 @@ zio_do_crypt_uio(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
 	}
 
 	if (ret != CRYPTO_SUCCESS) {
-		LOG_DEBUG("error = %d", ret);
+		LOG_DEBUG("zio_do_crypt_uio() error = %d", ret);
+		DUMP_STACK();
 		ret = SET_ERROR(EIO);
 		goto error;
 	}
@@ -581,9 +582,11 @@ zio_crypt_key_unwrap(crypto_key_t *cwkey, uint64_t crypt, uint8_t *keydata,
 
 	enc_len = keydata_len + HMAC_SHA256_KEYLEN;
 	puio.uio_iov = plain_iovecs;
+	puio.uio_segflg = UIO_SYSSPACE;
 	puio.uio_iovcnt = 3;
 	cuio.uio_iov = cipher_iovecs;
 	cuio.uio_iovcnt = 3;
+	cuio.uio_segflg = UIO_SYSSPACE;
 
 	/* decrypt the keys and store the result in the output buffers */
 	ret = zio_decrypt_uio(crypt, cwkey, NULL, iv, enc_len, &puio, &cuio);

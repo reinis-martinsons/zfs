@@ -23,8 +23,8 @@
  * Copyright (c) 2016, Datto, Inc. All rights reserved.
  */
 
-#ifndef	_SYS_DSL_KEYCHAIN_H
-#define	_SYS_DSL_KEYCHAIN_H
+#ifndef	_SYS_DSL_CRYPT_H
+#define	_SYS_DSL_CRYPT_H
 
 #include <sys/dmu_tx.h>
 #include <sys/dmu.h>
@@ -108,7 +108,7 @@ typedef struct dsl_key_mapping {
 	dsl_crypto_key_t *km_key;
 } dsl_key_mapping_t;
 
-/* in memory structure for holding all keychains loaded into memory */
+/* in memory structure for holding all wrapping and dsl keys */
 typedef struct spa_keystore {
 	/* lock for protecting sk_dsl_keys */
 	krwlock_t sk_dk_lock;

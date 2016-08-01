@@ -1037,7 +1037,7 @@ zfs_crypto_load_key(zfs_handle_t *zhp)
 			break;
 		case EEXIST:
 			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-			    "Keychain is already loaded."));
+			    "Key is already loaded."));
 			break;
 		case EBUSY:
 			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
@@ -1126,7 +1126,7 @@ zfs_crypto_unload_key(zfs_handle_t *zhp)
 		switch (ret) {
 		case ENOENT:
 			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-			    "Keychain is not currently loaded."));
+			    "Key is not currently loaded."));
 			break;
 		case EBUSY:
 			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
@@ -1154,7 +1154,7 @@ zfs_crypto_rewrap(zfs_handle_t *zhp, nvlist_t *props)
 	char *keysource;
 
 	(void) snprintf(errbuf, sizeof (errbuf),
-	    dgettext(TEXT_DOMAIN, "Rewrap keychain error"));
+	    dgettext(TEXT_DOMAIN, "Key rewrap error"));
 
 	if (!encryption_feature_is_enabled(zhp->zpool_hdl)) {
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
@@ -1211,7 +1211,7 @@ zfs_crypto_rewrap(zfs_handle_t *zhp, nvlist_t *props)
 			break;
 		case ENOENT:
 			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-			    "Keychain is not currently loaded."));
+			    "Key is not currently loaded."));
 			break;
 		}
 		zfs_error(zhp->zfs_hdl, EZFS_CRYPTOFAILED, errbuf);

@@ -742,6 +742,7 @@ dsl_dataset_tryown(dsl_dataset_t *ds, void *tag, boolean_t key_required)
 		if (dckobj != 0 && key_required) {
 			ret = spa_keystore_create_mapping(spa, ds);
 			if (ret) {
+				LOG_DEBUG("tryown error = %d", ret);
 				mutex_exit(&ds->ds_lock);
 				return (SET_ERROR(EPERM));
 			}
@@ -928,7 +929,8 @@ dsl_dataset_create_sync_dd(dsl_dir_t *dd, dsl_dataset_t *origin,
 		VERIFY0(zap_add(mos, dd->dd_object, DD_FIELD_CRYPTO_KEY_OBJ,
 		    sizeof (uint64_t), 1, &dckobj, tx));
 
-		LOG_DEBUG("created normal encrypted dataset: %llu -> %llu", dd->dd_object, dckobj);
+		LOG_DEBUG("created normal encrypted dataset: %llu -> %llu",
+		    dd->dd_object, dckobj);
 
 		if (dcp == NULL || dcp->cp_wkey == NULL) {
 			dsl_wrapping_key_rele(wkey, FTAG);
@@ -961,7 +963,8 @@ dsl_dataset_create_sync_dd(dsl_dir_t *dd, dsl_dataset_t *origin,
 		VERIFY0(zap_add(mos, dd->dd_object, DD_FIELD_CRYPTO_KEY_OBJ,
 		    sizeof (uint64_t), 1, &dckobj, tx));
 
-		LOG_DEBUG("created cloned encrypted dataset: %llu -> %llu", dd->dd_object, dckobj);
+		LOG_DEBUG("created cloned encrypted dataset: %llu -> %llu",
+		    dd->dd_object, dckobj);
 
 		if (dcp == NULL || dcp->cp_wkey == NULL) {
 			dsl_wrapping_key_rele(wkey, FTAG);
