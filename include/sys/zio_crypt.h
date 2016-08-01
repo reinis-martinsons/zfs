@@ -174,6 +174,7 @@ void l2arc_crypt_key_destroy(l2arc_crypt_key_t *key);
 int l2arc_crypt_key_init(l2arc_crypt_key_t *key);
 void zio_crypt_key_destroy(zio_crypt_key_t *key);
 int zio_crypt_key_init(uint64_t crypt, zio_crypt_key_t *key);
+int zio_crypt_key_get_salt(zio_crypt_key_t *key, uint64_t *salt_out);
 
 int zio_do_crypt_uio(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
     crypto_ctx_template_t tmpl, uint8_t *ivbuf, uint_t datalen,
@@ -188,11 +189,11 @@ int zio_crypt_key_wrap(crypto_key_t *cwkey, zio_crypt_key_t *key, uint8_t *iv,
 int zio_crypt_key_unwrap(crypto_key_t *cwkey, uint64_t crypt, uint8_t *keydata,
     uint8_t *hmac_keydata, uint8_t *iv, uint8_t *mac, zio_crypt_key_t *key);
 int zio_crypt_generate_iv_normal(blkptr_t *bp, dmu_object_type_t ot,
-    uint64_t txgid, zbookmark_phys_t *zb, uint8_t *ivbuf);
+    uint64_t salt, uint64_t txgid, zbookmark_phys_t *zb, uint8_t *ivbuf);
 int zio_crypt_generate_iv_l2arc(uint64_t spa, dva_t *dva, uint64_t birth,
     uint64_t daddr, uint8_t *ivbuf);
 int zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key, uint64_t salt,
-    dmu_object_type_t ot, uint8_t *iv, uint8_t *mac, uint64_t *salt_out,
-    uint_t datalen, uint8_t *plainbuf, uint8_t *cipherbuf);
+    dmu_object_type_t ot, uint8_t *iv, uint8_t *mac, uint_t datalen,
+    uint8_t *plainbuf, uint8_t *cipherbuf);
 
 #endif

@@ -128,16 +128,45 @@ enum zio_stage {
 	ZIO_STAGE_DVA_FREE		= 1 << 14,	/* --F-- */
 	ZIO_STAGE_DVA_CLAIM		= 1 << 15,	/* ---C- */
 
-	ZIO_STAGE_READY			= 1 << 16,	/* RWFCI */
+	ZIO_STAGE_ENCRYPT		= 1 << 16,	/* -W--- */
+	ZIO_STAGE_CHECKSUM_GENERATE_2	= 1 << 17,	/* -W--- */
 
-	ZIO_STAGE_VDEV_IO_START		= 1 << 17,	/* RW--I */
-	ZIO_STAGE_VDEV_IO_DONE		= 1 << 18,	/* RW--I */
-	ZIO_STAGE_VDEV_IO_ASSESS	= 1 << 19,	/* RW--I */
+	ZIO_STAGE_READY			= 1 << 18,	/* RWFCI */
 
-	ZIO_STAGE_CHECKSUM_VERIFY	= 1 << 20,	/* R---- */
+	ZIO_STAGE_VDEV_IO_START		= 1 << 19,	/* RW--I */
+	ZIO_STAGE_VDEV_IO_DONE		= 1 << 20,	/* RW--I */
+	ZIO_STAGE_VDEV_IO_ASSESS	= 1 << 21,	/* RW--I */
 
-	ZIO_STAGE_DONE			= 1 << 21	/* RWFCI */
+	ZIO_STAGE_CHECKSUM_VERIFY	= 1 << 22,	/* R---- */
+
+	ZIO_STAGE_DONE			= 1 << 23	/* RWFCI */
 };
+
+/*
+ * There are 2 pipeline stages for generating checksums in order to support
+ * the idiosyncrasies of encryption. For a normal, non-encrypted write, the
+ * order of operations must be as follows due to the dependencies between these
+ * steps:
+ * 	write_bp_init
+ * 	checksum_generate
+ * 	dedup_write
+ * 	dva_allocate
+ *
+ * For encrypted writes, the order must be:
+ * 	write_bp_init
+ * 	dedup_write
+ * 	dva_allocate
+ * 	encrypt
+ * 	checksum_generate
+ *
+ * Checksumming depends on encryption in order to have the ciphertext to work
+ * with. Encryption uses DVA[0] to generate an IV, so it must be allocated by
+ * then. Allocating a DVA should not happen, however if the data is dedup'd.
+ * Deduping for encrypted blocks is done with a SHA256-HMAC of the compressed
+ * plaintext so it depends on write_bp_init, but does not depend on the checksum
+ * as it normally would. Normal writes use the first checksum_generate, while
+ * encrypted blocks will use the second.
+ */
 
 #define	ZIO_INTERLOCK_STAGES			\
 	(ZIO_STAGE_READY |			\
@@ -187,11 +216,13 @@ enum zio_stage {
 
 #define	ZIO_REWRITE_PIPELINE			\
 	(ZIO_WRITE_COMMON_STAGES |		\
+	ZIO_STAGE_ENCRYPT |			\
 	ZIO_STAGE_WRITE_BP_INIT)
 
 #define	ZIO_WRITE_PIPELINE			\
 	(ZIO_WRITE_COMMON_STAGES |		\
 	ZIO_STAGE_WRITE_BP_INIT |		\
+	ZIO_STAGE_ENCRYPT |			\
 	ZIO_STAGE_DVA_ALLOCATE)
 
 #define	ZIO_DDT_CHILD_WRITE_PIPELINE		\

@@ -1957,8 +1957,11 @@ spa_load_verify_done(zio_t *zio)
 	dmu_object_type_t type = BP_GET_TYPE(bp);
 	int error = zio->io_error;
 	spa_t *spa = zio->io_spa;
+	char blkbuf[BP_SPRINTF_LEN];
 
 	if (error) {
+		snprintf_blkptr(blkbuf, sizeof (blkbuf), bp);
+		LOG_DEBUG("SPA_LOAD_VERIFY_DONE %s", blkbuf);
 		if ((BP_GET_LEVEL(bp) != 0 || DMU_OT_IS_METADATA(type)) &&
 		    type != DMU_OT_INTENT_LOG)
 			atomic_inc_64(&sle->sle_meta_count);

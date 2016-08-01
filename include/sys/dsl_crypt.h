@@ -168,14 +168,11 @@ uint64_t dsl_crypto_key_clone_sync(dsl_dir_t *orig_dd,
 void dsl_crypto_key_destroy_sync(uint64_t dckobj, dmu_tx_t *tx);
 
 int spa_do_crypt_data(boolean_t encrypt, spa_t *spa, zbookmark_phys_t *zb,
-    uint64_t salt, uint64_t txgid, dmu_object_type_t ot, blkptr_t *bp,
-    uint_t datalen, uint8_t *plainbuf, uint8_t *cipherbuf, uint64_t *salt_out,
-    uint8_t *mac);
-#define	spa_encrypt_data(spa, zb, txgid, ot, bp, datalen, pb, cb, so, mac) \
-    spa_do_crypt_data(B_TRUE, spa, zb, 0, txgid, ot, bp, datalen, pb, cb, so, \
-    mac)
-#define	spa_decrypt_data(spa, zb, salt, txgid, ot, bp, datalen, pb, cb, mac) \
-    spa_do_crypt_data(B_FALSE, spa, zb, salt, txgid, ot, bp, datalen, pb, cb, \
-    NULL, mac)
+    uint64_t *salt, uint64_t txgid, dmu_object_type_t ot, blkptr_t *bp,
+    uint_t datalen, uint8_t *plainbuf, uint8_t *cipherbuf, uint8_t *mac);
+#define	spa_encrypt_data(spa, zb, salt, txgid, ot, bp, len, pb, cb, mac) \
+    spa_do_crypt_data(B_TRUE, spa, zb, salt, txgid, ot, bp, len, pb, cb, mac)
+#define	spa_decrypt_data(spa, zb, salt, txgid, ot, bp, len, pb, cb, mac) \
+    spa_do_crypt_data(B_FALSE, spa, zb, salt, txgid, ot, bp, len, pb, cb, mac)
 
 #endif

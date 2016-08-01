@@ -394,6 +394,33 @@ error:
 	return (ret);
 }
 
+/* See comment above ZIO_CRYPT_MAX_SALT_USAGE definition for details */
+int
+zio_crypt_key_get_salt(zio_crypt_key_t *key, uint64_t *salt_out)
+{
+	int ret;
+	boolean_t salt_change;
+
+	rw_enter(&key->zk_salt_lock, RW_READER);
+
+	*salt_out = key->zk_salt;
+	salt_change = (atomic_inc_64_nv(&key->zk_salt_count) ==
+	    ZIO_CRYPT_MAX_SALT_USAGE);
+
+	rw_exit(&key->zk_salt_lock);
+
+	if (salt_change) {
+		ret = zio_crypt_key_change_salt(key);
+		if (ret)
+			goto error;
+	}
+
+	return (0);
+
+error:
+	return (ret);
+}
+
 /*
  * This function handles all encryption and decryption in zfs. When
  * encrypting it expects puio to refernce the plaintext and cuio to
@@ -486,7 +513,6 @@ zio_do_crypt_uio(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
 
 	if (ret != CRYPTO_SUCCESS) {
 		LOG_DEBUG("zio_do_crypt_uio() error = %d", ret);
-		DUMP_STACK();
 		ret = SET_ERROR(EIO);
 		goto error;
 	}
@@ -641,8 +667,19 @@ error:
 	return (ret);
 }
 
+void
+hexdump(char *str, uint8_t *buf, uint_t len, boolean_t interpret)
+{
+	int i;
+
+	LOG_DEBUG("%s: ", str);
+	for (i = 0; i < len; i++) {
+		LOG_DEBUG("%02x\t\t%c", buf[i] & 0xff, (interpret)? (char)(buf[i] & 0xff) : ' ');
+	}
+}
+
 int
-zio_crypt_generate_iv_normal(blkptr_t *bp, dmu_object_type_t ot,
+zio_crypt_generate_iv_normal(blkptr_t *bp, dmu_object_type_t ot, uint64_t salt,
     uint64_t txgid, zbookmark_phys_t *zb, uint8_t *ivbuf)
 {
 	int ret;
@@ -650,6 +687,7 @@ zio_crypt_generate_iv_normal(blkptr_t *bp, dmu_object_type_t ot,
 	crypto_context_t ctx;
 	crypto_data_t in_data, digest_data;
 	uint8_t digestbuf[SHA_256_DIGEST_LEN];
+	char blkbuf[BP_SPRINTF_LEN];
 
 	/* initialize sha 256 mechanism and crypto data */
 	mech.cm_type = crypto_mech2id(SUN_CKM_SHA256);
@@ -708,7 +746,7 @@ zio_crypt_generate_iv_normal(blkptr_t *bp, dmu_object_type_t ot,
 
 	/* add in the salt for added protection against pool rewinds */
 	in_data.cd_length = sizeof (uint64_t);
-	in_data.cd_raw.iov_base = (char *)&bp->blk_fill;
+	in_data.cd_raw.iov_base = (char *)&salt;
 	in_data.cd_raw.iov_len = sizeof (uint64_t);
 
 	ret = crypto_digest_update(ctx, &in_data, NULL);
@@ -726,6 +764,11 @@ zio_crypt_generate_iv_normal(blkptr_t *bp, dmu_object_type_t ot,
 
 	/* truncate and copy the digest into the output buffer */
 	bcopy(digestbuf, ivbuf, DATA_IV_LEN);
+
+	LOG_DEBUG("ZB_OBJECT = %llu", zb->zb_object);
+	snprintf_blkptr(blkbuf, sizeof (blkbuf), bp);
+	LOG_DEBUG("BP = %s", blkbuf);
+	hexdump("IV", ivbuf, DATA_IV_LEN, 0);
 
 	return (0);
 
@@ -1103,11 +1146,11 @@ error:
 
 int
 zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key, uint64_t salt,
-    dmu_object_type_t ot, uint8_t *iv, uint8_t *mac, uint64_t *salt_out,
-    uint_t datalen, uint8_t *plainbuf, uint8_t *cipherbuf)
+    dmu_object_type_t ot, uint8_t *iv, uint8_t *mac, uint_t datalen,
+    uint8_t *plainbuf, uint8_t *cipherbuf)
 {
 	int ret;
-	boolean_t locked = B_FALSE, salt_change = B_FALSE;
+	boolean_t locked = B_FALSE;
 	uint64_t crypt = key->zk_crypt;
 	uint_t enc_len, keydata_len = zio_crypt_table[crypt].ci_keylen;
 	uio_t puio, cuio;
@@ -1144,15 +1187,9 @@ zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key, uint64_t salt,
 	rw_enter(&key->zk_salt_lock, RW_READER);
 	locked = B_TRUE;
 
-	if (encrypt || salt == key->zk_salt) {
+	if (salt == key->zk_salt) {
 		ckey = &key->zk_current_key;
 		tmpl = key->zk_current_tmpl;
-
-		if (encrypt) {
-			salt_change = (atomic_inc_64_nv(&key->zk_salt_count) ==
-			    ZIO_CRYPT_MAX_SALT_USAGE);
-			*salt_out = key->zk_salt;
-		}
 	} else {
 		rw_exit(&key->zk_salt_lock);
 		locked = B_FALSE;
@@ -1174,19 +1211,19 @@ zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key, uint64_t salt,
 	/* perform the encryption / decryption */
 	ret = zio_do_crypt_uio(encrypt, key->zk_crypt, ckey, tmpl, iv, enc_len,
 	    &puio, &cuio);
+
+//	LOG_DEBUG("+++++++++++++++++++++++++++++++++++++");
+//	LOG_DEBUG("ENCRYPT = %d", encrypt);
+//	hexdump("PLAIN", plainbuf, 16, 1);
+//	hexdump("CIPHER", cipherbuf, 16, 0);
+//	hexdump("MAC", mac, DATA_MAC_LEN, 0);
+
 	if (ret)
 		goto error;
 
 	if (locked) {
 		rw_exit(&key->zk_salt_lock);
 		locked = B_FALSE;
-	}
-
-	/* see comment above ZIO_CRYPT_MAX_SALT_USAGE for details */
-	if (salt_change) {
-		ret = zio_crypt_key_change_salt(key);
-		if (ret)
-			goto error;
 	}
 
 	if (ckey == &tmp_ckey)

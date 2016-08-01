@@ -1328,18 +1328,12 @@ dsl_crypto_key_destroy_sync(uint64_t dckobj, dmu_tx_t *tx)
 
 int
 spa_do_crypt_data(boolean_t encrypt, spa_t *spa, zbookmark_phys_t *zb,
-    uint64_t salt, uint64_t txgid, dmu_object_type_t ot, blkptr_t *bp,
-    uint_t datalen, uint8_t *plainbuf, uint8_t *cipherbuf, uint64_t *salt_out,
-    uint8_t *mac)
+    uint64_t *salt, uint64_t txgid, dmu_object_type_t ot, blkptr_t *bp,
+    uint_t datalen, uint8_t *plainbuf, uint8_t *cipherbuf, uint8_t *mac)
 {
 	int ret;
 	dsl_crypto_key_t *dck;
 	uint8_t iv[DATA_IV_LEN];
-
-	char blkbuf[BP_SPRINTF_LEN];
-	BP_SET_EMBEDDED(bp, B_FALSE);
-	snprintf_blkptr(blkbuf, sizeof (blkbuf), bp);
-	LOG_DEBUG("----> %s", blkbuf);
 
 	ASSERT(!BP_IS_EMBEDDED(bp));
 
@@ -1351,15 +1345,18 @@ spa_do_crypt_data(boolean_t encrypt, spa_t *spa, zbookmark_phys_t *zb,
 	}
 
 	/*
-	 * Generate an IV from DVA[0] + birth txg + a 64 bit salt. The salt
-	 * can be stored in blk_fill because all encrypted blocks are level 0
-	 * data blocks, and therefore by definition can be assumed to have
-	 * a blk_fill value of 1, with 2 notable exceptions. ZIL blocks are
-	 * technically at level -2, but they do not utilize blk_fill so it
-	 * is still safe to store the salt there. Dnode blocks use blk_fill
-	 * differently, but we do not encrypt dnode blocks.
+	 * If we are encrypting, this function generates a salt for us and we
+	 * return it to the caller so they can store it for decrypting. If we
+	 * are decrypting we use the salt that was provided.
 	 */
-	ret = zio_crypt_generate_iv_normal(bp, ot, txgid, zb, iv);
+	if (encrypt) {
+		ret = zio_crypt_key_get_salt(&dck->dck_key, salt);
+		if (ret)
+			goto error;
+	}
+
+	/* Generate an IV from DVA[0] + birth txg + a 64 bit salt. */
+	ret = zio_crypt_generate_iv_normal(bp, ot, *salt, txgid, zb, iv);
 	if (ret)
 		goto error;
 
@@ -1368,8 +1365,8 @@ spa_do_crypt_data(boolean_t encrypt, spa_t *spa, zbookmark_phys_t *zb,
 	 * used to generate the underlying encryption key, so we must pass it
 	 * down here.
 	 */
-	ret = zio_do_crypt_data(encrypt, &dck->dck_key, salt, ot, iv, mac,
-	    salt_out, datalen, plainbuf, cipherbuf);
+	ret = zio_do_crypt_data(encrypt, &dck->dck_key, *salt, ot, iv, mac,
+	    datalen, plainbuf, cipherbuf);
 	if (ret)
 		goto error;
 

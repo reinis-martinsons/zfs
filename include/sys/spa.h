@@ -404,7 +404,7 @@ _NOTE(CONSTCOND) } while (0)
 	(bp)->blk_phys_birth = ((logical) == (physical) ? 0 : (physical)); \
 }
 
-#define	BP_GET_FILL(bp) (BP_IS_EMBEDDED(bp) || BP_IS_ENCRYPTED(bp) ? \
+#define	BP_GET_FILL(bp) ((BP_IS_EMBEDDED(bp) || BP_IS_ENCRYPTED(bp)) ? \
 	1 : (bp)->blk_fill)
 
 #define	BP_GET_ASIZE(bp)	\
@@ -533,13 +533,14 @@ _NOTE(CONSTCOND) } while (0)
 		    DVA_GET_ASIZE(&bp->blk_dva[1]) / 2)			\
 			copies--;					\
 		len += func(buf + len, size - len,			\
-		    "[L%llu %s] %s %s %s %s %s %s%c"			\
+		    "[L%llu %s] %s %s %s %s %s %s %s%c"			\
 		    "size=%llxL/%llxP birth=%lluL/%lluP fill=%llu%c"	\
 		    "cksum=%llx:%llx:%llx:%llx",			\
 		    (u_longlong_t)BP_GET_LEVEL(bp),			\
 		    type,						\
 		    checksum,						\
 		    compress,						\
+		    BP_IS_ENCRYPTED(bp) ? "encrypted" : "unencrypted",	\
 		    BP_GET_BYTEORDER(bp) == 0 ? "BE" : "LE",		\
 		    BP_IS_GANG(bp) ? "gang" : "contiguous",		\
 		    BP_GET_DEDUP(bp) ? "dedup" : "unique",		\
