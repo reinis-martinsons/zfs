@@ -6901,16 +6901,10 @@ l2arc_encrypt_buf(l2arc_crypt_key_t *key, arc_buf_hdr_t *hdr)
 
 	puio.uio_iov = &plain_iov;
 	puio.uio_iovcnt = 1;
+	puio.uio_segflg = UIO_SYSSPACE;
 	cuio.uio_iov = cipher_iovs;
 	cuio.uio_iovcnt = 2;
-
-#ifdef _KERNEL
-	puio.uio_segflg = UIO_SYSSPACE;
 	cuio.uio_segflg = UIO_SYSSPACE;
-#else
-	puio.uio_segflg = UIO_USERSPACE;
-	cuio.uio_segflg = UIO_USERSPACE;
-#endif
 
 	ret = zio_crypt_generate_iv_l2arc(hdr->b_spa, &hdr->b_dva,
 	    hdr->b_birth, hdr->b_l2hdr.b_daddr, ivbuf);
@@ -6974,16 +6968,10 @@ l2arc_decrypt_zio(l2arc_crypt_key_t *key, zio_t *zio, arc_buf_hdr_t *hdr) {
 
 	puio.uio_iov = plain_iovs;
 	puio.uio_iovcnt = 2;
+	puio.uio_segflg = UIO_SYSSPACE;
 	cuio.uio_iov = cipher_iovs;
 	cuio.uio_iovcnt = 2;
-
-#ifdef _KERNEL
-	puio.uio_segflg = UIO_SYSSPACE;
 	cuio.uio_segflg = UIO_SYSSPACE;
-#else
-	puio.uio_segflg = UIO_USERSPACE;
-	cuio.uio_segflg = UIO_USERSPACE;
-#endif
 
 	ret = zio_crypt_generate_iv_l2arc(hdr->b_spa, &hdr->b_dva,
 	    hdr->b_birth, hdr->b_l2hdr.b_daddr, ivbuf);

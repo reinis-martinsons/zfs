@@ -26,6 +26,12 @@
 #ifndef	_SYS_ZIO_CRYPT_H
 #define	_SYS_ZIO_CRYPT_H
 
+#ifdef _KERNEL
+	#define LOG_DEBUG(fmt, args...) printk(KERN_DEBUG  fmt "\n", ## args)
+#else
+	#define LOG_DEBUG(fmt, args...)
+#endif
+
 #include <sys/dmu.h>
 #include <sys/refcount.h>
 #include <sys/crypto/api.h>
@@ -117,7 +123,7 @@ extern zio_crypt_info_t zio_crypt_table[ZIO_CRYPT_FUNCTIONS];
 /* in memory representation of an unwrapped key that is loaded into memory */
 typedef struct zio_crypt_key {
 	/* encryption algorithm */
-	enum zio_encrypt zk_crypt;
+	uint64_t zk_crypt;
 
 	/* buffer for master key */
 	uint8_t zk_master_keydata[MAX_MASTER_KEY_LEN];

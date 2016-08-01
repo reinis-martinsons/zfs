@@ -288,10 +288,12 @@ zio_crypt_key_init(uint64_t crypt, zio_crypt_key_t *key)
 {
 	int ret;
 	crypto_mechanism_t mech;
-	uint_t keydata_len = zio_crypt_table[crypt].ci_keylen;
+	uint_t keydata_len;
 
 	ASSERT(key != NULL);
 	ASSERT3U(crypt, <, ZIO_CRYPT_FUNCTIONS);
+
+	keydata_len = zio_crypt_table[crypt].ci_keylen;
 
 	/* fill keydata buffers and salt with random data */
 	ret = random_get_bytes(key->zk_master_keydata, keydata_len);
@@ -483,6 +485,7 @@ zio_do_crypt_uio(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
 	}
 
 	if (ret != CRYPTO_SUCCESS) {
+		LOG_DEBUG("error = %d", ret);
 		ret = SET_ERROR(EIO);
 		goto error;
 	}
@@ -501,10 +504,12 @@ zio_crypt_key_wrap(crypto_key_t *cwkey, zio_crypt_key_t *key, uint8_t *iv,
 	uio_t puio, cuio;
 	iovec_t plain_iovecs[2], cipher_iovecs[3];
 	uint64_t crypt = key->zk_crypt;
-	uint_t enc_len, keydata_len = zio_crypt_table[crypt].ci_keylen;
+	uint_t enc_len, keydata_len;
 
-	ASSERT(crypt < ZIO_CRYPT_FUNCTIONS);
-	ASSERT(cwkey->ck_format == CRYPTO_KEY_RAW);
+	ASSERT3U(crypt, <, ZIO_CRYPT_FUNCTIONS);
+	ASSERT3U(cwkey->ck_format, ==, CRYPTO_KEY_RAW);
+
+	keydata_len = zio_crypt_table[crypt].ci_keylen;
 
 	/* generate iv for wrapping the master and hmac key */
 	ret = random_get_pseudo_bytes(iv, WRAPPING_IV_LEN);
@@ -527,8 +532,10 @@ zio_crypt_key_wrap(crypto_key_t *cwkey, zio_crypt_key_t *key, uint8_t *iv,
 	enc_len = zio_crypt_table[crypt].ci_keylen + HMAC_SHA256_KEYLEN;
 	puio.uio_iov = plain_iovecs;
 	puio.uio_iovcnt = 2;
+	puio.uio_segflg = UIO_SYSSPACE;
 	cuio.uio_iov = cipher_iovecs;
 	cuio.uio_iovcnt = 3;
+	cuio.uio_segflg = UIO_SYSSPACE;
 
 	/* encrypt the keys and store the resulting ciphertext and mac */
 	ret = zio_encrypt_uio(crypt, cwkey, NULL, iv, enc_len, &puio, &cuio);
@@ -550,10 +557,12 @@ zio_crypt_key_unwrap(crypto_key_t *cwkey, uint64_t crypt, uint8_t *keydata,
 	uio_t puio, cuio;
 	iovec_t plain_iovecs[3], cipher_iovecs[3];
 	uint8_t outmac[WRAPPING_MAC_LEN];
-	uint_t enc_len, keydata_len = zio_crypt_table[crypt].ci_keylen;
+	uint_t enc_len, keydata_len;
 
-	ASSERT(crypt < ZIO_CRYPT_FUNCTIONS);
-	ASSERT(cwkey->ck_format == CRYPTO_KEY_RAW);
+	ASSERT3U(crypt, <, ZIO_CRYPT_FUNCTIONS);
+	ASSERT3U(cwkey->ck_format, ==, CRYPTO_KEY_RAW);
+
+	keydata_len = zio_crypt_table[crypt].ci_keylen;
 
 	/* initialize uio_ts */
 	plain_iovecs[0].iov_base = key->zk_master_keydata;
@@ -1070,13 +1079,8 @@ zio_crypt_init_uios(boolean_t encrypt, dmu_object_type_t ot, uint8_t *plainbuf,
 	}
 
 	/* populate the uios */
-#ifdef _KERNEL
 	puio->uio_segflg = UIO_SYSSPACE;
 	cuio->uio_segflg = UIO_SYSSPACE;
-#else
-	puio->uio_segflg = UIO_USERSPACE;
-	cuio->uio_segflg = UIO_USERSPACE;
-#endif
 
 	mac_iov = ((iovec_t *)&cuio->uio_iov[cuio->uio_iovcnt - 1]);
 	mac_iov->iov_base = mac;

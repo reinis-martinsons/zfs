@@ -653,7 +653,7 @@ static int
 zfs_do_clone(int argc, char **argv)
 {
 	zfs_handle_t *zhp = NULL;
-	boolean_t parents = B_FALSE, add_key = B_FALSE;
+	boolean_t parents = B_FALSE;
 	nvlist_t *props;
 	int ret = 0;
 	int c;
@@ -662,7 +662,7 @@ zfs_do_clone(int argc, char **argv)
 		nomem();
 
 	/* check options */
-	while ((c = getopt(argc, argv, "o:pK")) != -1) {
+	while ((c = getopt(argc, argv, "o:p")) != -1) {
 		switch (c) {
 		case 'o':
 			if (parseprop(props, optarg) != 0)
@@ -670,9 +670,6 @@ zfs_do_clone(int argc, char **argv)
 			break;
 		case 'p':
 			parents = B_TRUE;
-			break;
-		case 'K':
-			add_key = B_TRUE;
 			break;
 		case '?':
 			(void) fprintf(stderr, gettext("invalid option '%c'\n"),

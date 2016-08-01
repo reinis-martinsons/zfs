@@ -734,12 +734,12 @@ dsl_dataset_tryown(dsl_dataset_t *ds, void *tag, boolean_t key_required)
 {
 	int ret = 0;
 	spa_t *spa = ds->ds_dir->dd_pool->dp_spa;
-	uint64_t kcobj = ds->ds_dir->dd_crypto_obj;
+	uint64_t dckobj = ds->ds_dir->dd_crypto_obj;
 
 	ASSERT(dsl_pool_config_held(ds->ds_dir->dd_pool));
 	mutex_enter(&ds->ds_lock);
 	if (ds->ds_owner == NULL && !DS_IS_INCONSISTENT(ds)) {
-		if (kcobj != 0 && key_required) {
+		if (dckobj != 0 && key_required) {
 			ret = spa_keystore_create_mapping(spa, ds);
 			if (ret) {
 				mutex_exit(&ds->ds_lock);
@@ -801,7 +801,7 @@ dsl_dataset_create_sync_dd(dsl_dir_t *dd, dsl_dataset_t *origin,
 	dsl_pool_t *dp = dd->dd_pool;
 	dmu_buf_t *dbuf;
 	dsl_dataset_phys_t *dsphys;
-	uint64_t dsobj, crypt, kcobj;
+	uint64_t dsobj, crypt, dckobj;
 	dsl_wrapping_key_t *wkey;
 	objset_t *mos = dp->dp_meta_objset;
 
@@ -924,9 +924,11 @@ dsl_dataset_create_sync_dd(dsl_dir_t *dd, dsl_dataset_t *origin,
 		}
 
 		dsl_dir_zapify(dd, tx);
-		kcobj = dsl_crypto_key_create_sync(crypt, wkey, tx);
-		VERIFY0(zap_add(mos, dd->dd_object, DD_FIELD_DSL_KEYCHAIN_OBJ,
-		    sizeof (uint64_t), 1, &kcobj, tx));
+		dckobj = dsl_crypto_key_create_sync(crypt, wkey, tx);
+		VERIFY0(zap_add(mos, dd->dd_object, DD_FIELD_CRYPTO_KEY_OBJ,
+		    sizeof (uint64_t), 1, &dckobj, tx));
+
+		LOG_DEBUG("created normal encrypted dataset: %llu -> %llu", dd->dd_object, dckobj);
 
 		if (dcp == NULL || dcp->cp_wkey == NULL) {
 			dsl_wrapping_key_rele(wkey, FTAG);
@@ -955,9 +957,11 @@ dsl_dataset_create_sync_dd(dsl_dir_t *dd, dsl_dataset_t *origin,
 		    8, 1, &crypt, tx));
 
 		dsl_dir_zapify(dd, tx);
-		kcobj = dsl_crypto_key_clone_sync(origin->ds_dir, wkey, tx);
-		VERIFY0(zap_add(mos, dd->dd_object, DD_FIELD_DSL_KEYCHAIN_OBJ,
-		    sizeof (uint64_t), 1, &kcobj, tx));
+		dckobj = dsl_crypto_key_clone_sync(origin->ds_dir, wkey, tx);
+		VERIFY0(zap_add(mos, dd->dd_object, DD_FIELD_CRYPTO_KEY_OBJ,
+		    sizeof (uint64_t), 1, &dckobj, tx));
+
+		LOG_DEBUG("created cloned encrypted dataset: %llu -> %llu", dd->dd_object, dckobj);
 
 		if (dcp == NULL || dcp->cp_wkey == NULL) {
 			dsl_wrapping_key_rele(wkey, FTAG);

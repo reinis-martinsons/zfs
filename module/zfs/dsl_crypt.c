@@ -655,6 +655,8 @@ spa_keystore_load_wkey_impl(spa_t *spa, dsl_wrapping_key_t *wkey)
 	avl_index_t where;
 	dsl_wrapping_key_t *found_wkey;
 
+	LOG_DEBUG("load wrapping key %llu", wkey->wk_ddobj);
+
 	rw_enter(&spa->spa_keystore.sk_wkeys_lock, RW_WRITER);
 
 	/* insert the wrapping key into the keystore */
@@ -736,6 +738,8 @@ spa_keystore_unload_wkey_impl(spa_t *spa, uint64_t ddobj) {
 	int ret;
 	dsl_wrapping_key_t search_wkey;
 	dsl_wrapping_key_t *found_wkey;
+
+	LOG_DEBUG("unload wrapping key %llu", ddobj);
 
 	/* init the search wrapping key */
 	search_wkey.wk_ddobj = ddobj;
@@ -822,6 +826,8 @@ spa_keystore_create_mapping(spa_t *spa, dsl_dataset_t *ds)
 	if (ret)
 		goto error;
 
+	LOG_DEBUG("creating mapping %llu", ds->ds_object);
+
 	km->km_dsobj = ds->ds_object;
 
 	rw_enter(&spa->spa_keystore.sk_km_lock, RW_WRITER);
@@ -857,6 +863,7 @@ spa_keystore_remove_mapping(spa_t *spa, dsl_dataset_t *ds)
 
 	/* init the search key mapping */
 	search_km.km_dsobj = ds->ds_object;
+	LOG_DEBUG("removing mapping %llu", ds->ds_object);
 
 	rw_enter(&spa->spa_keystore.sk_km_lock, RW_WRITER);
 
@@ -891,6 +898,7 @@ spa_keystore_lookup_key(spa_t *spa, uint64_t dsobj, dsl_crypto_key_t **dck_out)
 
 	/* init the search keychain record */
 	search_km.km_dsobj = dsobj;
+	LOG_DEBUG("lookup mapping %llu", dsobj);
 
 	rw_enter(&spa->spa_keystore.sk_km_lock, RW_READER);
 
@@ -934,6 +942,7 @@ dsl_crypto_key_sync(dsl_crypto_key_t *dck, dmu_tx_t *tx)
 	    keydata, hmac_keydata));
 
 	/* update the ZAP with the obtained values */
+	LOG_DEBUG("CRYPT = %llu", key->zk_crypt);
 	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_CRYPT, 8, 1,
 	    &key->zk_crypt, tx));
 
@@ -1246,12 +1255,14 @@ dsl_crypto_key_create_sync(uint64_t crypt, dsl_wrapping_key_t *wkey,
 	dck.dck_obj = zap_create(tx->tx_pool->dp_meta_objset,
 	    DMU_OTN_ZAP_METADATA, DMU_OT_NONE, 0, tx);
 
+	LOG_DEBUG("created crypto key ZAP %llu (%llu)", dck.dck_obj, crypt);
+
 	/* fill in the key (on the stack) and sync it to disk */
 	dck.dck_wkey = wkey;
 	VERIFY0(zio_crypt_key_init(crypt, &dck.dck_key));
 
 	dsl_crypto_key_sync(&dck, tx);
-	bzero(&dck, sizeof (dsl_crypto_key_t));
+	bzero(&dck.dck_key, sizeof (zio_crypt_key_t));
 
 	/* increment the encryption feature count */
 	spa_feature_incr(tx->tx_pool->dp_spa, SPA_FEATURE_ENCRYPTION, tx);
@@ -1277,6 +1288,8 @@ dsl_crypto_key_clone_sync(dsl_dir_t *orig_dd, dsl_wrapping_key_t *wkey,
 	dck.dck_obj = zap_create(dp->dp_meta_objset, DMU_OTN_ZAP_METADATA,
 	    DMU_OT_NONE, 0, tx);
 
+	LOG_DEBUG("created cloned crypto key ZAP %llu", dck.dck_obj);
+
 	/* assign the wrapping key temporarily */
 	dck.dck_wkey = wkey;
 
@@ -1294,7 +1307,7 @@ dsl_crypto_key_clone_sync(dsl_dir_t *orig_dd, dsl_wrapping_key_t *wkey,
 
 	/* sync the new key, wrapped with the new wrapping key */
 	dsl_crypto_key_sync(&dck, tx);
-	bzero(&dck, sizeof (dsl_crypto_key_t));
+	bzero(&dck.dck_key, sizeof (zio_crypt_key_t));
 
 	/* increment the encryption feature count */
 	spa_feature_incr(dp->dp_spa, SPA_FEATURE_ENCRYPTION, tx);
@@ -1326,8 +1339,10 @@ spa_do_crypt_data(boolean_t encrypt, spa_t *spa, zbookmark_phys_t *zb,
 
 	/* look up the key from the spa's keystore */
 	ret = spa_keystore_lookup_key(spa, zb->zb_objset, &dck);
-	if (ret)
+	if (ret) {
+		ret = SET_ERROR(EPERM);
 		goto error;
+	}
 
 	/*
 	 * Generate an IV from DVA[0] + birth txg + a 64 bit salt. The salt
