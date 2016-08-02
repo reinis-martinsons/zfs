@@ -713,12 +713,13 @@ spa_keystore_load_wkey(const char *dsname, dsl_crypto_params_t *dcp)
 	if (ret)
 		goto error;
 
-	/* create the zvol (if it is one) */
-	zvol_create_minors(dp->dp_spa, dsname, B_TRUE);
-
 	dsl_crypto_key_rele(dck, FTAG);
 	dsl_dir_rele(dd, FTAG);
 	dsl_pool_rele(dp, FTAG);
+
+	/* create any zvols under this ds */
+	LOG_DEBUG("zvol_create_minors %s", dsname);
+	zvol_create_minors(dp->dp_spa, dsname, B_TRUE);
 
 	return (0);
 
@@ -791,11 +792,12 @@ spa_keystore_unload_wkey(const char *dsname)
 	if (ret)
 		goto error;
 
-	/* remove the zvol (if it is one) */
-	zvol_remove_minors(dp->dp_spa, dsname, B_TRUE);
-
 	dsl_dir_rele(dd, FTAG);
 	dsl_pool_rele(dp, FTAG);
+
+	/* remove any zvols under this ds */
+	LOG_DEBUG("zvol_remove_minors %s", dsname);
+	zvol_remove_minors(dp->dp_spa, dsname, B_TRUE);
 
 	return (0);
 
@@ -809,18 +811,21 @@ error:
 }
 
 int
-spa_keystore_create_mapping(spa_t *spa, dsl_dataset_t *ds)
+spa_keystore_create_mapping(spa_t *spa, dsl_dataset_t *ds, void *tag)
 {
 	int ret;
 	avl_index_t where;
 	dsl_key_mapping_t *km = NULL, *found_km;
+	boolean_t should_free = B_FALSE;
 
-	/* allocate the record */
+	/* allocate the mapping */
 	km = kmem_alloc(sizeof (dsl_key_mapping_t), KM_SLEEP);
 	if (!km)
 		return (SET_ERROR(ENOMEM));
 
-	/* initialize the record */
+	/* initialize the mapping */
+	refcount_create(&km->km_refcnt);
+
 	ret = spa_keystore_dsl_key_hold_dd(spa, ds->ds_dir, km,
 	    &km->km_key);
 	if (ret)
@@ -832,34 +837,50 @@ spa_keystore_create_mapping(spa_t *spa, dsl_dataset_t *ds)
 
 	rw_enter(&spa->spa_keystore.sk_km_lock, RW_WRITER);
 
-	/* insert the key mapping into the keystore */
+	/*
+	 * If a mapping already exists, simply increment its refcount and
+	 * cleanup the one we made. We want to allocate / free outside of
+	 * the lock because this lock is also used by the zio layer to lookup
+	 * key mappings. Otherwise, use the one we created. Normally, there will
+	 * only be one active reference at a time (the objset owner), but there
+	 * are times when there could be multiple async users.
+	 */
 	found_km = avl_find(&spa->spa_keystore.sk_key_mappings, km, &where);
 	if (found_km) {
-		ret = (SET_ERROR(EEXIST));
-		goto error_unlock;
+		should_free = B_TRUE;
+		refcount_add(&found_km->km_refcnt, tag);
+	} else {
+		refcount_add(&km->km_refcnt, tag);
+		avl_insert(&spa->spa_keystore.sk_key_mappings, km, where);
 	}
-	avl_insert(&spa->spa_keystore.sk_key_mappings, km, where);
 
 	rw_exit(&spa->spa_keystore.sk_km_lock);
+
+	if (should_free) {
+		spa_keystore_dsl_key_rele(spa, km->km_key, km);
+		refcount_destroy(&km->km_refcnt);
+		kmem_free(km, sizeof (dsl_key_mapping_t));
+	}
 
 	return (0);
 
-error_unlock:
-	rw_exit(&spa->spa_keystore.sk_km_lock);
 error:
 	if (km->km_key)
 		spa_keystore_dsl_key_rele(spa, km->km_key, km);
+
+	refcount_destroy(&km->km_refcnt);
 	kmem_free(km, sizeof (dsl_key_mapping_t));
 
 	return (ret);
 }
 
 int
-spa_keystore_remove_mapping(spa_t *spa, dsl_dataset_t *ds)
+spa_keystore_remove_mapping(spa_t *spa, dsl_dataset_t *ds, void *tag)
 {
 	int ret;
 	dsl_key_mapping_t search_km;
 	dsl_key_mapping_t *found_km;
+	boolean_t should_free = B_FALSE;
 
 	/* init the search key mapping */
 	search_km.km_dsobj = ds->ds_object;
@@ -867,20 +888,31 @@ spa_keystore_remove_mapping(spa_t *spa, dsl_dataset_t *ds)
 
 	rw_enter(&spa->spa_keystore.sk_km_lock, RW_WRITER);
 
-	/* remove the mapping from the tree */
+	/* find the matching mapping */
 	found_km = avl_find(&spa->spa_keystore.sk_key_mappings,
 	    &search_km, NULL);
 	if (found_km == NULL) {
 		ret = SET_ERROR(ENOENT);
 		goto error_unlock;
 	}
-	avl_remove(&spa->spa_keystore.sk_key_mappings, found_km);
+
+	/*
+	 * Decrement the refcount on the mapping and remove it from the tree if
+	 * it is zero. Try to minimize time spent in this lock by deferring
+	 * cleanup work.
+	 */
+	if (refcount_remove(&found_km->km_refcnt, tag) == 0) {
+		should_free = B_TRUE;
+		avl_remove(&spa->spa_keystore.sk_key_mappings, found_km);
+	}
 
 	rw_exit(&spa->spa_keystore.sk_km_lock);
 
 	/* destroy the key mapping */
-	spa_keystore_dsl_key_rele(spa, found_km->km_key, found_km);
-	kmem_free(found_km, sizeof (dsl_key_mapping_t));
+	if (should_free) {
+		spa_keystore_dsl_key_rele(spa, found_km->km_key, found_km);
+		kmem_free(found_km, sizeof (dsl_key_mapping_t));
+	}
 
 	return (0);
 
@@ -1335,6 +1367,8 @@ spa_do_crypt_data(boolean_t encrypt, spa_t *spa, zbookmark_phys_t *zb,
 	uint8_t iv[DATA_IV_LEN];
 
 	ASSERT(!BP_IS_EMBEDDED(bp));
+	if (ot == DMU_OT_INTENT_LOG)
+		LOG_DEBUG("intent log: %d", encrypt);
 
 	/* look up the key from the spa's keystore */
 	ret = spa_keystore_lookup_key(spa, zb->zb_objset, &dck);

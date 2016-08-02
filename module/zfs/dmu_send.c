@@ -3153,13 +3153,14 @@ dmu_recv_end_sync(void *arg, dmu_tx_t *tx)
 
 	/*
 	 * Release the hold from dmu_recv_begin.  This must be done before
-	 * we return to open context, so that when we free the dataset's dnode,
+	 * we return to open context, so that when we free the dataset's dnode
 	 * we can evict its bonus buffer. Since the dataset may be destroyed
 	 * at this point (and therefore won't have a valid pointer to the spa)
-	 * we release the key mapping manually here
+	 * we release the key mapping manually here while we do have a valid
+	 * pointer.
 	 */
 	(void) spa_keystore_remove_mapping(dmu_tx_pool(tx)->dp_spa,
-	    drc->drc_ds);
+	    drc->drc_ds, drc->drc_ds);
 	dsl_dataset_disown(drc->drc_ds, dmu_recv_tag);
 	drc->drc_ds = NULL;
 }

@@ -720,8 +720,8 @@ dsl_dataset_disown(dsl_dataset_t *ds, void *tag)
 
 	mutex_enter(&ds->ds_lock);
 	if (ds->ds_dir && ds->ds_dir->dd_crypto_obj) {
-		(void) spa_keystore_remove_mapping(
-			ds->ds_dir->dd_pool->dp_spa, ds);
+		(void) spa_keystore_remove_mapping(ds->ds_dir->dd_pool->dp_spa,
+		    ds, ds);
 	}
 	ds->ds_owner = NULL;
 	mutex_exit(&ds->ds_lock);
@@ -740,7 +740,7 @@ dsl_dataset_tryown(dsl_dataset_t *ds, void *tag, boolean_t key_required)
 	mutex_enter(&ds->ds_lock);
 	if (ds->ds_owner == NULL && !DS_IS_INCONSISTENT(ds)) {
 		if (dckobj != 0 && key_required) {
-			ret = spa_keystore_create_mapping(spa, ds);
+			ret = spa_keystore_create_mapping(spa, ds, ds);
 			if (ret) {
 				LOG_DEBUG("tryown error = %d", ret);
 				mutex_exit(&ds->ds_lock);

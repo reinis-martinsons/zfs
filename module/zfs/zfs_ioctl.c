@@ -3145,23 +3145,6 @@ zfs_fill_zplprops_root(uint64_t spa_vers, nvlist_t *createprops,
 	return (error);
 }
 
-static void
-zfs_destroy_temp_key_mapping(const char *dsname) {
-	int error;
-	objset_t *os;
-
-	error = dmu_objset_hold(dsname, FTAG, &os);
-	if (error != 0)
-		return;
-
-	if (os->os_encrypted)
-		(void) spa_keystore_remove_mapping(os->os_spa,
-		    os->os_dsl_dataset);
-
-	dmu_objset_rele(os, FTAG);
-}
-
-
 /*
  * innvl: {
  *     "type" -> dmu_objset_type_t (int32)
@@ -3265,10 +3248,6 @@ zfs_ioc_create(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 
 	nvlist_free(zct.zct_zplprops);
 	dsl_crypto_params_free(dcp, !!error);
-
-	/* See comment in zfs_create_fs() for details */
-	if (type == DMU_OST_ZFS && error == 0)
-		zfs_destroy_temp_key_mapping(fsname);
 
 	/*
 	 * It would be nice to do this atomically.

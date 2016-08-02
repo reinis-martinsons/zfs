@@ -101,6 +101,9 @@ typedef struct dsl_key_mapping {
 	/* avl node for linking into the keystore */
 	avl_node_t km_avl_link;
 
+	/* refcount of how many users are depending on this mapping */
+	refcount_t km_refcnt;
+
 	/* dataset this crypto key belongs to (index) */
 	uint64_t km_dsobj;
 
@@ -151,8 +154,8 @@ int spa_keystore_load_wkey_impl(spa_t *spa, dsl_wrapping_key_t *wkey);
 int spa_keystore_load_wkey(const char *dsname, dsl_crypto_params_t *dcp);
 int spa_keystore_unload_wkey_impl(spa_t *spa, uint64_t ddobj);
 int spa_keystore_unload_wkey(const char *dsname);
-int spa_keystore_create_mapping(spa_t *spa, struct dsl_dataset *ds);
-int spa_keystore_remove_mapping(spa_t *spa, struct dsl_dataset *ds);
+int spa_keystore_create_mapping(spa_t *spa, struct dsl_dataset *ds, void *tag);
+int spa_keystore_remove_mapping(spa_t *spa, struct dsl_dataset *ds, void *tag);
 int spa_keystore_lookup_key(spa_t *spa, uint64_t dsobj,
     dsl_crypto_key_t **dck_out);
 

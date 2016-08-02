@@ -706,8 +706,7 @@ dsl_dir_destroy_sync(uint64_t ddobj, dmu_tx_t *tx)
 
 	if (dd->dd_crypto_obj != 0) {
 		dsl_crypto_key_destroy_sync(dd->dd_crypto_obj, tx);
-		(void) spa_keystore_unload_wkey_impl(dp->dp_spa,
-			dd->dd_object);
+		(void) spa_keystore_unload_wkey_impl(dp->dp_spa, dd->dd_object);
 	}
 
 	VERIFY0(zap_destroy(mos, dsl_dir_phys(dd)->dd_child_dir_zapobj, tx));
