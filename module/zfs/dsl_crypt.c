@@ -898,7 +898,6 @@ spa_keystore_lookup_key(spa_t *spa, uint64_t dsobj, dsl_crypto_key_t **dck_out)
 
 	/* init the search key mapping */
 	search_km.km_dsobj = dsobj;
-	LOG_DEBUG("lookup mapping %llu", dsobj);
 
 	rw_enter(&spa->spa_keystore.sk_km_lock, RW_READER);
 

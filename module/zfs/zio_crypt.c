@@ -687,7 +687,6 @@ zio_crypt_generate_iv_normal(blkptr_t *bp, dmu_object_type_t ot, uint64_t salt,
 	crypto_context_t ctx;
 	crypto_data_t in_data, digest_data;
 	uint8_t digestbuf[SHA_256_DIGEST_LEN];
-	char blkbuf[BP_SPRINTF_LEN];
 
 	/* initialize sha 256 mechanism and crypto data */
 	mech.cm_type = crypto_mech2id(SUN_CKM_SHA256);
@@ -764,11 +763,6 @@ zio_crypt_generate_iv_normal(blkptr_t *bp, dmu_object_type_t ot, uint64_t salt,
 
 	/* truncate and copy the digest into the output buffer */
 	bcopy(digestbuf, ivbuf, DATA_IV_LEN);
-
-	LOG_DEBUG("ZB_OBJECT = %llu", zb->zb_object);
-	snprintf_blkptr(blkbuf, sizeof (blkbuf), bp);
-	LOG_DEBUG("BP = %s", blkbuf);
-	hexdump("IV", ivbuf, DATA_IV_LEN, 0);
 
 	return (0);
 
@@ -1211,12 +1205,6 @@ zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key, uint64_t salt,
 	/* perform the encryption / decryption */
 	ret = zio_do_crypt_uio(encrypt, key->zk_crypt, ckey, tmpl, iv, enc_len,
 	    &puio, &cuio);
-
-//	LOG_DEBUG("+++++++++++++++++++++++++++++++++++++");
-//	LOG_DEBUG("ENCRYPT = %d", encrypt);
-//	hexdump("PLAIN", plainbuf, 16, 1);
-//	hexdump("CIPHER", cipherbuf, 16, 0);
-//	hexdump("MAC", mac, DATA_MAC_LEN, 0);
 
 	if (ret)
 		goto error;
