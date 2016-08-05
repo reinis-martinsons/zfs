@@ -3221,7 +3221,6 @@ zio_checksum_verify(zio_t *zio)
 	}
 
 	if ((error = zio_checksum_error(zio, &info)) != 0) {
-		LOG_BOOKMARK("CKSUM ERROR", &zio->io_bookmark);
 		zio->io_error = error;
 		if (error == ECKSUM &&
 		    !(zio->io_flags & ZIO_FLAG_SPECULATIVE)) {
