@@ -3116,8 +3116,13 @@ zio_encrypt(zio_t *zio)
 	uint8_t mac[DATA_MAC_LEN];
 	uint64_t salt;
 
-	if (!zio->io_prop.zp_encrypt ||
-	    !spa_feature_is_enabled(spa, SPA_FEATURE_ENCRYPTION)) {
+	if (!spa_feature_is_enabled(spa, SPA_FEATURE_ENCRYPTION)) {
+		BP_SET_ENCRYPTED(bp, B_FALSE);
+		return (ZIO_PIPELINE_CONTINUE);
+	}
+
+	if (!(zio->io_prop.zp_encrypt ||
+	    (ot == DMU_OT_INTENT_LOG && BP_IS_ENCRYPTED(bp)))) {
 		BP_SET_ENCRYPTED(bp, B_FALSE);
 		return (ZIO_PIPELINE_CONTINUE);
 	}
@@ -3138,7 +3143,7 @@ zio_encrypt(zio_t *zio)
 	 * We can safely determine the IV using the bookmark because snapshots
 	 * can not have ZIL blocks.
 	 */
-	if (BP_GET_TYPE(bp) == DMU_OT_INTENT_LOG) {
+	if (ot == DMU_OT_INTENT_LOG) {
 		zil_chain_t *zc = enc_buf;
 		bcopy(mac, zc->zc_mac, ZIL_MAC_LEN);
 	} else {

@@ -688,6 +688,14 @@ zio_crypt_generate_iv_normal(blkptr_t *bp, dmu_object_type_t ot, uint64_t salt,
 	crypto_data_t in_data, digest_data;
 	uint8_t digestbuf[SHA_256_DIGEST_LEN];
 
+	if (ot == DMU_OT_INTENT_LOG) {
+		LOG_DEBUG("INTENT LOG BOOKMARK:");
+		LOG_DEBUG("objset = %llu", zb->zb_objset);
+		LOG_DEBUG("object = %llu", zb->zb_object);
+		LOG_DEBUG("level = %llu", zb->zb_level);
+		LOG_DEBUG("blkid = %llu", zb->zb_blkid);
+	}
+
 	/* initialize sha 256 mechanism and crypto data */
 	mech.cm_type = crypto_mech2id(SUN_CKM_SHA256);
 	mech.cm_param = NULL;
@@ -727,7 +735,7 @@ zio_crypt_generate_iv_normal(blkptr_t *bp, dmu_object_type_t ot, uint64_t salt,
 	 * have a real value on replay. In this case, we replace the txgid with
 	 * a hash of the zb, which should be unique due to the sequence id.
 	 */
-	if (ot == DMU_OT_INTENT_LOG) {
+	if (ot != DMU_OT_INTENT_LOG) {
 		in_data.cd_length = sizeof (uint64_t);
 		in_data.cd_raw.iov_base = (char *)&txgid;
 		in_data.cd_raw.iov_len = sizeof (uint64_t);

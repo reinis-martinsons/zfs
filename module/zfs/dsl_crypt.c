@@ -1380,9 +1380,10 @@ spa_do_crypt_data(boolean_t encrypt, spa_t *spa, zbookmark_phys_t *zb,
 	/*
 	 * If we are encrypting, this function generates a salt for us and we
 	 * return it to the caller so they can store it for decrypting. If we
-	 * are decrypting we use the salt that was provided.
+	 * are decrypting we use the salt that was provided. Intent log blocks
+	 * are preallocated and therefore do not have a salt.
 	 */
-	if (encrypt) {
+	if (encrypt && ot != DMU_OT_INTENT_LOG) {
 		ret = zio_crypt_key_get_salt(&dck->dck_key, salt);
 		if (ret)
 			goto error;
