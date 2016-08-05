@@ -3114,12 +3114,7 @@ zio_encrypt(zio_t *zio)
 	dmu_object_type_t ot = BP_GET_TYPE(bp);
 	void *enc_buf = NULL;
 	uint8_t mac[DATA_MAC_LEN];
-	uint64_t salt;
-
-	if (!spa_feature_is_enabled(spa, SPA_FEATURE_ENCRYPTION)) {
-		BP_SET_ENCRYPTED(bp, B_FALSE);
-		return (ZIO_PIPELINE_CONTINUE);
-	}
+	uint64_t salt = 0;
 
 	if (!(zio->io_prop.zp_encrypt ||
 	    (ot == DMU_OT_INTENT_LOG && BP_IS_ENCRYPTED(bp)))) {
@@ -3127,6 +3122,7 @@ zio_encrypt(zio_t *zio)
 		return (ZIO_PIPELINE_CONTINUE);
 	}
 
+	ASSERT(spa_feature_is_active(spa, SPA_FEATURE_ENCRYPTION));
 	ASSERT(BP_GET_LEVEL(bp) == 0 || ot == DMU_OT_INTENT_LOG);
 
 	enc_buf = zio_buf_alloc(psize);
@@ -3134,32 +3130,26 @@ zio_encrypt(zio_t *zio)
 	VERIFY0(spa_encrypt_data(spa, &zio->io_bookmark, &salt, zio->io_txg, ot,
 	    bp, psize, zio->io_data, enc_buf, mac));
 
-	zio_push_transform(zio, enc_buf, psize, psize, NULL);
-
 	/*
-	 * ZIL blocks are preallocated and so cannot store their MAC / IV in the
-	 * blkptr_t because it is already on disk. Instead, the MAC is stored
-	 * in the zil_chain_t and the IV is determined from the bookmark + bp.
-	 * We can safely determine the IV using the bookmark because snapshots
-	 * can not have ZIL blocks.
+	 * For normal blocks, the salt can be stored in blk_fill because all
+	 * encrypted blocks are level 0 data blocks, and therefore by definition
+	 * can be assumed to have a blk_fill value of 1, with 1 notable
+	 * exceptions. Dnode blocks use blk_fill differently, but we do not
+	 * encrypt dnode blocks. ZIL blocks are preallocated and so cannot store
+	 * their MAC / IV in the blkptr_t because it is already on disk. Instead
+	 * we store the MAC in the zil_chain_t and determine the IV from the
+	 * bp + bookmark.
 	 */
 	if (ot == DMU_OT_INTENT_LOG) {
 		zil_chain_t *zc = enc_buf;
 		bcopy(mac, zc->zc_mac, ZIL_MAC_LEN);
 	} else {
+		bp->blk_fill = salt;
 		ZIO_SET_MAC(bp, mac);
+		BP_SET_ENCRYPTED(bp, B_TRUE);
 	}
 
-	/*
-	 * The salt can be stored in blk_fill because all encrypted blocks are
-	 * level 0 data blocks, and therefore by definition can be assumed to
-	 * have a blk_fill value of 1, with 2 notable exceptions. ZIL blocks are
-	 * technically at level -2, but they do not utilize blk_fill so it
-	 * is still safe to store the salt there. Dnode blocks use blk_fill
-	 * differently, but we do not encrypt dnode blocks.
-	 */
-	bp->blk_fill = salt;
-	BP_SET_ENCRYPTED(bp, B_TRUE);
+	zio_push_transform(zio, enc_buf, psize, psize, NULL);
 
 	return (ZIO_PIPELINE_CONTINUE);
 }
@@ -3177,7 +3167,9 @@ zio_checksum_generate(zio_t *zio)
 	enum zio_checksum checksum;
 
 	/* See comment in zio_impl.h */
-	if(zp->zp_encrypt && zio->io_stage == ZIO_STAGE_CHECKSUM_GENERATE) {
+	if(bp && zio->io_stage == ZIO_STAGE_CHECKSUM_GENERATE &&
+	    (zp->zp_encrypt ||
+	    (BP_GET_TYPE(bp) == DMU_OT_INTENT_LOG && BP_IS_ENCRYPTED(bp)))) {
 		zio->io_pipeline &= ~ZIO_STAGE_CHECKSUM_GENERATE;
 		zio->io_pipeline |= ZIO_STAGE_CHECKSUM_GENERATE_2;
 		return (ZIO_PIPELINE_CONTINUE);
@@ -3229,6 +3221,7 @@ zio_checksum_verify(zio_t *zio)
 	}
 
 	if ((error = zio_checksum_error(zio, &info)) != 0) {
+		LOG_BOOKMARK("CKSUM ERROR", &zio->io_bookmark);
 		zio->io_error = error;
 		if (error == ECKSUM &&
 		    !(zio->io_flags & ZIO_FLAG_SPECULATIVE)) {

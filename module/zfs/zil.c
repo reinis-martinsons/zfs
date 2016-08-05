@@ -418,9 +418,6 @@ zil_parse(zilog_t *zilog, zil_parse_blk_func_t *parse_blk_func,
 
 		error = zil_read_log_block(zilog, decrypt, &blk, &next_blk,
 		    lrbuf, &end);
-
-		LOG_DEBUG("here 1: %d", error);
-
 		if (error != 0)
 			break;
 
@@ -430,11 +427,7 @@ zil_parse(zilog_t *zilog, zil_parse_blk_func_t *parse_blk_func,
 			ASSERT3U(reclen, >=, sizeof (lr_t));
 			if (lr->lrc_seq > claim_lr_seq)
 				goto done;
-
-			error = parse_lr_func(zilog, lr, arg, txg);
-			LOG_DEBUG("here 2: %d", error);
-
-			if (error != 0)
+			if ((error = parse_lr_func(zilog, lr, arg, txg)) != 0)
 				goto done;
 			ASSERT3U(max_lr_seq, <, lr->lrc_seq);
 			max_lr_seq = lr->lrc_seq;

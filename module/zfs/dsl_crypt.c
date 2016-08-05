@@ -1367,8 +1367,6 @@ spa_do_crypt_data(boolean_t encrypt, spa_t *spa, zbookmark_phys_t *zb,
 	uint8_t iv[DATA_IV_LEN];
 
 	ASSERT(!BP_IS_EMBEDDED(bp));
-	if (ot == DMU_OT_INTENT_LOG)
-		LOG_DEBUG("intent log: %d", encrypt);
 
 	/* look up the key from the spa's keystore */
 	ret = spa_keystore_lookup_key(spa, zb->zb_objset, &dck);
