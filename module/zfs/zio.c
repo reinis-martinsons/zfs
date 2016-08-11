@@ -814,7 +814,8 @@ zio_rewrite(zio_t *pio, spa_t *spa, uint64_t txg, blkptr_t *bp, void *data,
 }
 
 void
-zio_write_override(zio_t *zio, blkptr_t *bp, int copies, boolean_t nopwrite)
+zio_write_override(zio_t *zio, blkptr_t *bp, int copies, boolean_t nopwrite,
+    boolean_t encrypt)
 {
 	ASSERT(zio->io_type == ZIO_TYPE_WRITE);
 	ASSERT(zio->io_child_type == ZIO_CHILD_LOGICAL);
@@ -829,6 +830,7 @@ zio_write_override(zio_t *zio, blkptr_t *bp, int copies, boolean_t nopwrite)
 	zio->io_prop.zp_dedup = nopwrite ? B_FALSE : zio->io_prop.zp_dedup;
 	zio->io_prop.zp_nopwrite = nopwrite;
 	zio->io_prop.zp_copies = copies;
+	zio->io_prop.zp_encrypt = encrypt;
 	zio->io_bp_override = bp;
 }
 

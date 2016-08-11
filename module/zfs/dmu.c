@@ -1407,6 +1407,7 @@ dmu_sync_done(zio_t *zio, arc_buf_t *buf, void *varg)
 		dr->dt.dl.dr_overridden_by = *zio->io_bp;
 		dr->dt.dl.dr_override_state = DR_OVERRIDDEN;
 		dr->dt.dl.dr_copies = zio->io_prop.zp_copies;
+		dr->dt.dl.dr_encrypt = zio->io_prop.zp_encrypt;
 
 		/*
 		 * Old style holes are filled with all zeros, whereas
@@ -1805,12 +1806,16 @@ dmu_write_policy(objset_t *os, dnode_t *dn, int level, int wp, zio_prop_t *zp)
 
 	/*
 	 * Encrypted objects override the checksum type with sha256-mac (which
-	 * is dedupable).
+	 * is dedupable). Encrypted, dedup'd ojects cannot use all available
+	 * copies since we use the last one to store the IV.
 	 */
 	if (os->os_encrypted && DMU_OT_IS_ENCRYPTED(type) &&
 	    !(wp & WP_NOFILL) && level <= 0) {
 		encrypt = B_TRUE;
 		checksum = ZIO_CHECKSUM_SHA256_MAC;
+
+		if (dedup && copies == SPA_DVAS_PER_BP)
+			copies--;
 	}
 
 	zp->zp_checksum = checksum;
