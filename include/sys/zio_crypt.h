@@ -54,6 +54,7 @@ struct zbookmark_phys;
 /* macros defining encryption lengths */
 #define	MAX_MASTER_KEY_LEN 32
 #define	DATA_IV_LEN 12
+#define	DATA_SALT_LEN 8
 #define	DATA_MAC_LEN 16
 
 #define	WRAPPING_KEY_LEN 32
@@ -197,6 +198,8 @@ int zio_crypt_key_unwrap(crypto_key_t *cwkey, uint64_t crypt, uint8_t *keydata,
     uint8_t *hmac_keydata, uint8_t *iv, uint8_t *mac, zio_crypt_key_t *key);
 int zio_crypt_generate_iv_normal(blkptr_t *bp, dmu_object_type_t ot,
     uint64_t salt, uint64_t txgid, zbookmark_phys_t *zb, uint8_t *ivbuf);
+int zio_crypt_generate_iv_salt_dedup(zio_crypt_key_t *key, uint8_t *data,
+    uint_t datalen, uint8_t *ivbuf, uint64_t *salt);
 int zio_crypt_generate_iv_l2arc(uint64_t spa, dva_t *dva, uint64_t birth,
     uint64_t daddr, uint8_t *ivbuf);
 int zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key, uint64_t salt,
