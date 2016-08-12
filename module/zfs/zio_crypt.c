@@ -667,17 +667,6 @@ error:
 	return (ret);
 }
 
-void
-hexdump(char *str, uint8_t *buf, uint_t len, boolean_t interpret)
-{
-	int i;
-
-	LOG_DEBUG("%s: ", str);
-	for (i = 0; i < len; i++) {
-		LOG_DEBUG("%02x\t\t%c", buf[i] & 0xff, (interpret)? (char)(buf[i] & 0xff) : ' ');
-	}
-}
-
 int
 zio_crypt_generate_iv_normal(blkptr_t *bp, dmu_object_type_t ot, uint64_t salt,
     uint64_t txgid, zbookmark_phys_t *zb, uint8_t *ivbuf)
@@ -776,7 +765,6 @@ zio_crypt_generate_iv_salt_dedup(zio_crypt_key_t *key, uint8_t *data,
 {
 	int ret;
 	crypto_mechanism_t mech;
-	crypto_context_t ctx;
 	crypto_data_t in_data, digest_data;
 	uint8_t digestbuf[SHA_256_DIGEST_LEN];
 

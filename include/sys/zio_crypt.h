@@ -29,10 +29,11 @@
 #ifdef _KERNEL
 #define	LOG_DEBUG(fmt, args...) printk(KERN_DEBUG  fmt "\n", ## args)
 #define	LOG_BOOKMARK(s, zb) \
-    LOG_DEBUG(s ": objset = %llu, object = %llu, level = %lld, blkid = %llu", \
-    (zb)->zb_objset, (zb)->zb_object, (zb)->zb_level, (zb)->zb_blkid)
+	LOG_DEBUG(s ": objset = %llu, object = %llu, level = %lld, \
+	blkid = %llu", (zb)->zb_objset, (zb)->zb_object, (zb)->zb_level, \
+	(zb)->zb_blkid)
 #define	LOG_CHECKSUM(s, c) LOG_DEBUG(s ": %llx:%llx:%llx:%llx", \
-    (c)->zc_word[0], (c)->zc_word[1], (c)->zc_word[2], (c)->zc_word[3]);
+	(c)->zc_word[0], (c)->zc_word[1], (c)->zc_word[2], (c)->zc_word[3]);
 #define	DUMP_STACK() dump_stack()
 #else
 #define	LOG_DEBUG(fmt, args...)
@@ -199,7 +200,7 @@ int zio_crypt_key_unwrap(crypto_key_t *cwkey, uint64_t crypt, uint8_t *keydata,
 int zio_crypt_generate_iv_normal(blkptr_t *bp, dmu_object_type_t ot,
     uint64_t salt, uint64_t txgid, zbookmark_phys_t *zb, uint8_t *ivbuf);
 int zio_crypt_generate_iv_salt_dedup(zio_crypt_key_t *key, uint8_t *data,
-    uint_t datalen, uint8_t *ivbuf, uint64_t *salt);
+    uint_t datalen, uint8_t *ivbuf, uint8_t *salt);
 int zio_crypt_generate_iv_l2arc(uint64_t spa, dva_t *dva, uint64_t birth,
     uint64_t daddr, uint8_t *ivbuf);
 int zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key, uint64_t salt,

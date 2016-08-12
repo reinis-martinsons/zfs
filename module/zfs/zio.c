@@ -1339,7 +1339,10 @@ zio_write_bp_init(zio_t *zio)
 			zio->io_pipeline |= ZIO_STAGE_NOP_WRITE;
 		}
 		if (zp->zp_encrypt) {
-			zio->io_pipeline |= ZIO_STAGE_ENCRYPT;
+			if (zp->zp_dedup)
+				zio->io_pipeline |= ZIO_STAGE_DDT_ENCRYPT;
+			else
+				zio->io_pipeline |= ZIO_STAGE_ENCRYPT;
 		}
 	}
 
@@ -3098,14 +3101,22 @@ zio_vdev_io_bypass(zio_t *zio)
 
 /*
  * ==========================================================================
- * Encrypt, decrypt and store encryption parameters
+ * Encrypt and store encryption parameters
  * ==========================================================================
  */
+
+static int
+zio_encrypt_ddt(zio_t *zio)
+{
+	// TODO
+	return (ZIO_PIPELINE_CONTINUE);
+}
 
 /*
  * This stage must occur after allocating DVAs because the encryption IV is
  * derived from the BP_IDENTITY(). By this stage, the bp should have a non-zero
- * psize.
+ * psize (holes should not enter this stage). Dedup blocks should use the
+ * zio_encrypt_ddt() stage instead.
  */
 static int
 zio_encrypt(zio_t *zio)
@@ -3124,6 +3135,7 @@ zio_encrypt(zio_t *zio)
 		return (ZIO_PIPELINE_CONTINUE);
 	}
 
+	ASSERT3U(psize, !=, 0);
 	ASSERT(spa_feature_is_active(spa, SPA_FEATURE_ENCRYPTION));
 	ASSERT(BP_GET_LEVEL(bp) == 0 || ot == DMU_OT_INTENT_LOG);
 
@@ -3168,9 +3180,12 @@ zio_checksum_generate(zio_t *zio)
 	blkptr_t *bp = zio->io_bp;
 	enum zio_checksum checksum;
 
-	/* See comment in zio_impl.h */
-	if(bp && zio->io_stage == ZIO_STAGE_CHECKSUM_GENERATE &&
-	    (zp->zp_encrypt ||
+	/*
+	 * Defer checksumming if we are using non-dedup encryption. See the
+	 * block comment in zio_impl.h for details.
+	 */
+	if (bp && zio->io_stage == ZIO_STAGE_CHECKSUM_GENERATE &&
+	    BP_GET_DEDUP(bp) && (zp->zp_encrypt ||
 	    (BP_GET_TYPE(bp) == DMU_OT_INTENT_LOG && BP_IS_ENCRYPTED(bp)))) {
 		zio->io_pipeline &= ~ZIO_STAGE_CHECKSUM_GENERATE;
 		zio->io_pipeline |= ZIO_STAGE_CHECKSUM_GENERATE_2;
@@ -3637,6 +3652,7 @@ static zio_pipe_stage_t *zio_pipeline[] = {
 	zio_free_bp_init,
 	zio_issue_async,
 	zio_write_bp_init,
+	zio_encrypt_ddt,
 	zio_checksum_generate,
 	zio_nop_write,
 	zio_ddt_read_start,
