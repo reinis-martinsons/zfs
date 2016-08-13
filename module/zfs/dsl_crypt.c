@@ -36,7 +36,7 @@
  * This file's primary purpose is for managing master encryption keys in
  * memory and on disk. For more info on how these keys are used, see the
  * block comment in zio_crypt.c.
- * 
+ *
  * All master keys are stored encrypted on disk in the form of the DSL
  * Crypto Key ZAP object. The binary key data in this object is always
  * randomly generated and is encrypted with the user's secret key. This
@@ -1475,7 +1475,7 @@ spa_do_crypt_data(boolean_t encrypt, spa_t *spa, zbookmark_phys_t *zb,
 			goto error;
 
 		iv = tmp_iv;
-	} else if (encrypt){
+	} else if (encrypt) {
 		ret = zio_crypt_generate_iv_salt_dedup(&dck->dck_key,
 		    plainbuf, datalen, iv, salt);
 	}
@@ -1492,7 +1492,8 @@ error:
 	/* zero out any state we might have changed while encrypting */
 	if (encrypt) {
 		bzero(salt, DATA_SALT_LEN);
-		bzero(mac, (ot == DMU_OT_INTENT_LOG)? ZIL_MAC_LEN : DATA_MAC_LEN);
+		bzero(mac, (ot == DMU_OT_INTENT_LOG) ?
+		    ZIL_MAC_LEN : DATA_MAC_LEN);
 		if (BP_GET_DEDUP(bp))
 			bzero(iv, DATA_IV_LEN);
 	}

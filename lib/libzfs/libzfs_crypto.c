@@ -72,7 +72,8 @@ typedef enum key_locator {
 
 #define	MIN_PASSPHRASE_LEN 8
 #define	MAX_PASSPHRASE_LEN 64
-#define	PBKDF2_ITERATIONS 100000
+#define	DEFAULT_PBKDF2_ITERATIONS 100000
+#define	MIN_PBKDF2_ITERATIONS 10000
 
 static int caught_interrupt;
 
@@ -428,11 +429,12 @@ error:
 
 static int
 pbkdf2(uint8_t *passphrase, size_t passphraselen, uint8_t *salt,
-    size_t saltlen, uint32_t iterations, uint8_t *output,
+    size_t saltlen, uint64_t iterations, uint8_t *output,
     size_t outputlen)
 {
 	int ret;
-	uint32_t blockptr, i, iter;
+	uint64_t iter;
+	uint32_t blockptr, i;
 	uint16_t hmac_key_len;
 	uint8_t *hmac_key;
 	uint8_t block[SHA1_DIGEST_LEN * 2];
@@ -564,9 +566,9 @@ error:
 }
 
 static int
-derive_key(libzfs_handle_t *hdl, key_format_t format,
-	uint8_t *key_material, size_t key_material_len, uint64_t salt,
-	uint8_t **key_out)
+derive_key(libzfs_handle_t *hdl, key_format_t format, uint64_t iters,
+    uint8_t *key_material, size_t key_material_len, uint64_t salt,
+    uint8_t **key_out)
 {
 	int ret;
 	uint8_t *key;
@@ -591,8 +593,8 @@ derive_key(libzfs_handle_t *hdl, key_format_t format,
 		}
 		break;
 	case KEY_FORMAT_PASSPHRASE:
-		ret = pbkdf2(key_material, strlen((char *)key_material),
-		    ((uint8_t *)&salt), sizeof (uint64_t), PBKDF2_ITERATIONS,
+		ret = pbkdf2(key_material, strlen((char *) key_material),
+		    ((uint8_t *) &salt), sizeof (uint64_t), iters,
 		    key, WRAPPING_KEY_LEN);
 		if (ret) {
 			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
@@ -641,7 +643,7 @@ populate_create_encryption_params_nvlists(libzfs_handle_t *hdl, char *keysource,
     const char *fsname, nvlist_t *props, nvlist_t *hidden_args)
 {
 	int ret;
-	uint64_t salt = 0;
+	uint64_t iters, salt = 0;
 	key_format_t keyformat;
 	key_locator_t keylocator;
 	uint8_t *key_material = NULL;
@@ -672,6 +674,22 @@ populate_create_encryption_params_nvlists(libzfs_handle_t *hdl, char *keysource,
 			goto error;
 		}
 		random_fini();
+
+		ret = nvlist_lookup_uint64(props,
+		    zfs_prop_to_name(ZFS_PROP_PBKDF2_ITERS), &iters);
+		if (!ret && iters < MIN_PBKDF2_ITERATIONS) {
+			ret = EINVAL;
+			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+			    "Minimum pbkdf2 iterations is %u"),
+			    MIN_PBKDF2_ITERATIONS);
+			goto error;
+		} else if (ret) {
+			iters = DEFAULT_PBKDF2_ITERATIONS;
+			ret = nvlist_add_uint64(props,
+			    zfs_prop_to_name(ZFS_PROP_PBKDF2_ITERS), iters);
+			if (ret)
+				goto error;
+		}
 	}
 
 	ret = nvlist_add_uint64(props, zfs_prop_to_name(ZFS_PROP_SALT), salt);
@@ -682,8 +700,8 @@ populate_create_encryption_params_nvlists(libzfs_handle_t *hdl, char *keysource,
 	}
 
 	/* derive a key from the key material */
-	ret = derive_key(hdl, keyformat, key_material, key_material_len, salt,
-	    &key_data);
+	ret = derive_key(hdl, keyformat, iters, key_material, key_material_len,
+	    salt, &key_data);
 	if (ret)
 		goto error;
 
@@ -958,7 +976,7 @@ zfs_crypto_load_key(zfs_handle_t *zhp)
 {
 	int ret;
 	char errbuf[1024];
-	uint64_t crypt, keystatus, salt = 0;
+	uint64_t crypt, keystatus, iters = 0, salt = 0;
 	char keysource[MAXNAMELEN];
 	char keysource_src[MAXNAMELEN];
 	key_format_t format;
@@ -1029,12 +1047,14 @@ zfs_crypto_load_key(zfs_handle_t *zhp)
 	if (ret)
 		goto error;
 
-	/* passphrase formats require a salt property */
-	if (format == KEY_FORMAT_PASSPHRASE)
+	/* passphrase formats require a salt and pbkdf2_iters property */
+	if (format == KEY_FORMAT_PASSPHRASE) {
 		salt = zfs_prop_get_int(zhp, ZFS_PROP_SALT);
+		iters = zfs_prop_get_int(zhp, ZFS_PROP_PBKDF2_ITERS);
+	}
 
 	/* derive a key from the key material */
-	ret = derive_key(zhp->zfs_hdl, format, key_material,
+	ret = derive_key(zhp->zfs_hdl, format, iters, key_material,
 	    key_material_len, salt, &key_data);
 	if (ret)
 		goto error;

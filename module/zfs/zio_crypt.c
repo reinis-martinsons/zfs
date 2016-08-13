@@ -33,12 +33,12 @@
 /*
  * This file is responsible for handling all of the details of generating
  * encryption parameters and performing encryption.
- * 
+ *
  * BLOCK ENCRYPTION PARAMETERS:
  * Encryption Algorithm (crypt):
  * The encryption algorithm and mode we are going to use. We
  * currently support AES-GCM and AES-CCM in 128, 192, and 256 bits.
- * 
+ *
  * Plaintext:
  * The unencrypted data that we want to encrypt
  *

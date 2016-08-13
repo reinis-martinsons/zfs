@@ -448,6 +448,8 @@ zfs_prop_init(void)
 	    PROP_READONLY, ZFS_TYPE_DATASET, "<size>", "LUSED");
 	zprop_register_number(ZFS_PROP_LOGICALREFERENCED, "logicalreferenced",
 	    0, PROP_READONLY, ZFS_TYPE_DATASET, "<size>", "LREFER");
+	zprop_register_number(ZFS_PROP_PBKDF2_ITERS, "pbkfd2iters",
+	    0, PROP_READONLY, ZFS_TYPE_DATASET, "<iters>", "PBKDF2ITERS");
 
 	/* default number properties */
 	zprop_register_number(ZFS_PROP_QUOTA, "quota", 0, PROP_DEFAULT,
@@ -503,10 +505,10 @@ zfs_prop_init(void)
 	    PROP_READONLY, ZFS_TYPE_DATASET, "OBJSETID");
 	zprop_register_hidden(ZFS_PROP_INCONSISTENT, "inconsistent",
 	    PROP_TYPE_NUMBER, PROP_READONLY, ZFS_TYPE_DATASET, "INCONSISTENT");
-	zprop_register_hidden(ZFS_PROP_SALT, "salt",
-	    PROP_TYPE_NUMBER, PROP_READONLY, ZFS_TYPE_DATASET, "SALT");
 	zprop_register_hidden(ZFS_PROP_PREV_SNAP, "prevsnap", PROP_TYPE_STRING,
 	    PROP_READONLY, ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME, "PREVSNAP");
+	zprop_register_hidden(ZFS_PROP_SALT, "salt",
+	    PROP_TYPE_NUMBER, PROP_READONLY, ZFS_TYPE_DATASET, "SALT");
 
 	/*
 	 * Property to be removed once libbe is integrated
