@@ -67,6 +67,9 @@ typedef struct dsl_crypto_params {
 	/* the salt, if the keysource is of type passphrase */
 	uint64_t cp_salt;
 
+	/* the pbkdf2 iterations, if the keysource is of type passphrase */
+	uint64_t cp_iters;
+
 	/* keysource property string */
 	const char *cp_keysource;
 

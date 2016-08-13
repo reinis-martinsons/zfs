@@ -150,9 +150,9 @@ dsl_crypto_params_create_nvlist(nvlist_t *props, nvlist_t *crypto_args,
 	dsl_wrapping_key_t *wkey = NULL;
 	boolean_t crypt_exists = B_TRUE, wkeydata_exists = B_TRUE;
 	boolean_t keysource_exists = B_TRUE, salt_exists = B_TRUE;
-	boolean_t cmd_exists = B_TRUE;
+	boolean_t iters_exists = B_TRUE, cmd_exists = B_TRUE;
 	char *keysource = NULL;
-	uint64_t salt = 0, crypt = 0, cmd = ZFS_IOC_CRYPTO_CMD_NONE;
+	uint64_t iters = 0, salt = 0, crypt = 0, cmd = ZFS_IOC_CRYPTO_CMD_NONE;
 	uint8_t *wkeydata;
 	uint_t wkeydata_len;
 
@@ -173,6 +173,11 @@ dsl_crypto_params_create_nvlist(nvlist_t *props, nvlist_t *crypto_args,
 		if (ret)
 			salt_exists = B_FALSE;
 
+		ret = nvlist_lookup_uint64(props,
+		    zfs_prop_to_name(ZFS_PROP_PBKDF2_ITERS), &iters);
+		if (ret)
+			iters_exists = B_FALSE;
+
 		ret = nvlist_lookup_uint64(props, "crypto_cmd", &cmd);
 		if (ret)
 			cmd_exists = B_FALSE;
@@ -180,6 +185,7 @@ dsl_crypto_params_create_nvlist(nvlist_t *props, nvlist_t *crypto_args,
 		crypt_exists = B_FALSE;
 		keysource_exists = B_FALSE;
 		salt_exists = B_FALSE;
+		iters_exists = B_FALSE;
 		cmd_exists = B_FALSE;
 	}
 
@@ -194,7 +200,7 @@ dsl_crypto_params_create_nvlist(nvlist_t *props, nvlist_t *crypto_args,
 
 	/* no parameters are valid; results in inherited crypto settings */
 	if (!crypt_exists && !keysource_exists && !wkeydata_exists &&
-	    !salt_exists && !cmd_exists) {
+	    !salt_exists && !cmd_exists && !iters_exists) {
 		*dcp_out = NULL;
 		return (0);
 	}
@@ -232,6 +238,7 @@ dsl_crypto_params_create_nvlist(nvlist_t *props, nvlist_t *crypto_args,
 	dcp->cp_cmd = cmd;
 	dcp->cp_crypt = crypt;
 	dcp->cp_salt = salt;
+	dcp->cp_iters = iters;
 	dcp->cp_keysource = keysource;
 	dcp->cp_wkey = wkey;
 	*dcp_out = dcp;
@@ -732,7 +739,8 @@ spa_keystore_load_wkey(const char *dsname, dsl_crypto_params_t *dcp)
 
 	if (!dcp || !dcp->cp_wkey)
 		return (SET_ERROR(EINVAL));
-	if (dcp->cp_crypt || dcp->cp_keysource || dcp->cp_salt || dcp->cp_cmd)
+	if (dcp->cp_crypt || dcp->cp_keysource || dcp->cp_salt ||
+	    dcp->cp_cmd || dcp->cp_iters)
 		return (SET_ERROR(EINVAL));
 
 	ret = dsl_pool_hold(dsname, FTAG, &dp);
@@ -1047,12 +1055,15 @@ spa_keystore_rewrap_check(void *arg, dmu_tx_t *tx)
 	dsl_crypto_key_t *dck = NULL;
 	dsl_pool_t *dp = dmu_tx_pool(tx);
 	spa_keystore_rewrap_args_t *skra = arg;
+	dsl_crypto_params_t *dcp = skra->skra_cp;
 
-	if (skra->skra_cp->cp_crypt != ZIO_CRYPT_INHERIT)
+	if (!dcp || !dcp->cp_wkey)
 		return (SET_ERROR(EINVAL));
-	if (!skra->skra_cp || !skra->skra_cp->cp_wkey)
+	if (dcp->cp_crypt != ZIO_CRYPT_INHERIT || dcp->cp_cmd)
 		return (SET_ERROR(EINVAL));
-	if (skra->skra_cp->cp_cmd)
+	if (dcp->cp_keysource &&
+	    strncmp(dcp->cp_keysource, "passphrase", 10) &&
+	    (!skra->skra_cp->cp_salt || !skra->skra_cp->cp_iters))
 		return (SET_ERROR(EINVAL));
 
 	/* hold the dd */
@@ -1184,6 +1195,12 @@ spa_keystore_rewrap_sync(void *arg, dmu_tx_t *tx)
 		dsl_prop_set_sync_impl(ds,
 		    zfs_prop_to_name(ZFS_PROP_KEYSOURCE), ZPROP_SRC_LOCAL,
 		    1, strlen(keysource) + 1, keysource, tx);
+
+	if (skra->skra_cp->cp_iters)
+		dsl_prop_set_sync_impl(ds,
+			zfs_prop_to_name(ZFS_PROP_PBKDF2_ITERS),
+		    ZPROP_SRC_LOCAL, 8, 1, &skra->skra_cp->cp_iters, tx);
+
 	dsl_prop_set_sync_impl(ds, zfs_prop_to_name(ZFS_PROP_SALT),
 	    ZPROP_SRC_LOCAL, 8, 1, &skra->skra_cp->cp_salt, tx);
 
@@ -1209,7 +1226,7 @@ dmu_objset_create_encryption_check(dsl_dir_t *pdd, dsl_crypto_params_t *dcp)
 {
 	int ret;
 	dsl_wrapping_key_t *wkey = NULL;
-	uint64_t cmd = 0, salt = 0;
+	uint64_t cmd = 0, salt = 0, iters = 0;
 	uint64_t pcrypt, crypt = ZIO_CRYPT_INHERIT;
 	const char *keysource = NULL;
 
@@ -1226,6 +1243,7 @@ dmu_objset_create_encryption_check(dsl_dir_t *pdd, dsl_crypto_params_t *dcp)
 		crypt = dcp->cp_crypt;
 		wkey = dcp->cp_wkey;
 		salt = dcp->cp_salt;
+		iters = dcp->cp_iters;
 		keysource = dcp->cp_keysource;
 		cmd = dcp->cp_cmd;
 	}
@@ -1233,13 +1251,15 @@ dmu_objset_create_encryption_check(dsl_dir_t *pdd, dsl_crypto_params_t *dcp)
 	if (crypt == ZIO_CRYPT_OFF && pcrypt != ZIO_CRYPT_OFF)
 		return (SET_ERROR(EINVAL));
 	if (crypt == ZIO_CRYPT_INHERIT && pcrypt == ZIO_CRYPT_OFF &&
-	    (salt || keysource || wkey))
+	    (salt || keysource || wkey || iters))
 		return (SET_ERROR(EINVAL));
-	if (crypt == ZIO_CRYPT_OFF && (salt || keysource || wkey))
+	if (crypt == ZIO_CRYPT_OFF && (salt || keysource || wkey || iters))
 		return (SET_ERROR(EINVAL));
 	if (crypt != ZIO_CRYPT_INHERIT && crypt != ZIO_CRYPT_OFF &&
 	    pcrypt == ZIO_CRYPT_OFF && (!keysource || !wkey))
 		return (SET_ERROR(EINVAL));
+	if (keysource && strncmp(keysource, "passphrase", 10) &&
+	    (!salt || !iters))
 	if (cmd)
 		return (SET_ERROR(EINVAL));
 
@@ -1261,7 +1281,7 @@ dmu_objset_clone_encryption_check(dsl_dir_t *pdd, dsl_dir_t *odd,
 {
 	int ret;
 	dsl_wrapping_key_t *wkey = NULL;
-	uint64_t cmd = 0, salt = 0;
+	uint64_t cmd = 0, salt = 0, iters = 0;
 	uint64_t pcrypt, ocrypt, crypt = ZIO_CRYPT_INHERIT;
 	const char *keysource = NULL;
 
@@ -1283,6 +1303,7 @@ dmu_objset_clone_encryption_check(dsl_dir_t *pdd, dsl_dir_t *odd,
 		crypt = dcp->cp_crypt;
 		wkey = dcp->cp_wkey;
 		salt = dcp->cp_salt;
+		iters = dcp->cp_iters;
 		keysource = dcp->cp_keysource;
 		cmd = dcp->cp_cmd;
 	}
@@ -1293,6 +1314,9 @@ dmu_objset_clone_encryption_check(dsl_dir_t *pdd, dsl_dir_t *odd,
 		return (SET_ERROR(EINVAL));
 	if (pcrypt == ZIO_CRYPT_OFF && ocrypt != ZIO_CRYPT_OFF &&
 	    (!wkey || !keysource))
+		return (SET_ERROR(EINVAL));
+	if (keysource && strncmp(keysource, "passphrase", 10) &&
+	    (!salt || !iters))
 		return (SET_ERROR(EINVAL));
 
 	/* origin wrapping key must be present, if it is encrypted */

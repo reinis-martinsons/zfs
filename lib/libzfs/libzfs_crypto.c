@@ -639,8 +639,9 @@ encryption_feature_is_enabled(zpool_handle_t *zph)
 }
 
 static int
-populate_create_encryption_params_nvlists(libzfs_handle_t *hdl, char *keysource,
-    const char *fsname, nvlist_t *props, nvlist_t *hidden_args)
+populate_create_encryption_params_nvlists(libzfs_handle_t *hdl,
+    char *keysource, boolean_t new_ks, const char *fsname, nvlist_t *props,
+    nvlist_t *hidden_args)
 {
 	int ret;
 	uint64_t iters, salt = 0;
@@ -664,8 +665,9 @@ populate_create_encryption_params_nvlists(libzfs_handle_t *hdl, char *keysource,
 	if (ret)
 		goto error;
 
-	/* passphrase formats require a salt property */
+	/* passphrase formats require a salt and pbkdf2 iters property */
 	if (keyformat == KEY_FORMAT_PASSPHRASE) {
+		/* always generate a new salt */
 		random_init();
 		ret = random_get_bytes((uint8_t *) &salt, sizeof (uint64_t));
 		if (ret) {
@@ -675,28 +677,44 @@ populate_create_encryption_params_nvlists(libzfs_handle_t *hdl, char *keysource,
 		}
 		random_fini();
 
+		ret = nvlist_add_uint64(props, zfs_prop_to_name(ZFS_PROP_SALT),
+		    salt);
+		if (ret) {
+			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+				"Failed to add salt to properties."));
+			goto error;
+		}
+
+		/*
+		 * If we are not changing the keysource we use the number of
+		 * iterations we already have. If the user specifies a number
+		 * validate that it is above the mimimum.
+		 */
 		ret = nvlist_lookup_uint64(props,
 		    zfs_prop_to_name(ZFS_PROP_PBKDF2_ITERS), &iters);
 		if (!ret && iters < MIN_PBKDF2_ITERATIONS) {
 			ret = EINVAL;
 			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			    "Minimum pbkdf2 iterations is %u"),
+			    "Minimum pbkdf2 iterations is %u."),
 			    MIN_PBKDF2_ITERATIONS);
 			goto error;
-		} else if (ret) {
+		} else if (!ret && !new_ks) {
+			ret = EINVAL;
+			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+			    "Setting pbkdf2 iterations requires "
+			    "specifying keysource."));
+			goto error;
+		} else if (ret == ENOENT && new_ks) {
 			iters = DEFAULT_PBKDF2_ITERATIONS;
 			ret = nvlist_add_uint64(props,
 			    zfs_prop_to_name(ZFS_PROP_PBKDF2_ITERS), iters);
 			if (ret)
 				goto error;
+		} else if (ret) {
+			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+			    "Failed to get pbkdf2 iterations."));
+			goto error;
 		}
-	}
-
-	ret = nvlist_add_uint64(props, zfs_prop_to_name(ZFS_PROP_SALT), salt);
-	if (ret) {
-		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-		    "Failed to add salt to properties."));
-		goto error;
 	}
 
 	/* derive a key from the key material */
@@ -834,7 +852,7 @@ zfs_crypto_create(libzfs_handle_t *hdl, char *parent_name, nvlist_t *props,
 		ha = fnvlist_alloc();
 
 		ret = populate_create_encryption_params_nvlists(hdl, keysource,
-		    NULL, props, ha);
+		    B_TRUE, NULL, props, ha);
 		if (ret)
 			goto error;
 	}
@@ -951,7 +969,7 @@ zfs_crypto_clone(libzfs_handle_t *hdl, zfs_handle_t *origin_zhp,
 		ha = fnvlist_alloc();
 
 		ret = populate_create_encryption_params_nvlists(hdl, keysource,
-		    NULL, props, ha);
+		    B_TRUE, NULL, props, ha);
 		if (ret)
 			goto out;
 	}
@@ -1012,8 +1030,7 @@ zfs_crypto_load_key(zfs_handle_t *zhp)
 	    sizeof (keysource_src), B_TRUE);
 	if (ret) {
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-		    "Failed to obtain keysource property."));
-		ret = EIO;
+		    "Failed to get existing keysource property."));
 		goto error;
 	} else if (keysource_srctype == ZPROP_SRC_INHERITED) {
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
@@ -1032,12 +1049,12 @@ zfs_crypto_load_key(zfs_handle_t *zhp)
 		goto error;
 	}
 
-	/* parse the keysource */
+	/* parse the keysource. This shoudln't fail */
 	ret = keysource_prop_parser(keysource, &format, &locator, &uri);
 	if (ret) {
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
 		    "Invalid keysource property."));
-		ret = EIO;
+		ret = EINVAL;
 		goto error;
 	}
 
@@ -1141,8 +1158,7 @@ zfs_crypto_unload_key(zfs_handle_t *zhp)
 	    sizeof (keysource_src), B_TRUE);
 	if (ret) {
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-		    "Failed to obtain keysource property."));
-		ret = EIO;
+		    "Failed to get existing keysource property."));
 		goto error;
 	} else if (keysource_srctype == ZPROP_SRC_INHERITED) {
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
@@ -1193,6 +1209,7 @@ zfs_crypto_rewrap(zfs_handle_t *zhp, nvlist_t *props)
 	uint64_t crypt;
 	char prop_keysource[MAXNAMELEN];
 	char *keysource;
+	boolean_t keysource_exists = B_TRUE;
 
 	(void) snprintf(errbuf, sizeof (errbuf),
 	    dgettext(TEXT_DOMAIN, "Key rewrap error"));
@@ -1217,27 +1234,27 @@ zfs_crypto_rewrap(zfs_handle_t *zhp, nvlist_t *props)
 	ret = nvlist_lookup_string(props, zfs_prop_to_name(ZFS_PROP_KEYSOURCE),
 	    &keysource);
 	if (ret == ENOENT) {
+		keysource_exists = B_FALSE;
 		ret = zfs_prop_get(zhp, ZFS_PROP_KEYSOURCE, prop_keysource,
 		    sizeof (prop_keysource), NULL, NULL, 0, B_TRUE);
 		if (ret) {
 			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-			    "Failed to obtain keysource property."));
-			ret = EIO;
+			    "Failed to get existing keysource property."));
 			goto error;
 		}
 		keysource = prop_keysource;
 	} else if (ret) {
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
 		    "Failed to find keysource."));
-		ret = EIO;
 		goto error;
 	}
 
 	/* populate an nvlist with the encryption params */
 	crypto_args = fnvlist_alloc();
 
-	ret = populate_create_encryption_params_nvlists(zhp->zfs_hdl, keysource,
-	    zfs_get_name(zhp), props, crypto_args);
+	ret = populate_create_encryption_params_nvlists(zhp->zfs_hdl,
+	    keysource, keysource_exists, zfs_get_name(zhp), props,
+	    crypto_args);
 	if (ret)
 		goto error;
 
