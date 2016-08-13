@@ -59,9 +59,11 @@
  * The DSL Crypto Key Tree:
  * The DSL Crypto Keys are the in-memory representation of decrypted master
  * keys. They are used by the functions in zio_crypt.c to perform encryption
- * and decryption. master keys are shared between datasets within a "clone
- * family" and so they are also refcounted. Once the refcount on these hit
- * zero, however, these are immediately zeroed out and freed.
+ * and decryption. Master keys are shared between datasets within a "clone
+ * family", but they may use different wrapping keys so there is one per
+ * encrypted dataset. Snapshots of a dataset will share the DSL Crypto Key,
+ * so it is also refounted. Once the refcount on these objects hits zero, they
+ * are immediately zeroed out and freed.
  *
  * The Crypto Key Mapping Tree:
  * The zio layer needs to lookup master keys by their dataset object id. Since
