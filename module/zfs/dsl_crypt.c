@@ -32,6 +32,49 @@
 #include <sys/spa_impl.h>
 #include <sys/zvol.h>
 
+/*
+ * This file's primary purpose is for managing master encryption keys in
+ * memory and on disk. For more info on how these keys are used, see the
+ * block comment in zio_crypt.c.
+ * 
+ * All master keys are stored encrypted on disk in the form of the DSL
+ * Crypto Key ZAP object. The binary key data in this object is always
+ * randomly generated and is encrypted with the user's secret key. This
+ * layer of indirection allows the user to change his / her key without
+ * needing to re-encrypt the entire dataset. The ZAP also holds on to the
+ * (non-encrypted) encryption algorithm identifier, IV, and MAC needed to
+ * safely decrypt the master key. For more info on the user's key see the
+ * block comment in libzfs_crypto.c
+ *
+ * In memory encryption keys are managed through the spa_keystore. The
+ * keystore consists of 3 AVL trees, which are as follows:
+ *
+ * The Wrapping Key Tree:
+ * The wrapping key (wkey) tree stores the user's keys that are fed into the
+ * kernel through 'zfs key -K' and related commands. Datasets inherit their
+ * parent's wkey, so they are refcounted. The wrapping keys are only unloadable
+ * when no datasets are using them (the refocunt will be zero), but they will
+ * remain in-memory until they are unloaded or the system is powered off.
+ *
+ * The DSL Crypto Key Tree:
+ * The DSL Crypto Keys are the in-memory representation of decrypted master
+ * keys. They are used by the functions in zio_crypt.c to perform encryption
+ * and decryption. master keys are shared between datasets within a "clone
+ * family" and so they are also refcounted. Once the refcount on these hit
+ * zero, however, these are immediately zeroed out and freed.
+ *
+ * The Crypto Key Mapping Tree:
+ * The zio layer needs to lookup master keys by their dataset object id. Since
+ * the DSL Crypto Keys can belong to multiple datasets, we maintain a tree of
+ * dsl_key_mapping_t's which essentially just map the dataset object id to its
+ * appropriate DSL Crypto Key. The management for creating and destroying these
+ * mappings hooks into the code for owning and disowning datasets. Usually,
+ * there will only be one active dataset owner, but there are times
+ * (particularly during dataset creation and destruction) when this may not be
+ * true or the dataset may not be initialized enough to own. As a result, this
+ * object is also refcounted.
+ */
+
 void
 dsl_wrapping_key_hold(dsl_wrapping_key_t *wkey, void *tag)
 {
@@ -1358,15 +1401,47 @@ dsl_crypto_key_destroy_sync(uint64_t dckobj, dmu_tx_t *tx)
 }
 
 int
-spa_do_crypt_data(boolean_t encrypt, spa_t *spa, zbookmark_phys_t *zb,
-    uint64_t *salt, uint64_t txgid, dmu_object_type_t ot, blkptr_t *bp,
-    uint_t datalen, uint8_t *plainbuf, uint8_t *cipherbuf, uint8_t *mac)
+spa_crypt_get_salt(spa_t *spa, uint64_t dsobj, uint8_t *salt)
 {
 	int ret;
 	dsl_crypto_key_t *dck;
-	uint8_t iv[DATA_IV_LEN];
 
+	/* look up the key from the spa's keystore */
+	ret = spa_keystore_lookup_key(spa, dsobj, &dck);
+	if (ret) {
+		ret = SET_ERROR(EPERM);
+		goto error;
+	}
+
+	ret = zio_crypt_key_get_salt(&dck->dck_key, salt);
+	if (ret)
+		goto error;
+
+	return (0);
+
+error:
+	return (ret);
+}
+
+/*
+ * This function serve as a multiplexer for encryption and decryption of
+ * all blocks (except the L2ARC). For encryption, it will populate the IV,
+ * salt, MAC, and cipherbuf. On decryption it will simply use these fields
+ * to populate the plainbuf.
+ */
+int
+spa_do_crypt_data(boolean_t encrypt, spa_t *spa, zbookmark_phys_t *zb,
+    blkptr_t *bp, uint64_t txgid, uint_t datalen, uint8_t *plainbuf,
+    uint8_t *cipherbuf, uint8_t *iv, uint8_t *mac, uint8_t *salt)
+{
+	int ret;
+	dmu_object_type_t ot = BP_GET_TYPE(bp);
+	dsl_crypto_key_t *dck;
+	uint8_t tmp_iv[DATA_IV_LEN];
+
+	ASSERT(spa_feature_is_active(spa, SPA_FEATURE_ENCRYPTION));
 	ASSERT(!BP_IS_EMBEDDED(bp));
+	ASSERT(BP_IS_ENCRYPTED(bp));
 
 	/* look up the key from the spa's keystore */
 	ret = spa_keystore_lookup_key(spa, zb->zb_objset, &dck);
@@ -1376,28 +1451,37 @@ spa_do_crypt_data(boolean_t encrypt, spa_t *spa, zbookmark_phys_t *zb,
 	}
 
 	/*
-	 * If we are encrypting, this function generates a salt for us and we
-	 * return it to the caller so they can store it for decrypting. If we
-	 * are decrypting we use the salt that was provided. Intent log blocks
-	 * are preallocated and therefore do not have a salt.
+	 * Both encryption and decryption functions need a salt for key
+	 * generation and an IV. When encrypting a non-dedup block, we
+	 * generate a random salt to be stored by the caller. The IV is
+	 * obtained from fields in the bp + the salt, but it is only stored
+	 * in a temporary buffer. On decrypting, we will need to generate the
+	 * IV again, but this time we use the salt we stored earlier. Dedup
+	 * blocks perform a (more expensive) HMAC of the plaintext to obtain
+	 * the salt and the IV, but both are stored in the bp for decrypting.
+	 * ZIL blocks have their salt generated at allocation time in
+	 * zio_alloc_zil().
 	 */
-	if (encrypt && ot != DMU_OT_INTENT_LOG) {
-		ret = zio_crypt_key_get_salt(&dck->dck_key, salt);
+	if (!BP_GET_DEDUP(bp)) {
+		if (encrypt && ot != DMU_OT_INTENT_LOG) {
+			ret = zio_crypt_key_get_salt(&dck->dck_key, salt);
+			if (ret)
+				goto error;
+		}
+
+		ret = zio_crypt_generate_iv(bp, ot, salt, txgid,
+		    zb, tmp_iv);
 		if (ret)
 			goto error;
+
+		iv = tmp_iv;
+	} else if (encrypt){
+		ret = zio_crypt_generate_iv_salt_dedup(&dck->dck_key,
+		    plainbuf, datalen, iv, salt);
 	}
 
-	/* Generate an IV from DVA[0] + birth txg + a 64 bit salt. */
-	ret = zio_crypt_generate_iv_normal(bp, ot, *salt, txgid, zb, iv);
-	if (ret)
-		goto error;
-
-	/*
-	 * Call lower level function to perform encryption. The salt is also
-	 * used to generate the underlying encryption key, so we must pass it
-	 * down here.
-	 */
-	ret = zio_do_crypt_data(encrypt, &dck->dck_key, *salt, ot, iv, mac,
+	/* call lower level function to perform encryption / decryption */
+	ret = zio_do_crypt_data(encrypt, &dck->dck_key, salt, ot, iv, mac,
 	    datalen, plainbuf, cipherbuf);
 	if (ret)
 		goto error;
@@ -1405,5 +1489,13 @@ spa_do_crypt_data(boolean_t encrypt, spa_t *spa, zbookmark_phys_t *zb,
 	return (0);
 
 error:
+	/* zero out any state we might have changed while encrypting */
+	if (encrypt) {
+		bzero(salt, DATA_SALT_LEN);
+		bzero(mac, (ot == DMU_OT_INTENT_LOG)? ZIL_MAC_LEN : DATA_MAC_LEN);
+		if (BP_GET_DEDUP(bp))
+			bzero(iv, DATA_IV_LEN);
+	}
+
 	return (ret);
 }

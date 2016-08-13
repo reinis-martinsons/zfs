@@ -36,6 +36,27 @@
 #include "libzfs_impl.h"
 #include "zfeature_common.h"
 
+/*
+ * User keys are used to decrypt the master encyrption keys of a dataset. This
+ * indirection allows a user to change his / her access key without having to
+ * re-encrypt the entire dataset. User keys can be provided in one of several
+ * ways. Raw keys are simlply given to the kernel as is. Similarly, hex keys
+ * are converted to binary and passed into the kernel. Password based keys are
+ * a bit more complicated. Passwords alone do not provide suitable entropy for
+ * encryption and may be too short or too long to be used. In order to derive
+ * a more appropriate key we use a PBKDF2 function. This function is designed
+ * to take a (relatively) long time to calculate in order to discourage
+ * attackers from guessing from a list of common passwords. PBKDF2 requires
+ * 2 additional parameters. The first is the number of iterations to run, which
+ * will ultimately decide how long it takes to derive the resulting key from
+ * the password. The second parameter is a salt that is randomly generated for
+ * each datasset. The salt is used to "tweak" PBKDF2 such that a group of
+ * attackers cannot reasonably generate a table of commonly known passwords to
+ * their output keys and expect it work for all past and future PBKDF2 users.
+ * We store the salt as a hidden property of the dataset (although it is
+ * technically ok if the salt is known to the attacker).
+ */
+
 typedef enum key_format {
 	KEY_FORMAT_NONE = 0,
 	KEY_FORMAT_RAW,

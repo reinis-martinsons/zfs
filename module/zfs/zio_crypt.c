@@ -30,6 +30,89 @@
 #include <sys/zio.h>
 #include <sys/zil.h>
 
+/*
+ * This file is responsible for handling all of the details of generating
+ * encryption parameters and performing encryption.
+ * 
+ * BLOCK ENCRYPTION PARAMETERS:
+ * Encryption Algorithm (crypt):
+ * The encryption algorithm and mode we are going to use. We
+ * currently support AES-GCM and AES-CCM in 128, 192, and 256 bits.
+ * 
+ * Plaintext:
+ * The unencrypted data that we want to encrypt
+ *
+ * Initialization Vector (IV):
+ * An initialization vector for the encryption algorithms. This is
+ * used to "tweak" the encryption algorithms so that equivalent blocks of
+ * data are encrypted into different ciphertext outputs. Different modes
+ * of encryption have different requirements for the IV. AES-GCM and AES-CCM
+ * require that an IV is never reused with the same encryption key. This
+ * value is stored unencrypted and must simply be provided to the decryption
+ * function. We use a 96 bit IV (as reccommended by NIST). For non-dedup blocks
+ * we derive the IV from a hash of DVA[0] and the birth txg and a randomly
+ * generated salt (described blow). Normally, DVA[0] + birth txg should be
+ * unique to a pool, but ZFS is susceptible to being "rewound" slightly due
+ * to its copy-on-write mechanisms, so we add in the salt for extra security.
+ *
+ * Master key:
+ * This is the most important secret data of an encrypted dataset. It is used
+ * along with the salt to generate that actual encryption keys via HKDF. We
+ * do not use the master key to encrypt any data because there are theoretical
+ * limits on how much data can actually be safely encrypted with any encryption
+ * mode. The master key is stored encrypted on disk with the user's key. It's
+ * length is determined by the encryption algorithm. For details on how this is
+ * stored see the block comment in dsl_crypt.c
+ *
+ * Salt:
+ * Used as an input to the HKDF function, along with the master key. We use a
+ * 64 bit salt, stored unencrypted in blk_fill. Any given salt can be used for
+ * encrypting many blocks, so we cache the current salt and the associated
+ * derived key in zio_crypt_t so we do not need to derive it again needlessly.
+ *
+ * Encryption Key:
+ * A secret binary key, generated from an HKDF function used to encrypt and
+ * decrypt data.
+ *
+ * Message Authenication Code (MAC)
+ * The MAC is an output of authenticated encryption modes suce ahes AES-GCM and
+ * AES-CCM. It's purpose is to ensure that an attacker cannot modify encrypted
+ * data on disk and return garbage to the application. Effectively, it is a
+ * checksum that can not be reproduced by an attacker. We store the MAC in the
+ * first 128 bits of blk_cksum, leaving the second 128 bits for a truncated
+ * regular checksum of the ciphertext which can be used for scrubbing.
+ *
+ *
+ * CONSIDERATIONS FOR DEDUP:
+ * In order for dedup to work, we need to ensure that the ciphertext checksum
+ * and MAC are quivalent for equivalent plaintexts. This requires using the
+ * same IV and encryption key for equivalent blocks of plaindata. Normally,
+ * one should never reuse an IV with the same encryption key or else AES-GCM
+ * and AES-CCM can both actually leak the plaintext of both blocks. In this
+ * case, however, since we are using the same plaindata as well all that we end
+ * up with is a duplicate of the original data we already had. As a result,
+ * an attacker with read access to the raw disk will be able to tell which
+ * blocks are the same but this information is already given away by dedup
+ * anyway. In order to get the same IVs and encryption keys for equivalent
+ * blocks of data we use a HMAC of the plaindata. We use an HMAC here so there
+ * is never a reproducible checksum of the plaintext available to the attacker.
+ * The HMAC key is kept alongside the master key, encrypted on disk. The first
+ * 64 bits are used in place of the salt, and the next 96 bits replace the IV
+ * generated from DVA[0] + birth txg + the salt. At decryption time we will not
+ * be able to perform an HMAC of the plaindata since we won't have it. In this
+ * case we store the IV in DVA[2]. This means that an encrypted, dedup'd block
+ * cannot have more than 2 copies. If this becomes a problem in the future, the
+ * dedup table itself can be leveraged to hold additional copies.
+ *
+ * L2ARC ENCRYPTION:
+ * L2ARC block encryption works very similarly to normal block encryption.
+ * The main difference is that the (poolwide) L2ARC encryption key, and MAC
+ * are kept only in memory and the IV is generated from fields in the L2ARC
+ * buffer header. Only the ciphertext is stored on disk. This means that once
+ * the system is powered off the encryption key is no longer accessible,
+ * leaving the persisted ciphertext completely lost.
+ */
+
 zio_crypt_info_t zio_crypt_table[ZIO_CRYPT_FUNCTIONS] = {
 	{"",			ZC_TYPE_NONE,	0,  "inherit"},
 	{SUN_CKM_AES_CCM,	ZC_TYPE_CCM,	32, "on"},
@@ -304,14 +387,13 @@ zio_crypt_key_init(uint64_t crypt, zio_crypt_key_t *key)
 	if (ret)
 		goto error;
 
-	ret = random_get_bytes((uint8_t *)&key->zk_salt, DATA_SALT_LEN);
+	ret = random_get_bytes(key->zk_salt, DATA_SALT_LEN);
 	if (ret)
 		goto error;
 
 	/* derive the current key from the master key */
 	ret = hkdf_sha256(key->zk_master_keydata, keydata_len, NULL, 0,
-	    (uint8_t *)&key->zk_salt, DATA_SALT_LEN,
-	    key->zk_current_keydata, keydata_len);
+	    key->zk_salt, DATA_SALT_LEN, key->zk_current_keydata, keydata_len);
 	if (ret)
 		goto error;
 
@@ -355,12 +437,12 @@ static int
 zio_crypt_key_change_salt(zio_crypt_key_t *key)
 {
 	int ret;
-	uint64_t salt;
+	uint8_t salt[DATA_SALT_LEN];
 	crypto_mechanism_t mech;
 	uint_t keydata_len = zio_crypt_table[key->zk_crypt].ci_keylen;
 
 	/* generate a new salt */
-	ret = random_get_bytes((uint8_t *)&salt, DATA_SALT_LEN);
+	ret = random_get_bytes(salt, DATA_SALT_LEN);
 	if (ret)
 		goto error;
 
@@ -368,13 +450,12 @@ zio_crypt_key_change_salt(zio_crypt_key_t *key)
 
 	/* derive the current key from the master key and the new salt */
 	ret = hkdf_sha256(key->zk_master_keydata, keydata_len, NULL, 0,
-	    (uint8_t *)&salt, DATA_SALT_LEN, key->zk_current_keydata,
-	    keydata_len);
+	    salt, DATA_SALT_LEN, key->zk_current_keydata, keydata_len);
 	if (ret)
 		goto error_unlock;
 
 	/* assign the salt and reset the usage count */
-	key->zk_salt = salt;
+	bcopy(salt, key->zk_salt, DATA_SALT_LEN);
 	key->zk_salt_count = 0;
 
 	/* destroy the old context template and create the new one */
@@ -396,14 +477,14 @@ error:
 
 /* See comment above ZIO_CRYPT_MAX_SALT_USAGE definition for details */
 int
-zio_crypt_key_get_salt(zio_crypt_key_t *key, uint64_t *salt_out)
+zio_crypt_key_get_salt(zio_crypt_key_t *key, uint8_t *salt)
 {
 	int ret;
 	boolean_t salt_change;
 
 	rw_enter(&key->zk_salt_lock, RW_READER);
 
-	*salt_out = key->zk_salt;
+	bcopy(key->zk_salt, salt, DATA_SALT_LEN);
 	salt_change = (atomic_inc_64_nv(&key->zk_salt_count) ==
 	    ZIO_CRYPT_MAX_SALT_USAGE);
 
@@ -620,14 +701,13 @@ zio_crypt_key_unwrap(crypto_key_t *cwkey, uint64_t crypt, uint8_t *keydata,
 		goto error;
 
 	/* generate a fresh salt */
-	ret = random_get_bytes((uint8_t *)&key->zk_salt, DATA_SALT_LEN);
+	ret = random_get_bytes(key->zk_salt, DATA_SALT_LEN);
 	if (ret)
 		goto error;
 
 	/* derive the current key from the master key */
 	ret = hkdf_sha256(key->zk_master_keydata, keydata_len, NULL, 0,
-	    (uint8_t *)&key->zk_salt, DATA_SALT_LEN,
-	    key->zk_current_keydata, keydata_len);
+	    key->zk_salt, DATA_SALT_LEN, key->zk_current_keydata, keydata_len);
 	if (ret)
 		goto error;
 
@@ -668,7 +748,7 @@ error:
 }
 
 int
-zio_crypt_generate_iv_normal(blkptr_t *bp, dmu_object_type_t ot, uint64_t salt,
+zio_crypt_generate_iv(blkptr_t *bp, dmu_object_type_t ot, uint8_t *salt,
     uint64_t txgid, zbookmark_phys_t *zb, uint8_t *ivbuf)
 {
 	int ret;
@@ -734,7 +814,7 @@ zio_crypt_generate_iv_normal(blkptr_t *bp, dmu_object_type_t ot, uint64_t salt,
 
 	/* add in the salt for added protection against pool rewinds */
 	in_data.cd_length = DATA_SALT_LEN;
-	in_data.cd_raw.iov_base = (char *)&salt;
+	in_data.cd_raw.iov_base = (char *)salt;
 	in_data.cd_raw.iov_len = DATA_SALT_LEN;
 
 	ret = crypto_digest_update(ctx, &in_data, NULL);
@@ -1173,7 +1253,7 @@ error:
 }
 
 int
-zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key, uint64_t salt,
+zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key, uint8_t *salt,
     dmu_object_type_t ot, uint8_t *iv, uint8_t *mac, uint_t datalen,
     uint8_t *plainbuf, uint8_t *cipherbuf)
 {
@@ -1215,7 +1295,7 @@ zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key, uint64_t salt,
 	rw_enter(&key->zk_salt_lock, RW_READER);
 	locked = B_TRUE;
 
-	if (salt == key->zk_salt) {
+	if (bcmp(salt, key->zk_salt, DATA_SALT_LEN) == 0) {
 		ckey = &key->zk_current_key;
 		tmpl = key->zk_current_tmpl;
 	} else {
@@ -1223,8 +1303,7 @@ zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key, uint64_t salt,
 		locked = B_FALSE;
 
 		ret = hkdf_sha256(key->zk_master_keydata, keydata_len, NULL, 0,
-		    (uint8_t *)&salt, DATA_SALT_LEN, enc_keydata,
-		    keydata_len);
+		    salt, DATA_SALT_LEN, enc_keydata, keydata_len);
 		if (ret)
 			goto error;
 

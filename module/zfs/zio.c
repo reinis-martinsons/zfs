@@ -361,6 +361,7 @@ zio_decrypt(zio_t *zio, void *data, uint64_t size)
 	int ret;
 	blkptr_t *bp = zio->io_bp;
 	uint8_t *mac;
+	uint8_t *iv = NULL;
 
 	if (zio->io_error != 0)
 		return;
@@ -371,10 +372,18 @@ zio_decrypt(zio_t *zio, void *data, uint64_t size)
 		mac = ((uint8_t *)&bp->blk_cksum.zc_word[2]);
 	}
 
-	ret = spa_decrypt_data(zio->io_spa, &zio->io_bookmark, &bp->blk_fill,
-	    bp->blk_birth, BP_GET_TYPE(bp), bp, size, data, zio->io_data, mac);
+	/*
+	 * Dedup blocks have their IV stored. Non-dedup blocks have their IV
+	 * generated on from fields in the bp.
+	 */
+	if (BP_GET_DEDUP(bp))
+		iv = (uint8_t *) &bp->blk_dva[SPA_DVAS_PER_BP - 1];
+
+	ret = spa_do_crypt_data(B_FALSE, zio->io_spa, &zio->io_bookmark, bp,
+	    bp->blk_birth, size, data, zio->io_data, iv, mac,
+	    (uint8_t *) &bp->blk_fill);
 	if (ret)
-		zio->io_error = SET_ERROR(EIO);
+		zio->io_error = ret;
 }
 
 /*
@@ -2743,8 +2752,8 @@ zio_dva_unallocate(zio_t *zio, zio_gang_node_t *gn, blkptr_t *bp)
  * Try to allocate an intent log block.  Return 0 on success, errno on failure.
  */
 int
-zio_alloc_zil(spa_t *spa, uint64_t txg, blkptr_t *new_bp, uint64_t size,
-    boolean_t encrypt, boolean_t use_slog)
+zio_alloc_zil(spa_t *spa, objset_t *os, uint64_t txg, blkptr_t *new_bp,
+    uint64_t size, boolean_t use_slog)
 {
 	int error = 1;
 
@@ -2771,7 +2780,7 @@ zio_alloc_zil(spa_t *spa, uint64_t txg, blkptr_t *new_bp, uint64_t size,
 		BP_SET_LSIZE(new_bp, size);
 		BP_SET_PSIZE(new_bp, size);
 		BP_SET_COMPRESS(new_bp, ZIO_COMPRESS_OFF);
-		BP_SET_ENCRYPTED(new_bp, encrypt);
+		BP_SET_ENCRYPTED(new_bp, os->os_encrypted);
 		BP_SET_CHECKSUM(new_bp,
 		    spa_version(spa) >= SPA_VERSION_SLIM_ZIL
 		    ? ZIO_CHECKSUM_ZILOG2 : ZIO_CHECKSUM_ZILOG);
@@ -2779,6 +2788,13 @@ zio_alloc_zil(spa_t *spa, uint64_t txg, blkptr_t *new_bp, uint64_t size,
 		BP_SET_LEVEL(new_bp, 0);
 		BP_SET_DEDUP(new_bp, 0);
 		BP_SET_BYTEORDER(new_bp, ZFS_HOST_BYTEORDER);
+
+		if (os->os_encrypted) {
+			error = spa_crypt_get_salt(spa, dmu_objset_id(os),
+			    (uint8_t *)&new_bp->blk_fill);
+			if (error)
+				return (error);
+		}
 	}
 
 	return (error);
@@ -3105,12 +3121,6 @@ zio_vdev_io_bypass(zio_t *zio)
  * ==========================================================================
  */
 
-static int
-zio_encrypt_ddt(zio_t *zio)
-{
-	// TODO
-	return (ZIO_PIPELINE_CONTINUE);
-}
 
 /*
  * This stage must occur after allocating DVAs because the encryption IV is
@@ -3127,7 +3137,7 @@ zio_encrypt(zio_t *zio)
 	dmu_object_type_t ot = BP_GET_TYPE(bp);
 	void *enc_buf = NULL;
 	uint8_t mac[DATA_MAC_LEN];
-	uint64_t salt = 0;
+	uint8_t salt[DATA_SALT_LEN];
 
 	if (!(zio->io_prop.zp_encrypt ||
 	    (ot == DMU_OT_INTENT_LOG && BP_IS_ENCRYPTED(bp)))) {
@@ -3141,8 +3151,9 @@ zio_encrypt(zio_t *zio)
 
 	enc_buf = zio_buf_alloc(psize);
 
-	VERIFY0(spa_encrypt_data(spa, &zio->io_bookmark, &salt, zio->io_txg, ot,
-	    bp, psize, zio->io_data, enc_buf, mac));
+	/* Perform the encryption. This should not fail */
+	VERIFY0(spa_do_crypt_data(B_TRUE, spa, &zio->io_bookmark, bp,
+	    zio->io_txg, psize, zio->io_data, enc_buf, NULL, mac, salt));
 
 	/*
 	 * For normal blocks, the salt can be stored in blk_fill because all
@@ -3158,7 +3169,7 @@ zio_encrypt(zio_t *zio)
 		zil_chain_t *zc = enc_buf;
 		bcopy(mac, zc->zc_mac, ZIL_MAC_LEN);
 	} else {
-		bp->blk_fill = salt;
+		bcopy(salt, (uint8_t *) &bp->blk_fill, DATA_SALT_LEN);
 		ZIO_SET_MAC(bp, mac);
 		BP_SET_ENCRYPTED(bp, B_TRUE);
 	}
@@ -3652,7 +3663,7 @@ static zio_pipe_stage_t *zio_pipeline[] = {
 	zio_free_bp_init,
 	zio_issue_async,
 	zio_write_bp_init,
-	zio_encrypt_ddt,
+	zio_encrypt,
 	zio_checksum_generate,
 	zio_nop_write,
 	zio_ddt_read_start,

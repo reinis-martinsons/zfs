@@ -170,12 +170,9 @@ uint64_t dsl_crypto_key_clone_sync(dsl_dir_t *orig_dd,
     dsl_wrapping_key_t *wkey, dmu_tx_t *tx);
 void dsl_crypto_key_destroy_sync(uint64_t dckobj, dmu_tx_t *tx);
 
+int spa_crypt_get_salt(spa_t *spa, uint64_t dsobj, uint8_t *salt);
 int spa_do_crypt_data(boolean_t encrypt, spa_t *spa, zbookmark_phys_t *zb,
-    uint64_t *salt, uint64_t txgid, dmu_object_type_t ot, blkptr_t *bp,
-    uint_t datalen, uint8_t *plainbuf, uint8_t *cipherbuf, uint8_t *mac);
-#define	spa_encrypt_data(spa, zb, salt, txgid, ot, bp, len, pb, cb, mac) \
-    spa_do_crypt_data(B_TRUE, spa, zb, salt, txgid, ot, bp, len, pb, cb, mac)
-#define	spa_decrypt_data(spa, zb, salt, txgid, ot, bp, len, pb, cb, mac) \
-    spa_do_crypt_data(B_FALSE, spa, zb, salt, txgid, ot, bp, len, pb, cb, mac)
+    blkptr_t *bp, uint64_t txgid, uint_t datalen, uint8_t *plainbuf,
+    uint8_t *cipherbuf, uint8_t *iv, uint8_t *mac, uint8_t *salt);
 
 #endif
