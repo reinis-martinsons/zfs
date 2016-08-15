@@ -334,7 +334,7 @@ zio_pop_transforms(zio_t *zio)
 
 /*
  * ==========================================================================
- * I/O transform callbacks for subblocks, decompression, and encryption
+ * I/O transform callbacks for subblocks, decompression, and decryption
  * ==========================================================================
  */
 static void
@@ -360,28 +360,27 @@ zio_decrypt(zio_t *zio, void *data, uint64_t size)
 {
 	int ret;
 	blkptr_t *bp = zio->io_bp;
-	uint8_t *mac;
-	uint8_t *iv = NULL;
-
+	uint8_t *mac = NULL, *iv = NULL, *salt = NULL;
+	
+	ASSERT(BP_IS_ENCRYPTED(bp));
+	ASSERT3U(size, !=, 0);
+	
 	if (zio->io_error != 0)
 		return;
+	
+	salt = (uint8_t *) &bp->blk_fill;
 
 	if (BP_GET_TYPE(bp) == DMU_OT_INTENT_LOG) {
 		mac = ((zil_chain_t *) zio->io_data)->zc_mac;
 	} else {
-		mac = ((uint8_t *)&bp->blk_cksum.zc_word[2]);
+		mac = ((uint8_t *) &bp->blk_cksum.zc_word[2]);
+		if (BP_GET_DEDUP(bp))
+			iv = (uint8_t *) &bp->blk_dva[SPA_DVAS_PER_BP - 1];
 	}
 
-	/*
-	 * Dedup blocks have their IV stored. Non-dedup blocks have their IV
-	 * generated on from fields in the bp.
-	 */
-	if (BP_GET_DEDUP(bp))
-		iv = (uint8_t *) &bp->blk_dva[SPA_DVAS_PER_BP - 1];
-
 	ret = spa_do_crypt_data(B_FALSE, zio->io_spa, &zio->io_bookmark, bp,
-	    bp->blk_birth, size, data, zio->io_data, iv, mac,
-	    (uint8_t *) &bp->blk_fill);
+	    bp->blk_birth, size, data, zio->io_data, iv, mac, salt);
+		
 	if (ret)
 		zio->io_error = ret;
 }
@@ -1346,12 +1345,6 @@ zio_write_bp_init(zio_t *zio)
 			ASSERT(zio->io_child_type == ZIO_CHILD_LOGICAL);
 			ASSERT(!(zio->io_flags & ZIO_FLAG_IO_REWRITE));
 			zio->io_pipeline |= ZIO_STAGE_NOP_WRITE;
-		}
-		if (zp->zp_encrypt) {
-			if (zp->zp_dedup)
-				zio->io_pipeline |= ZIO_STAGE_DDT_ENCRYPT;
-			else
-				zio->io_pipeline |= ZIO_STAGE_ENCRYPT;
 		}
 	}
 
@@ -2534,7 +2527,7 @@ zio_ddt_write(zio_t *zio)
 	ddt_phys_t *ddp;
 
 	ASSERT(BP_GET_DEDUP(bp));
-	ASSERT(BP_GET_CHECKSUM(bp) == zp->zp_checksum || zp->zp_encrypt);
+	ASSERT(BP_GET_CHECKSUM(bp) == zp->zp_checksum);
 	ASSERT(BP_IS_HOLE(bp) || zio->io_bp_override);
 
 	ddt_enter(ddt);
@@ -3136,8 +3129,7 @@ zio_encrypt(zio_t *zio)
 	uint64_t psize = BP_GET_PSIZE(bp);
 	dmu_object_type_t ot = BP_GET_TYPE(bp);
 	void *enc_buf = NULL;
-	uint8_t mac[DATA_MAC_LEN];
-	uint8_t salt[DATA_SALT_LEN];
+	uint8_t *iv = NULL, *mac = NULL, *salt = NULL;
 
 	if (!(zio->io_prop.zp_encrypt ||
 	    (ot == DMU_OT_INTENT_LOG && BP_IS_ENCRYPTED(bp)))) {
@@ -3151,28 +3143,24 @@ zio_encrypt(zio_t *zio)
 
 	enc_buf = zio_buf_alloc(psize);
 
+	/*
+	 * For an explanation of what encryption parameters are stored
+	 * where, see the block comment in zio_crypt.c.
+	 */
+	salt = (uint8_t *) &bp->blk_fill;
+
+	if (ot == DMU_OT_INTENT_LOG) {
+		mac = ((zil_chain_t *) enc_buf)->zc_mac;
+	} else {
+		BP_SET_ENCRYPTED(bp, B_TRUE);
+		mac = (uint8_t *) &bp->blk_cksum.zc_word[2];
+		if (BP_GET_DEDUP(bp))
+			iv = (uint8_t *) &bp->blk_dva[SPA_DVAS_PER_BP - 1];
+	}
+
 	/* Perform the encryption. This should not fail */
 	VERIFY0(spa_do_crypt_data(B_TRUE, spa, &zio->io_bookmark, bp,
-	    zio->io_txg, psize, zio->io_data, enc_buf, NULL, mac, salt));
-
-	/*
-	 * For normal blocks, the salt can be stored in blk_fill because all
-	 * encrypted blocks are level 0 data blocks, and therefore by definition
-	 * can be assumed to have a blk_fill value of 1, with 1 notable
-	 * exceptions. Dnode blocks use blk_fill differently, but we do not
-	 * encrypt dnode blocks. ZIL blocks are preallocated and so cannot store
-	 * their MAC / IV in the blkptr_t because it is already on disk. Instead
-	 * we store the MAC in the zil_chain_t and determine the IV from the
-	 * bp + bookmark.
-	 */
-	if (ot == DMU_OT_INTENT_LOG) {
-		zil_chain_t *zc = enc_buf;
-		bcopy(mac, zc->zc_mac, ZIL_MAC_LEN);
-	} else {
-		bcopy(salt, (uint8_t *) &bp->blk_fill, DATA_SALT_LEN);
-		ZIO_SET_MAC(bp, mac);
-		BP_SET_ENCRYPTED(bp, B_TRUE);
-	}
+	    zio->io_txg, psize, zio->io_data, enc_buf, iv, mac, salt));
 
 	zio_push_transform(zio, enc_buf, psize, psize, NULL);
 
@@ -3195,8 +3183,9 @@ zio_checksum_generate(zio_t *zio)
 	 * Defer checksumming if we are using non-dedup encryption. See the
 	 * block comment in zio_impl.h for details.
 	 */
+	 
 	if (bp && zio->io_stage == ZIO_STAGE_CHECKSUM_GENERATE &&
-	    BP_GET_DEDUP(bp) && (zp->zp_encrypt ||
+	    !BP_GET_DEDUP(bp) && (zp->zp_encrypt ||
 	    (BP_GET_TYPE(bp) == DMU_OT_INTENT_LOG && BP_IS_ENCRYPTED(bp)))) {
 		zio->io_pipeline &= ~ZIO_STAGE_CHECKSUM_GENERATE;
 		zio->io_pipeline |= ZIO_STAGE_CHECKSUM_GENERATE_2;

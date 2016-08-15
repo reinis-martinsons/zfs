@@ -1489,6 +1489,7 @@ spa_do_crypt_data(boolean_t encrypt, spa_t *spa, zbookmark_phys_t *zb,
 	 * zio_alloc_zil().
 	 */
 	if (!BP_GET_DEDUP(bp)) {
+		ASSERT(iv == NULL);
 		if (encrypt && ot != DMU_OT_INTENT_LOG) {
 			ret = zio_crypt_key_get_salt(&dck->dck_key, salt);
 			if (ret)
@@ -1504,6 +1505,8 @@ spa_do_crypt_data(boolean_t encrypt, spa_t *spa, zbookmark_phys_t *zb,
 	} else if (encrypt) {
 		ret = zio_crypt_generate_iv_salt_dedup(&dck->dck_key,
 		    plainbuf, datalen, iv, salt);
+		if (ret)
+			goto error;
 	}
 
 	/* call lower level function to perform encryption / decryption */

@@ -640,7 +640,7 @@ encryption_feature_is_enabled(zpool_handle_t *zph)
 
 static int
 populate_create_encryption_params_nvlists(libzfs_handle_t *hdl,
-    char *keysource, boolean_t new_ks, const char *fsname, nvlist_t *props,
+    char *keysource, boolean_t new_ks, zfs_handle_t *zhp, nvlist_t *props,
     nvlist_t *hidden_args)
 {
 	int ret;
@@ -661,7 +661,7 @@ populate_create_encryption_params_nvlists(libzfs_handle_t *hdl,
 
 	/* get key material from keysource */
 	ret = get_key_material(hdl, B_TRUE, keyformat, keylocator, uri,
-	    fsname, &key_material, &key_material_len);
+	    zfs_get_name(zhp), &key_material, &key_material_len);
 	if (ret)
 		goto error;
 
@@ -710,6 +710,8 @@ populate_create_encryption_params_nvlists(libzfs_handle_t *hdl,
 			    zfs_prop_to_name(ZFS_PROP_PBKDF2_ITERS), iters);
 			if (ret)
 				goto error;
+		} else if (ret == ENOENT) {
+			iters = zfs_prop_get_int(zhp, ZFS_PROP_PBKDF2_ITERS);
 		} else if (ret) {
 			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
 			    "Failed to get pbkdf2 iterations."));
@@ -1253,8 +1255,7 @@ zfs_crypto_rewrap(zfs_handle_t *zhp, nvlist_t *props)
 	crypto_args = fnvlist_alloc();
 
 	ret = populate_create_encryption_params_nvlists(zhp->zfs_hdl,
-	    keysource, keysource_exists, zfs_get_name(zhp), props,
-	    crypto_args);
+	    keysource, keysource_exists, zhp, props, crypto_args);
 	if (ret)
 		goto error;
 

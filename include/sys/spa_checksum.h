@@ -69,11 +69,6 @@ typedef struct zio_cksum {
 	(zcp)->zc_word[3] = BSWAP_64((zcp)->zc_word[3]);	\
 }
 
-#define	MAX_DATA_MAC_LEN 16
-
-#define	ZIO_SET_MAC(bp, mac)	\
-	bcopy((mac), &(bp)->blk_cksum.zc_word[2], MAX_DATA_MAC_LEN);
-
 #ifdef	__cplusplus
 }
 #endif

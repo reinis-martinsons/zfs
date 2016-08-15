@@ -83,6 +83,16 @@
  * regular checksum of the ciphertext which can be used for scrubbing.
  *
  *
+ * ZIL ENCRYPTION:
+ * ZIL blocks have their bp written to disk ahead of the associated data, so we
+ * cannot store encyrption paramaters there as we normally do. For these blocks
+ * the MAC is stored in the zil_chain_t header (in zc_mac) in a previously
+ * unused 8 bytes. The salt is generated for the block on bp allocation. The IV
+ * cannot be generated using the birth txg becuase this will be 0 on encryption
+ * but it will have a real txg on decryption. In its place we add a hash of the
+ * bookmark into the IV generation. This bookmark should has a unique sequence
+ * number so it should be suitable for creating a unique IV.
+ *
  * CONSIDERATIONS FOR DEDUP:
  * In order for dedup to work, we need to ensure that the ciphertext checksum
  * and MAC are quivalent for equivalent plaintexts. This requires using the
@@ -1252,6 +1262,18 @@ error:
 	return (ret);
 }
 
+void hexdump(char *str, uint8_t *src, uint_t len, boolean_t interpret) {
+	uint_t i;
+	
+	LOG_DEBUG("%s: ", str);
+	for (i = 0; i < len; i++) {
+		if (interpret)
+			LOG_DEBUG("\t%02X\t%c", src[i] & 0xff, (char)src[i]);
+		else
+			LOG_DEBUG("\t%02X", src[i] & 0xff);
+	}
+}
+
 int
 zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key, uint8_t *salt,
     dmu_object_type_t ot, uint8_t *iv, uint8_t *mac, uint_t datalen,
@@ -1318,7 +1340,6 @@ zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key, uint8_t *salt,
 	/* perform the encryption / decryption */
 	ret = zio_do_crypt_uio(encrypt, key->zk_crypt, ckey, tmpl, iv, enc_len,
 	    &puio, &cuio);
-
 	if (ret)
 		goto error;
 
