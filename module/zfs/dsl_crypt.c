@@ -1258,7 +1258,7 @@ dmu_objset_create_encryption_check(dsl_dir_t *pdd, dsl_crypto_params_t *dcp)
 	if (crypt != ZIO_CRYPT_INHERIT && crypt != ZIO_CRYPT_OFF &&
 	    pcrypt == ZIO_CRYPT_OFF && (!keysource || !wkey))
 		return (SET_ERROR(EINVAL));
-	if (keysource && strncmp(keysource, "passphrase", 10) &&
+	if (keysource && strncmp(keysource, "passphrase", 10) == 0 &&
 	    (!salt || !iters))
 	if (cmd)
 		return (SET_ERROR(EINVAL));
@@ -1315,7 +1315,7 @@ dmu_objset_clone_encryption_check(dsl_dir_t *pdd, dsl_dir_t *odd,
 	if (pcrypt == ZIO_CRYPT_OFF && ocrypt != ZIO_CRYPT_OFF &&
 	    (!wkey || !keysource))
 		return (SET_ERROR(EINVAL));
-	if (keysource && strncmp(keysource, "passphrase", 10) &&
+	if (keysource && strncmp(keysource, "passphrase", 10) == 0 &&
 	    (!salt || !iters))
 		return (SET_ERROR(EINVAL));
 

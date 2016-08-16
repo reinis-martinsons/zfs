@@ -640,7 +640,7 @@ encryption_feature_is_enabled(zpool_handle_t *zph)
 
 static int
 populate_create_encryption_params_nvlists(libzfs_handle_t *hdl,
-    char *keysource, boolean_t new_ks, zfs_handle_t *zhp, nvlist_t *props,
+    zfs_handle_t *zhp, char *keysource, boolean_t new_ks, nvlist_t *props,
     nvlist_t *hidden_args)
 {
 	int ret;
@@ -651,6 +651,8 @@ populate_create_encryption_params_nvlists(libzfs_handle_t *hdl,
 	size_t key_material_len = 0;
 	uint8_t *key_data = NULL;
 	char *uri;
+	const char *fsname = (zhp) ? zfs_get_name(zhp) : NULL;
+
 
 	/* Parse the keysource */
 	ret = keysource_prop_parser(keysource, &keyformat, &keylocator, &uri);
@@ -661,7 +663,7 @@ populate_create_encryption_params_nvlists(libzfs_handle_t *hdl,
 
 	/* get key material from keysource */
 	ret = get_key_material(hdl, B_TRUE, keyformat, keylocator, uri,
-	    zfs_get_name(zhp), &key_material, &key_material_len);
+	    fsname, &key_material, &key_material_len);
 	if (ret)
 		goto error;
 
@@ -853,8 +855,8 @@ zfs_crypto_create(libzfs_handle_t *hdl, char *parent_name, nvlist_t *props,
 	if (keysource) {
 		ha = fnvlist_alloc();
 
-		ret = populate_create_encryption_params_nvlists(hdl, keysource,
-		    B_TRUE, NULL, props, ha);
+		ret = populate_create_encryption_params_nvlists(hdl, NULL,
+		    keysource, B_TRUE, props, ha);
 		if (ret)
 			goto error;
 	}
@@ -970,8 +972,8 @@ zfs_crypto_clone(libzfs_handle_t *hdl, zfs_handle_t *origin_zhp,
 	if (keysource) {
 		ha = fnvlist_alloc();
 
-		ret = populate_create_encryption_params_nvlists(hdl, keysource,
-		    B_TRUE, NULL, props, ha);
+		ret = populate_create_encryption_params_nvlists(hdl, NULL,
+		    keysource, B_TRUE, props, ha);
 		if (ret)
 			goto out;
 	}
@@ -1254,8 +1256,8 @@ zfs_crypto_rewrap(zfs_handle_t *zhp, nvlist_t *props)
 	/* populate an nvlist with the encryption params */
 	crypto_args = fnvlist_alloc();
 
-	ret = populate_create_encryption_params_nvlists(zhp->zfs_hdl,
-	    keysource, keysource_exists, zhp, props, crypto_args);
+	ret = populate_create_encryption_params_nvlists(zhp->zfs_hdl, zhp,
+	    keysource, keysource_exists, props, crypto_args);
 	if (ret)
 		goto error;
 
