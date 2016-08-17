@@ -26,22 +26,6 @@
 #ifndef	_SYS_ZIO_CRYPT_H
 #define	_SYS_ZIO_CRYPT_H
 
-#ifdef _KERNEL
-#define	LOG_DEBUG(fmt, args...) printk(KERN_DEBUG  fmt "\n", ## args)
-#define	LOG_BOOKMARK(s, zb) \
-	LOG_DEBUG(s ": objset = %llu, object = %llu, level = %lld, \
-	blkid = %llu", (zb)->zb_objset, (zb)->zb_object, (zb)->zb_level, \
-	(zb)->zb_blkid)
-#define	LOG_CHECKSUM(s, c) LOG_DEBUG(s ": %llx:%llx:%llx:%llx", \
-	(c)->zc_word[0], (c)->zc_word[1], (c)->zc_word[2], (c)->zc_word[3]);
-#define	DUMP_STACK() dump_stack()
-#else
-#define	LOG_DEBUG(fmt, args...)
-#define	LOG_BOOKMARK(str, zb)
-#define	LOG_CHECKSUM(s, c)
-#define	DUMP_STACK()
-#endif
-
 #include <sys/dmu.h>
 #include <sys/refcount.h>
 #include <sys/crypto/api.h>

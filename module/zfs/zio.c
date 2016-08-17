@@ -361,13 +361,13 @@ zio_decrypt(zio_t *zio, void *data, uint64_t size)
 	int ret;
 	blkptr_t *bp = zio->io_bp;
 	uint8_t *mac = NULL, *iv = NULL, *salt = NULL;
-	
+
 	ASSERT(BP_IS_ENCRYPTED(bp));
 	ASSERT3U(size, !=, 0);
-	
+
 	if (zio->io_error != 0)
 		return;
-	
+
 	salt = (uint8_t *) &bp->blk_fill;
 
 	if (BP_GET_TYPE(bp) == DMU_OT_INTENT_LOG) {
@@ -380,7 +380,7 @@ zio_decrypt(zio_t *zio, void *data, uint64_t size)
 
 	ret = spa_do_crypt_data(B_FALSE, zio->io_spa, &zio->io_bookmark, bp,
 	    bp->blk_birth, size, data, zio->io_data, iv, mac, salt);
-		
+
 	if (ret)
 		zio->io_error = ret;
 }
@@ -3183,7 +3183,7 @@ zio_checksum_generate(zio_t *zio)
 	 * Defer checksumming if we are using non-dedup encryption. See the
 	 * block comment in zio_impl.h for details.
 	 */
-	 
+
 	if (bp && zio->io_stage == ZIO_STAGE_CHECKSUM_GENERATE &&
 	    !BP_GET_DEDUP(bp) && (zp->zp_encrypt ||
 	    (BP_GET_TYPE(bp) == DMU_OT_INTENT_LOG && BP_IS_ENCRYPTED(bp)))) {

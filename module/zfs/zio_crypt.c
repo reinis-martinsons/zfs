@@ -603,7 +603,6 @@ zio_do_crypt_uio(boolean_t encrypt, uint64_t crypt, crypto_key_t *key,
 	}
 
 	if (ret != CRYPTO_SUCCESS) {
-		LOG_DEBUG("zio_do_crypt_uio() error = %d", ret);
 		ret = SET_ERROR(EIO);
 		goto error;
 	}
@@ -1260,18 +1259,6 @@ zio_crypt_init_uios(boolean_t encrypt, dmu_object_type_t ot, uint8_t *plainbuf,
 
 error:
 	return (ret);
-}
-
-void hexdump(char *str, uint8_t *src, uint_t len, boolean_t interpret) {
-	uint_t i;
-	
-	LOG_DEBUG("%s: ", str);
-	for (i = 0; i < len; i++) {
-		if (interpret)
-			LOG_DEBUG("\t%02X\t%c", src[i] & 0xff, (char)src[i]);
-		else
-			LOG_DEBUG("\t%02X", src[i] & 0xff);
-	}
 }
 
 int

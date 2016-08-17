@@ -707,8 +707,6 @@ spa_keystore_load_wkey_impl(spa_t *spa, dsl_wrapping_key_t *wkey)
 	avl_index_t where;
 	dsl_wrapping_key_t *found_wkey;
 
-	LOG_DEBUG("load wrapping key %llu", wkey->wk_ddobj);
-
 	rw_enter(&spa->spa_keystore.sk_wkeys_lock, RW_WRITER);
 
 	/* insert the wrapping key into the keystore */
@@ -771,7 +769,6 @@ spa_keystore_load_wkey(const char *dsname, dsl_crypto_params_t *dcp)
 	dsl_pool_rele(dp, FTAG);
 
 	/* create any zvols under this ds */
-	LOG_DEBUG("zvol_create_minors %s", dsname);
 	zvol_create_minors(dp->dp_spa, dsname, B_TRUE);
 
 	return (0);
@@ -792,8 +789,6 @@ spa_keystore_unload_wkey_impl(spa_t *spa, uint64_t ddobj) {
 	int ret;
 	dsl_wrapping_key_t search_wkey;
 	dsl_wrapping_key_t *found_wkey;
-
-	LOG_DEBUG("unload wrapping key %llu", ddobj);
 
 	/* init the search wrapping key */
 	search_wkey.wk_ddobj = ddobj;
@@ -849,7 +844,6 @@ spa_keystore_unload_wkey(const char *dsname)
 	dsl_pool_rele(dp, FTAG);
 
 	/* remove any zvols under this ds */
-	LOG_DEBUG("zvol_remove_minors %s", dsname);
 	zvol_remove_minors(dp->dp_spa, dsname, B_TRUE);
 
 	return (0);
@@ -883,8 +877,6 @@ spa_keystore_create_mapping(spa_t *spa, dsl_dataset_t *ds, void *tag)
 	    &km->km_key);
 	if (ret)
 		goto error;
-
-	LOG_DEBUG("creating mapping %llu", ds->ds_object);
 
 	km->km_dsobj = ds->ds_object;
 
@@ -937,7 +929,6 @@ spa_keystore_remove_mapping(spa_t *spa, dsl_dataset_t *ds, void *tag)
 
 	/* init the search key mapping */
 	search_km.km_dsobj = ds->ds_object;
-	LOG_DEBUG("removing mapping %llu", ds->ds_object);
 
 	rw_enter(&spa->spa_keystore.sk_km_lock, RW_WRITER);
 
@@ -1354,8 +1345,6 @@ dsl_crypto_key_create_sync(uint64_t crypt, dsl_wrapping_key_t *wkey,
 	dck.dck_obj = zap_create(tx->tx_pool->dp_meta_objset,
 	    DMU_OTN_ZAP_METADATA, DMU_OT_NONE, 0, tx);
 
-	LOG_DEBUG("created crypto key ZAP %llu (%llu)", dck.dck_obj, crypt);
-
 	/* fill in the key (on the stack) and sync it to disk */
 	dck.dck_wkey = wkey;
 	VERIFY0(zio_crypt_key_init(crypt, &dck.dck_key));
@@ -1386,8 +1375,6 @@ dsl_crypto_key_clone_sync(dsl_dir_t *orig_dd, dsl_wrapping_key_t *wkey,
 	/* create the DSL Crypto Key ZAP object */
 	dck.dck_obj = zap_create(dp->dp_meta_objset, DMU_OTN_ZAP_METADATA,
 	    DMU_OT_NONE, 0, tx);
-
-	LOG_DEBUG("created cloned crypto key ZAP %llu", dck.dck_obj);
 
 	/* assign the wrapping key temporarily */
 	dck.dck_wkey = wkey;
