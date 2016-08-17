@@ -1185,7 +1185,7 @@ zfs_crypto_unload_key(zfs_handle_t *zhp)
 
 	if (ret) {
 		switch (ret) {
-		case ENOENT:
+		case EPERM:
 			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
 			    "Key is not currently loaded."));
 			break;
@@ -1270,7 +1270,7 @@ zfs_crypto_rewrap(zfs_handle_t *zhp, nvlist_t *props)
 			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
 			    "Invalid properties for key change."));
 			break;
-		case ENOENT:
+		case EPERM:
 			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
 			    "Key is not currently loaded."));
 			break;

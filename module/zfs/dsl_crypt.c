@@ -1062,7 +1062,7 @@ spa_keystore_rewrap_check(void *arg, dmu_tx_t *tx)
 	if (dcp->cp_crypt != ZIO_CRYPT_INHERIT || dcp->cp_cmd)
 		return (SET_ERROR(EINVAL));
 	if (dcp->cp_keysource &&
-	    strncmp(dcp->cp_keysource, "passphrase", 10) &&
+	    strncmp(dcp->cp_keysource, "passphrase", 10) == 0 &&
 	    (!skra->skra_cp->cp_salt || !skra->skra_cp->cp_iters))
 		return (SET_ERROR(EINVAL));
 
