@@ -119,6 +119,13 @@ enum zio_encrypt {
 #define	ZIO_CRYPT_ON_VALUE	ZIO_CRYPT_AES_256_CCM
 #define	ZIO_CRYPT_DEFAULT	ZIO_CRYPT_OFF
 
+/* macros defining encryption lengths */
+#define	MAX_MASTER_KEY_LEN 32
+#define	DATA_IV_LEN 12
+#define	DATA_SALT_LEN 8
+#define	DATA_MAC_LEN 16
+#define	ZIL_MAC_LEN 8
+
 /*
  * The number of "legacy" compression functions which can be set on individual
  * objects.
@@ -311,6 +318,9 @@ typedef struct zio_prop {
 	boolean_t		zp_dedup_verify;
 	boolean_t		zp_nopwrite;
 	boolean_t		zp_encrypt;
+	uint8_t			zp_salt[DATA_SALT_LEN];
+	uint8_t			zp_iv[DATA_IV_LEN];
+	uint8_t			zp_mac[DATA_MAC_LEN];
 } zio_prop_t;
 
 typedef struct zio_cksum_report zio_cksum_report_t;

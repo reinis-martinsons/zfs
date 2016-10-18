@@ -36,19 +36,9 @@
 /* forward declarations */
 struct zbookmark_phys;
 
-/* macros defining encryption lengths */
-#define	MAX_MASTER_KEY_LEN 32
-#define	DATA_IV_LEN 12
-#define	DATA_SALT_LEN 8
-#define	DATA_MAC_LEN 16
-
 #define	WRAPPING_KEY_LEN 32
 #define	WRAPPING_IV_LEN DATA_IV_LEN
 #define	WRAPPING_MAC_LEN 16
-
-#define	L2ARC_IV_LEN 12
-#define	L2ARC_MAC_LEN 8
-#define	ZIL_MAC_LEN 8
 
 #define	SHA1_DIGEST_LEN 20
 #define	SHA_256_DIGEST_LEN 32
@@ -151,20 +141,6 @@ typedef struct zio_crypt_key {
 	krwlock_t zk_salt_lock;
 } zio_crypt_key_t;
 
-/* in memory representation of the global L2ARC encryption key */
-typedef struct l2arc_crypt_key {
-	/* encryption algorithm */
-	enum zio_encrypt l2ck_crypt;
-
-	/* illumos crypto api key representation */
-	crypto_key_t l2ck_key;
-
-	/* private data for illumos crypto api */
-	crypto_ctx_template_t l2ck_ctx_tmpl;
-} l2arc_crypt_key_t;
-
-void l2arc_crypt_key_destroy(l2arc_crypt_key_t *key);
-int l2arc_crypt_key_init(l2arc_crypt_key_t *key);
 void zio_crypt_key_destroy(zio_crypt_key_t *key);
 int zio_crypt_key_init(uint64_t crypt, zio_crypt_key_t *key);
 int zio_crypt_key_get_salt(zio_crypt_key_t *key, uint8_t *salt_out);

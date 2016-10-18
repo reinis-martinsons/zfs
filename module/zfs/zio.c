@@ -2353,6 +2353,9 @@ zio_write_gang_block(zio_t *pio)
 		zp.zp_dedup = B_FALSE;
 		zp.zp_dedup_verify = B_FALSE;
 		zp.zp_nopwrite = B_FALSE;
+		bzero(zp.zp_salt, DATA_SALT_LEN);
+		bzero(zp.zp_iv, DATA_IV_LEN);
+		bzero(zp.zp_mac, DATA_MAC_LEN);
 
 		cio = zio_write(zio, spa, txg, &gbh->zg_blkptr[g],
 		    (char *)pio->io_data + (pio->io_size - resid), lsize,
@@ -3454,6 +3457,7 @@ static int
 zio_encrypt(zio_t *zio)
 {
 	int ret;
+	zio_prop_t *zp = &zio->io_prop;
 	spa_t *spa = zio->io_spa;
 	blkptr_t *bp = zio->io_bp;
 	uint64_t psize = BP_GET_PSIZE(bp);
@@ -3472,7 +3476,17 @@ zio_encrypt(zio_t *zio)
 	    BP_GET_TYPE(bp) != DMU_OT_INTENT_LOG)
 		return (ZIO_PIPELINE_CONTINUE);
 
-	if (!(zio->io_prop.zp_encrypt || BP_IS_ENCRYPTED(bp))) {
+	/* if we are doing raw encryption set the provided encryption params */
+	if (zio->io_flags & ZIO_FLAG_RAW_ENCRYPT) {
+		ASSERT(zio->io_flags & ZIO_FLAG_RAW_COMPRESS);
+		ASSERT(zp->zp_encrypt);
+		BP_SET_ENCRYPTED(bp, B_TRUE);
+		zio_crypt_encode_params_bp(bp, zp->zp_salt, zp->zp_iv);
+		zio_crypt_encode_mac_bp(bp, zp->zp_mac);
+		return (ZIO_PIPELINE_CONTINUE);
+	}
+
+	if (!(zp->zp_encrypt || BP_IS_ENCRYPTED(bp))) {
 		BP_SET_ENCRYPTED(bp, B_FALSE);
 		return (ZIO_PIPELINE_CONTINUE);
 	}

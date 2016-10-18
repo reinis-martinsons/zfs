@@ -1594,8 +1594,7 @@ dmu_sync(zio_t *pio, uint64_t txg, dmu_sync_cb_t *done, zgd_t *zgd)
 
 	DB_DNODE_ENTER(db);
 	dn = DB_DNODE(db);
-	dmu_write_policy(os, dn, db->db_level, WP_DMU_SYNC,
-	    ZIO_COMPRESS_INHERIT, &zp);
+	dmu_write_policy(os, dn, db->db_level, WP_DMU_SYNC, &zp);
 	DB_DNODE_EXIT(db);
 
 	/*
@@ -1765,8 +1764,7 @@ int zfs_mdcomp_disable = 0;
 int zfs_redundant_metadata_most_ditto_level = 2;
 
 void
-dmu_write_policy(objset_t *os, dnode_t *dn, int level, int wp,
-    enum zio_compress override_compress, zio_prop_t *zp)
+dmu_write_policy(objset_t *os, dnode_t *dn, int level, int wp, zio_prop_t *zp)
 {
 	dmu_object_type_t type = dn ? dn->dn_type : DMU_OT_OBJSET;
 	boolean_t ismd = (level > 0 || DMU_OT_IS_METADATA(type) ||
@@ -1883,17 +1881,8 @@ dmu_write_policy(objset_t *os, dnode_t *dn, int level, int wp,
 			compress = ZIO_COMPRESS_EMPTY;
 	}
 
+	zp->zp_compress = compress;
 	zp->zp_checksum = checksum;
-
-	/*
-	 * If we're writing a pre-compressed buffer, the compression type we use
-	 * must match the data. If it hasn't been compressed yet, then we should
-	 * use the value dictated by the policies above.
-	 */
-	zp->zp_compress = override_compress != ZIO_COMPRESS_INHERIT
-	    ? override_compress : compress;
-	ASSERT3U(zp->zp_compress, !=, ZIO_COMPRESS_INHERIT);
-
 	zp->zp_type = (wp & WP_SPILL) ? dn->dn_bonustype : type;
 	zp->zp_level = level;
 	zp->zp_copies = MIN(copies, spa_max_replication(os->os_spa));
@@ -1901,8 +1890,48 @@ dmu_write_policy(objset_t *os, dnode_t *dn, int level, int wp,
 	zp->zp_dedup_verify = dedup && dedup_verify;
 	zp->zp_nopwrite = nopwrite;
 	zp->zp_encrypt = encrypt;
+	bzero(zp->zp_salt, DATA_SALT_LEN);
+	bzero(zp->zp_iv, DATA_IV_LEN);
+	bzero(zp->zp_mac, DATA_MAC_LEN);
 
 	ASSERT(!(zp->zp_encrypt && zp->zp_copies >= 3));
+}
+
+/*
+ * If we're writing a pre-compressed buffer, the compression type we use
+ * must match the data. If it hasn't been compressed yet, then we should
+ * use the value dictated by the original policy.
+ */
+void
+dmu_write_policy_override_compress(zio_prop_t *zp, enum zio_compress compress)
+{
+	ASSERT3U(compress, !=, ZIO_COMPRESS_INHERIT);
+	zp->zp_compress = compress;
+}
+
+/*
+ * Raw encrypted data must pass a few values to the zio layer. The encryption
+ * parameters must be passsed in to the policy so that they can be written along
+ * with the block. In addition, raw encrypted writes must also be raw compressed
+ * since encryption is applied after compression, so we must set that field here
+ * as well.
+ */
+void
+dmu_write_policy_override_encrypt(zio_prop_t *zp, enum zio_compress compress,
+    uint8_t *salt, uint8_t *iv, uint8_t *mac)
+{
+	ASSERT3U(compress, !=, ZIO_COMPRESS_INHERIT);
+	ASSERT3U(zp->zp_level, <=, 0);
+
+	zp->zp_compress = compress;
+	zp->zp_nopwrite = B_FALSE;
+	zp->zp_encrypt = B_TRUE;
+	bcopy(salt, zp->zp_salt, DATA_SALT_LEN);
+	bcopy(iv, zp->zp_iv, DATA_IV_LEN);
+	bcopy(mac, zp->zp_mac, DATA_MAC_LEN);
+
+	if (zp->zp_copies >= SPA_DVAS_PER_BP)
+		zp->zp_copies = SPA_DVAS_PER_BP - 1;
 }
 
 int
