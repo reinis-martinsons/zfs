@@ -960,7 +960,7 @@ dbuf_whichblock(const dnode_t *dn, const int64_t level, const uint64_t offset)
 }
 
 static void
-dbuf_read_done(zio_t *zio, arc_buf_t *buf, void *vdb)
+dbuf_read_done(zio_t *zio, int err, arc_buf_t *buf, void *vdb)
 {
 	dmu_buf_impl_t *db = vdb;
 
@@ -980,7 +980,7 @@ dbuf_read_done(zio_t *zio, arc_buf_t *buf, void *vdb)
 		db->db_freed_in_flight = FALSE;
 		dbuf_set_data(db, buf);
 		db->db_state = DB_CACHED;
-	} else if (zio == NULL || zio->io_error == 0) {
+	} else if (err == 0 && (zio == NULL || zio->io_error == 0)) {
 		dbuf_set_data(db, buf);
 		db->db_state = DB_CACHED;
 	} else {
@@ -1186,6 +1186,8 @@ dbuf_read(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags)
 
 	mutex_enter(&db->db_mtx);
 	if (db->db_state == DB_CACHED) {
+		spa_t *spa = dn->dn_objset->os_spa;
+
 		/*
 		 * If the arc buf is compressed, we need to decompress it to
 		 * read the data. This could happen during the "zfs receive" of
@@ -1195,7 +1197,7 @@ dbuf_read(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags)
 		    arc_get_compression(db->db_buf) != ZIO_COMPRESS_OFF) {
 			dbuf_fix_old_data(db,
 			    spa_syncing_txg(dmu_objset_spa(db->db_objset)));
-			err = arc_decompress(db->db_buf);
+			err = arc_untransform(db->db_buf, spa);
 			dbuf_set_data(db, db->db_buf);
 		}
 		mutex_exit(&db->db_mtx);
@@ -2456,7 +2458,7 @@ dbuf_issue_final_prefetch(dbuf_prefetch_arg_t *dpa, blkptr_t *bp)
  * prefetch if the next block down is our target.
  */
 static void
-dbuf_prefetch_indirect_done(zio_t *zio, arc_buf_t *abuf, void *private)
+dbuf_prefetch_indirect_done(zio_t *zio, int err, arc_buf_t *abuf, void *private)
 {
 	dbuf_prefetch_arg_t *dpa = private;
 	uint64_t nextblkid;
@@ -2503,7 +2505,7 @@ dbuf_prefetch_indirect_done(zio_t *zio, arc_buf_t *abuf, void *private)
 	    (dpa->dpa_epbs * (dpa->dpa_curlevel - dpa->dpa_zb.zb_level));
 	bp = ((blkptr_t *)abuf->b_data) +
 	    P2PHASE(nextblkid, 1ULL << dpa->dpa_epbs);
-	if (BP_IS_HOLE(bp) || (zio != NULL && zio->io_error != 0)) {
+	if (BP_IS_HOLE(bp) || err != 0 || (zio != NULL && zio->io_error != 0)) {
 		kmem_free(dpa, sizeof (*dpa));
 	} else if (dpa->dpa_curlevel == dpa->dpa_zb.zb_level) {
 		ASSERT3U(nextblkid, ==, dpa->dpa_zb.zb_blkid);
@@ -3827,7 +3829,7 @@ dbuf_write(dbuf_dirty_record_t *dr, arc_buf_t *data, dmu_tx_t *tx)
 		    ZIO_PRIORITY_ASYNC_WRITE,
 		    ZIO_FLAG_MUSTSUCCEED | ZIO_FLAG_NODATA, &zb);
 	} else {
-		arc_done_func_t *children_ready_cb = NULL;
+		arc_write_done_func_t *children_ready_cb = NULL;
 		ASSERT(arc_released(data));
 
 		/*

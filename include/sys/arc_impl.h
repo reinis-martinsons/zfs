@@ -91,8 +91,9 @@ typedef struct arc_callback arc_callback_t;
 
 struct arc_callback {
 	void			*acb_private;
-	arc_done_func_t		*acb_done;
+	arc_read_done_func_t	*acb_done;
 	arc_buf_t		*acb_buf;
+	boolean_t		acb_encrypted;
 	boolean_t		acb_compressed;
 	zio_t			*acb_zio_dummy;
 	arc_callback_t		*acb_next;
@@ -101,12 +102,12 @@ struct arc_callback {
 typedef struct arc_write_callback arc_write_callback_t;
 
 struct arc_write_callback {
-	void		*awcb_private;
-	arc_done_func_t	*awcb_ready;
-	arc_done_func_t	*awcb_children_ready;
-	arc_done_func_t	*awcb_physdone;
-	arc_done_func_t	*awcb_done;
-	arc_buf_t	*awcb_buf;
+	void			*awcb_private;
+	arc_write_done_func_t	*awcb_ready;
+	arc_write_done_func_t	*awcb_children_ready;
+	arc_write_done_func_t	*awcb_physdone;
+	arc_write_done_func_t	*awcb_done;
+	arc_buf_t		*awcb_buf;
 };
 
 /*
@@ -176,10 +177,13 @@ typedef struct l1arc_buf_hdr {
  * need to pass around the encryption parameters so they can be used
  * to write data to the L2ARC. This struct is only defined in the
  * arc_buf_hdr_t if the L1 header is defined and the has the
- * ARC_FLAG_L2_ENCRYPT flag set.
+ * ARC_FLAG_ENCRYPT flag set.
  */
 typedef struct arc_buf_hdr_crypt {
-	uint64_t		b_dsobj;
+	void			*b_rdata;	/* raw encrypted data */
+	dmu_object_type_t	b_ot;		/* object type */
+	uint32_t		b_ebufcnt;	/* number or encryped buffers */
+	uint64_t		b_dsobj;	/* for looking up key */
 	uint8_t			b_salt[DATA_SALT_LEN];
 	uint8_t			b_iv[DATA_IV_LEN];
 	uint8_t			b_mac[DATA_MAC_LEN];
@@ -254,7 +258,7 @@ struct arc_buf_hdr {
 	/* L1ARC fields. Undefined when in l2arc_only state */
 	l1arc_buf_hdr_t		b_l1hdr;
 	/*
-	 * Encryption parameters. Defined only when ARC_FLAG_L2_ENCRYPT
+	 * Encryption parameters. Defined only when ARC_FLAG_ENCRYPT
 	 * is set and the L1 header exists.
 	 */
 	arc_buf_hdr_crypt_t b_crypt_hdr;
