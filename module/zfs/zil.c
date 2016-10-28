@@ -200,7 +200,6 @@ zil_read_log_block(zilog_t *zilog, boolean_t decrypt, const blkptr_t *bp,
 	enum zio_flag zio_flags = ZIO_FLAG_CANFAIL;
 	arc_flags_t aflags = ARC_FLAG_WAIT;
 	arc_buf_t *abuf = NULL;
-	void *data = NULL;
 	zbookmark_phys_t zb;
 	int error;
 
@@ -210,20 +209,14 @@ zil_read_log_block(zilog_t *zilog, boolean_t decrypt, const blkptr_t *bp,
 	if (!(zilog->zl_header->zh_flags & ZIL_CLAIM_LR_SEQ_VALID))
 		zio_flags |= ZIO_FLAG_SPECULATIVE;
 
+	if (!decrypt)
+		zio_flags |= ZIO_FLAG_RAW;
+
 	SET_BOOKMARK(&zb, bp->blk_cksum.zc_word[ZIL_ZC_OBJSET],
 	    ZB_ZIL_OBJECT, ZB_ZIL_LEVEL, bp->blk_cksum.zc_word[ZIL_ZC_SEQ]);
 
-	if (!decrypt) {
-		zio_flags |= ZIO_FLAG_RAW;
-		data = zio_data_buf_alloc(BP_GET_PSIZE(bp));
-
-		error = zio_wait(zio_read(NULL, zilog->zl_spa,
-		    bp, data, BP_GET_PSIZE(bp), NULL, NULL,
-		    ZIO_PRIORITY_SYNC_READ, zio_flags, &zb));
-	} else {
-		error = arc_read(NULL, zilog->zl_spa, bp, arc_getbuf_func,
-		    &abuf, ZIO_PRIORITY_SYNC_READ, zio_flags, &aflags, &zb);
-	}
+	error = arc_read(NULL, zilog->zl_spa, bp, arc_getbuf_func,
+	    &abuf, ZIO_PRIORITY_SYNC_READ, zio_flags, &aflags, &zb);
 
 	if (error == 0) {
 		zio_cksum_t cksum = bp->blk_cksum;
@@ -238,11 +231,8 @@ zil_read_log_block(zilog_t *zilog, boolean_t decrypt, const blkptr_t *bp,
 		 */
 		cksum.zc_word[ZIL_ZC_SEQ]++;
 
-		if (decrypt)
-			data = abuf->b_data;
-
 		if (BP_GET_CHECKSUM(bp) == ZIO_CHECKSUM_ZILOG2) {
-			zil_chain_t *zilc = data;
+			zil_chain_t *zilc = abuf->b_data;
 			char *lr = (char *)(zilc + 1);
 			uint64_t len = zilc->zc_nused - sizeof (zil_chain_t);
 
@@ -256,7 +246,7 @@ zil_read_log_block(zilog_t *zilog, boolean_t decrypt, const blkptr_t *bp,
 				*nbp = zilc->zc_next_blk;
 			}
 		} else {
-			char *lr = data;
+			char *lr = abuf->b_data;
 			uint64_t size = BP_GET_LSIZE(bp);
 			zil_chain_t *zilc = (zil_chain_t *)(lr + size) - 1;
 
@@ -276,9 +266,6 @@ zil_read_log_block(zilog_t *zilog, boolean_t decrypt, const blkptr_t *bp,
 		if (abuf)
 			arc_buf_destroy(abuf, &abuf);
 	}
-
-	if (!decrypt)
-		zio_data_buf_free(data, BP_GET_PSIZE(bp));
 
 	return (error);
 }

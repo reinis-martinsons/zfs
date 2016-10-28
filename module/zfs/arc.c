@@ -2323,6 +2323,7 @@ arc_change_state(arc_state_t *new_state, arc_buf_hdr_t *hdr,
 		if (GHOST_STATE(old_state)) {
 			ASSERT0(bufcnt);
 			ASSERT3P(hdr->b_l1hdr.b_pdata, ==, NULL);
+			ASSERT(!HDR_HAS_RDATA(hdr));
 
 			/*
 			 * When moving a header off of a ghost state,
@@ -2854,7 +2855,7 @@ arc_buf_destroy_impl(arc_buf_t *buf)
 		 * gotten a copy of the decrypted data we can free b_rdata to
 		 * save some space.
 		 */
-		if (hdr->b_crypt_hdr.b_ebufcnt && HDR_HAS_RDATA(hdr) &&
+		if (hdr->b_crypt_hdr.b_ebufcnt == 0 && HDR_HAS_RDATA(hdr) &&
 		    hdr->b_l1hdr.b_pdata != NULL)
 			arc_hdr_free_data(hdr, B_TRUE);
 	}
@@ -2948,8 +2949,8 @@ arc_hdr_free_data(arc_buf_hdr_t *hdr, boolean_t free_rdata)
 	uint64_t size = (free_rdata) ? HDR_GET_PSIZE(hdr) : arc_hdr_size(hdr);
 
 	ASSERT(HDR_HAS_L1HDR(hdr));
-	ASSERT3P(hdr->b_l1hdr.b_pdata, !=, NULL);
-	IMPLY(free_rdata, HDR_ENCRYPT(hdr));
+	IMPLY(!free_rdata, hdr->b_l1hdr.b_pdata != NULL);
+	IMPLY(free_rdata, HDR_HAS_RDATA(hdr));
 
 	/*
 	 * If the hdr is currently being written to the l2arc then
@@ -2962,17 +2963,20 @@ arc_hdr_free_data(arc_buf_hdr_t *hdr, boolean_t free_rdata)
 		ARCSTAT_BUMP(arcstat_l2_free_on_write);
 	} else if (free_rdata) {
 		arc_free_data_buf(hdr, hdr->b_crypt_hdr.b_rdata, size, hdr);
-		hdr->b_crypt_hdr.b_rdata = NULL;
 	} else {
 		arc_free_data_buf(hdr, hdr->b_l1hdr.b_pdata, size, hdr);
+	}
+
+	if (free_rdata) {
+		hdr->b_crypt_hdr.b_rdata = NULL;
+		ARCSTAT_INCR(arcstat_raw_size, -size);
+	} else {
 		hdr->b_l1hdr.b_pdata = NULL;
 	}
 
 	if (hdr->b_l1hdr.b_pdata == NULL && !HDR_HAS_RDATA(hdr))
 		hdr->b_l1hdr.b_byteswap = DMU_BSWAP_NUMFUNCS;
 
-	if (free_rdata)
-		ARCSTAT_INCR(arcstat_raw_size, -size);
 	ARCSTAT_INCR(arcstat_compressed_size, -size);
 	ARCSTAT_INCR(arcstat_uncompressed_size, -HDR_GET_LSIZE(hdr));
 }
@@ -2980,7 +2984,7 @@ arc_hdr_free_data(arc_buf_hdr_t *hdr, boolean_t free_rdata)
 static arc_buf_hdr_t *
 arc_hdr_alloc(uint64_t spa, int32_t psize, int32_t lsize,
     boolean_t encrypted, enum zio_compress compression_type,
-    arc_buf_contents_t type)
+    arc_buf_contents_t type, boolean_t alloc_rdata)
 {
 	arc_buf_hdr_t *hdr;
 
@@ -3013,7 +3017,7 @@ arc_hdr_alloc(uint64_t spa, int32_t psize, int32_t lsize,
 	 * the compressed or uncompressed data depending on the block
 	 * it references and compressed arc enablement.
 	 */
-	arc_hdr_alloc_data(hdr, B_FALSE);
+	arc_hdr_alloc_data(hdr, alloc_rdata);
 	ASSERT(refcount_is_zero(&hdr->b_l1hdr.b_refcnt));
 
 	return (hdr);
@@ -3173,7 +3177,7 @@ arc_alloc_buf(spa_t *spa, void *tag, arc_buf_contents_t type, int32_t size)
 {
 	arc_buf_t *buf;
 	arc_buf_hdr_t *hdr = arc_hdr_alloc(spa_load_guid(spa), size, size,
-	    B_FALSE, ZIO_COMPRESS_OFF, type);
+	    B_FALSE, ZIO_COMPRESS_OFF, type, B_FALSE);
 	ASSERT(!MUTEX_HELD(HDR_LOCK(hdr)));
 
 	buf = NULL;
@@ -3200,7 +3204,7 @@ arc_alloc_compressed_buf(spa_t *spa, void *tag, uint64_t psize, uint64_t lsize,
 	ASSERT(compression_type < ZIO_COMPRESS_FUNCTIONS);
 
 	hdr = arc_hdr_alloc(spa_load_guid(spa), psize, lsize, B_FALSE,
-	    compression_type, ARC_BUFC_DATA);
+	    compression_type, ARC_BUFC_DATA, B_FALSE);
 	ASSERT(!MUTEX_HELD(HDR_LOCK(hdr)));
 
 	buf = NULL;
@@ -3281,7 +3285,7 @@ arc_hdr_destroy(arc_buf_hdr_t *hdr)
 			arc_hdr_free_data(hdr, B_FALSE);
 		}
 
-		if (hdr->b_l1hdr.b_pdata != NULL) {
+		if (HDR_HAS_RDATA(hdr)) {
 			arc_hdr_free_data(hdr, B_TRUE);
 		}
 	}
@@ -5439,7 +5443,8 @@ top:
 			arc_buf_hdr_t *exists = NULL;
 			arc_buf_contents_t type = BP_GET_BUFC_TYPE(bp);
 			hdr = arc_hdr_alloc(spa_load_guid(spa), psize, lsize,
-			    BP_IS_ENCRYPTED(bp), BP_GET_COMPRESS(bp), type);
+			    BP_IS_ENCRYPTED(bp), BP_GET_COMPRESS(bp), type,
+			    encrypted_read);
 
 			if (!BP_IS_EMBEDDED(bp)) {
 				hdr->b_dva = *BP_IDENTITY(bp);
@@ -5923,10 +5928,10 @@ arc_release(arc_buf_t *buf, void *tag)
 
 		/*
 		 * Allocate a new hdr. The new hdr will contain a b_pdata
-		 * buffer which will be freed in arc_write().
+		 * or b_rdata buffer which will be freed in arc_write().
 		 */
 		nhdr = arc_hdr_alloc(spa, psize, lsize, encrypted,
-		    compress, type);
+		    compress, type, HDR_HAS_RDATA(hdr));
 		ASSERT3P(nhdr->b_l1hdr.b_buf, ==, NULL);
 		ASSERT0(nhdr->b_l1hdr.b_bufcnt);
 		ASSERT0(refcount_count(&nhdr->b_l1hdr.b_refcnt));
