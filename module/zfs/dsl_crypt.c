@@ -1505,8 +1505,6 @@ spa_do_crypt_data(boolean_t encrypt, spa_t *spa, zbookmark_phys_t *zb,
 	dmu_object_type_t ot = BP_GET_TYPE(bp);
 	dsl_crypto_key_t *dck;
 	uint8_t tmpiv[DATA_IV_LEN];
-	uint64_t *iv_word;
-	zil_chain_t *zc;
 
 	ASSERT(spa_feature_is_active(spa, SPA_FEATURE_ENCRYPTION));
 	ASSERT(!BP_IS_EMBEDDED(bp));
@@ -1542,19 +1540,9 @@ spa_do_crypt_data(boolean_t encrypt, spa_t *spa, zbookmark_phys_t *zb,
 		if (ret)
 			goto error;
 	} else if (ot == DMU_OT_INTENT_LOG) {
-		/*
-		 * ZIL blocks are rewritten as new log entries are synced to
-		 * disk. We generated the IV randomly when we allocated the
-		 * block, but we cannot reuse this each time we do a rewrite.
-		 * To combat this we add in zc_nused from the zil_chain_t. We
-		 * only need the IV to be unique for each, not securely random
-		 * so it is ok for us to just add it into the existing value.
-		 */
-		zc = (zil_chain_t *)((encrypt) ? plainbuf : cipherbuf);
-		bcopy(iv, tmpiv, DATA_IV_LEN);
-		iv_word = (uint64_t *)tmpiv;
-		*iv_word = LE_64(LE_64(*iv_word) + zc->zc_nused);
+		uint8_t *src = (encrypt) ? plainbuf : cipherbuf;
 
+		zio_crypt_derive_zil_iv(src, iv, tmpiv);
 		iv = tmpiv;
 	}
 

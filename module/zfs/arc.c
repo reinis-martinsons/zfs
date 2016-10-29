@@ -1811,9 +1811,9 @@ arc_hdr_decrypt(arc_buf_hdr_t *hdr, boolean_t locked, spa_t *spa)
 	ret = zio_do_crypt_data(B_FALSE, &dck->dck_key,
 	    hdr->b_crypt_hdr.b_salt, hdr->b_crypt_hdr.b_ot,
 	    hdr->b_crypt_hdr.b_iv, hdr->b_crypt_hdr.b_mac,
-	    HDR_GET_PSIZE(hdr), hdr->b_crypt_hdr.b_rdata,
-	    hdr->b_l1hdr.b_pdata);
-	if (ret)
+	    HDR_GET_PSIZE(hdr), hdr->b_l1hdr.b_pdata,
+	    hdr->b_crypt_hdr.b_rdata);
+	if (ret && ret != ZIO_NO_ENCRYPTION_NEEDED)
 		goto error;
 
 	if (HDR_GET_COMPRESS(hdr) != ZIO_COMPRESS_OFF &&
@@ -1873,11 +1873,11 @@ arc_buf_fill(arc_buf_t *buf, spa_t *spa, boolean_t hdr_locked,
 	dmu_object_byteswap_t bswap = hdr->b_l1hdr.b_byteswap;
 
 	ASSERT3P(buf->b_data, !=, NULL);
-	IMPLY(compressed, hdr_compressed);
+	IMPLY(compressed, hdr_compressed || ARC_BUF_ENCRYPTED(buf));
 	IMPLY(compressed, ARC_BUF_COMPRESSED(buf));
 	IMPLY(encrypted, HDR_ENCRYPT(hdr));
-	IMPLY(encrypted, ARC_BUF_ENCRYPTED(hdr));
-	IMPLY(encrypted, ARC_BUF_COMPRESSED(hdr));
+	IMPLY(encrypted, ARC_BUF_ENCRYPTED(buf));
+	IMPLY(encrypted, ARC_BUF_COMPRESSED(buf));
 	IMPLY(encrypted, !ARC_BUF_SHARED(buf));
 
 	if (encrypted) {
@@ -2583,7 +2583,8 @@ arc_buf_alloc_impl(arc_buf_hdr_t *hdr, spa_t *spa, void *tag,
 	 * arc_write() then the hdr's data buffer will be released when the
 	 * write completes, even though the L2ARC write might still be using it.
 	 */
-	can_share = arc_can_share(hdr, buf) && !HDR_L2_WRITING(hdr);
+	can_share = arc_can_share(hdr, buf) && !HDR_L2_WRITING(hdr) &&
+	    hdr->b_l1hdr.b_pdata != NULL;
 
 	/* Set up b_data and sharing */
 	if (can_share) {
@@ -5120,6 +5121,7 @@ arc_hdr_verify(arc_buf_hdr_t *hdr, blkptr_t *bp)
 static void
 arc_read_done(zio_t *zio)
 {
+	blkptr_t 	*bp = zio->io_bp;
 	arc_buf_hdr_t	*hdr = zio->io_private;
 	kmutex_t	*hash_lock = NULL;
 	arc_callback_t	*callback_list;
@@ -5150,6 +5152,24 @@ arc_read_done(zio_t *zio)
 		    DVA_EQUAL(&hdr->b_dva, BP_IDENTITY(zio->io_bp))) ||
 		    (found == hdr && HDR_L2_READING(hdr)));
 		ASSERT3P(hash_lock, !=, NULL);
+	}
+
+	if (BP_IS_ENCRYPTED(bp)) {
+		uint8_t tmpiv[DATA_IV_LEN];
+
+		hdr->b_crypt_hdr.b_ot = BP_GET_TYPE(bp);
+		hdr->b_crypt_hdr.b_dsobj = zio->io_bookmark.zb_objset;
+		zio_crypt_decode_params_bp(bp, hdr->b_crypt_hdr.b_salt, tmpiv);
+
+		if (BP_GET_TYPE(bp) == DMU_OT_INTENT_LOG) {
+			zio_crypt_decode_mac_zil(zio->io_data,
+			    hdr->b_crypt_hdr.b_mac);
+			zio_crypt_derive_zil_iv(zio->io_data, tmpiv,
+			    hdr->b_crypt_hdr.b_iv);
+		} else {
+			zio_crypt_decode_mac_bp(bp, hdr->b_crypt_hdr.b_mac);
+			bcopy(tmpiv, hdr->b_crypt_hdr.b_iv, DATA_IV_LEN);
+		}
 	}
 
 	if (no_zio_error) {
@@ -5293,7 +5313,8 @@ arc_read(zio_t *pio, spa_t *spa, const blkptr_t *bp,
 	zio_t *rzio;
 	uint64_t guid = spa_load_guid(spa);
 	boolean_t compressed_read = (zio_flags & ZIO_FLAG_RAW_COMPRESS) != 0;
-	boolean_t encrypted_read = (zio_flags & ZIO_FLAG_RAW_ENCRYPT) != 0;
+	boolean_t encrypted_read = BP_IS_ENCRYPTED(bp) &&
+	    (zio_flags & ZIO_FLAG_RAW_ENCRYPT) != 0;
 	int rc = 0;
 
 	ASSERT(!BP_IS_EMBEDDED(bp) ||
@@ -5460,27 +5481,29 @@ top:
 			}
 		} else {
 			/*
-			 * This block is in the ghost cache. If it was L2-only
-			 * (and thus didn't have an L1 hdr), we realloc the
-			 * header to add an L1 hdr.
+			 * This block is in the ghost cache or encrypted data
+			 * was requested and we didn't have it. If it was
+			 * L2-only (and thus didn't have an L1 hdr),
+			 * we realloc the header to add an L1 hdr.
 			 */
 			if (!HDR_HAS_L1HDR(hdr)) {
 				hdr = arc_hdr_realloc(hdr, hdr_l2only_cache,
 				    hdr_full_cache);
 			}
 
-			ASSERT3P(hdr->b_l1hdr.b_pdata, ==, NULL);
-			ASSERT(!HDR_HAS_RDATA(hdr));
-			ASSERT(GHOST_STATE(hdr->b_l1hdr.b_state));
-			ASSERT(!HDR_IO_IN_PROGRESS(hdr));
-			ASSERT(refcount_is_zero(&hdr->b_l1hdr.b_refcnt));
-			ASSERT3P(hdr->b_l1hdr.b_buf, ==, NULL);
-			ASSERT3P(hdr->b_l1hdr.b_freeze_cksum, ==, NULL);
+			if (GHOST_STATE(hdr->b_l1hdr.b_state)) {
+				ASSERT3P(hdr->b_l1hdr.b_pdata, ==, NULL);
+				ASSERT(!HDR_HAS_RDATA(hdr));
+				ASSERT(!HDR_IO_IN_PROGRESS(hdr));
+				ASSERT0(refcount_count(&hdr->b_l1hdr.b_refcnt));
+				ASSERT3P(hdr->b_l1hdr.b_buf, ==, NULL);
+				ASSERT3P(hdr->b_l1hdr.b_freeze_cksum, ==, NULL);
+			}
 
 			/*
 			 * This is a delicate dance that we play here.
-			 * This hdr is in the ghost list so we access it
-			 * to move it out of the ghost list before we
+			 * This hdr might be in the ghost list so we access
+			 * it to move it out of the ghost list before we
 			 * initiate the read. If it's a prefetch then
 			 * it won't have a callback so we'll remove the
 			 * reference that arc_buf_alloc_impl() created. We
@@ -5489,14 +5512,6 @@ top:
 			 */
 			arc_access(hdr, hash_lock);
 			arc_hdr_alloc_data(hdr, encrypted_read);
-		}
-
-		if (BP_IS_ENCRYPTED(bp)) {
-			hdr->b_crypt_hdr.b_ot = BP_GET_TYPE(bp);
-			hdr->b_crypt_hdr.b_dsobj = zb->zb_objset;
-			zio_crypt_decode_params_bp(bp, hdr->b_crypt_hdr.b_salt,
-			    hdr->b_crypt_hdr.b_iv);
-			zio_crypt_decode_mac_bp(bp, hdr->b_crypt_hdr.b_mac);
 		}
 
 		if (encrypted_read) {
@@ -6043,6 +6058,9 @@ arc_write_ready(zio_t *zio)
 	arc_hdr_set_flags(hdr, ARC_FLAG_IO_IN_PROGRESS);
 
 	if (BP_IS_ENCRYPTED(bp)) {
+		/* ZIL blocks are written through zio_rewrite */
+		ASSERT3U(BP_GET_TYPE(bp), !=, DMU_OT_INTENT_LOG);
+
 		if (!HDR_ENCRYPT(hdr)) {
 			hdr = arc_hdr_realloc_crypt(hdr);
 			buf->b_hdr = hdr;
@@ -7331,6 +7349,9 @@ l2arc_read_done(zio_t *zio)
 		uint8_t iv[DATA_IV_LEN];
 		uint8_t mac[DATA_MAC_LEN];
 		void *ebuf = arc_get_data_buf(hdr, arc_hdr_size(hdr), hdr);
+
+		/* ZIL data is never be written to the L2 ARC */
+		ASSERT3U(BP_GET_TYPE(bp), !=, DMU_OT_INTENT_LOG);
 
 		VERIFY0(spa_keystore_lookup_key(spa, cb->l2rcb_zb.zb_objset,
 		    FTAG, &dck));

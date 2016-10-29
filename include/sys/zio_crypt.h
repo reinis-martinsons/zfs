@@ -157,6 +157,9 @@ void zio_crypt_encode_params_bp(blkptr_t *bp, uint8_t *salt, uint8_t *iv);
 void zio_crypt_decode_params_bp(const blkptr_t *bp, uint8_t *salt, uint8_t *iv);
 void zio_crypt_encode_mac_bp(blkptr_t *bp, uint8_t *mac);
 void zio_crypt_decode_mac_bp(const blkptr_t *bp, uint8_t *mac);
+void zio_crypt_encode_mac_zil(const void *data, uint8_t *mac);
+void zio_crypt_decode_mac_zil(const void *data, uint8_t *mac);
+void zio_crypt_derive_zil_iv(const void *data, uint8_t *iv, uint8_t *iv_out);
 
 int zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key, uint8_t *salt,
     dmu_object_type_t ot, uint8_t *iv, uint8_t *mac, uint_t datalen,

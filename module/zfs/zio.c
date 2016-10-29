@@ -391,8 +391,7 @@ zio_decrypt(zio_t *zio, void *data, uint64_t size)
 	zio_crypt_decode_params_bp(bp, salt, iv);
 
 	if (BP_GET_TYPE(bp) == DMU_OT_INTENT_LOG) {
-		uint64_t *zc_mac = &((zil_chain_t *)zio->io_data)->zc_mac;
-		*((uint64_t *)mac) = LE_64(*zc_mac);
+		zio_crypt_decode_mac_zil(zio->io_data, mac);
 	} else {
 		zio_crypt_decode_mac_bp(bp, mac);
 	}
@@ -3533,8 +3532,7 @@ zio_encrypt(zio_t *zio)
 
 	/* encode encryption metadata into the bp */
 	if (ot == DMU_OT_INTENT_LOG) {
-		uint64_t *zc_mac = &((zil_chain_t *)enc_buf)->zc_mac;
-		*zc_mac = LE_64(*((uint64_t *)mac));
+		zio_crypt_encode_mac_zil(enc_buf, mac);
 	} else {
 		zio_crypt_encode_params_bp(bp, salt, iv);
 		zio_crypt_encode_mac_bp(bp, mac);

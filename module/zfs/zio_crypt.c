@@ -808,6 +808,39 @@ zio_crypt_decode_mac_bp(const blkptr_t *bp, uint8_t *mac)
 	((uint64_t *)mac)[1] = LE_64(bp->blk_cksum.zc_word[3]);
 }
 
+void
+zio_crypt_encode_mac_zil(const void *data, uint8_t *mac)
+{
+	uint64_t *zc_mac = &((zil_chain_t *)data)->zc_mac;
+	*zc_mac = LE_64(*((uint64_t *)mac));
+}
+
+void
+zio_crypt_decode_mac_zil(const void *data, uint8_t *mac)
+{
+	uint64_t *zc_mac = &((zil_chain_t *)data)->zc_mac;
+	*((uint64_t *)mac) = LE_64(*zc_mac);
+}
+
+/*
+ * ZIL blocks are rewritten as new log entries are synced to
+ * disk. We generated the IV randomly when we allocated the
+ * block, but we cannot reuse this each time we do a rewrite.
+ * To combat this we add in zc_nused from the zil_chain_t. We
+ * only need the IV to be unique for each, not securely random
+ * so it is ok for us to just add it into the existing value.
+ */
+void
+zio_crypt_derive_zil_iv(const void *data, uint8_t *iv, uint8_t *iv_out)
+{
+	uint64_t *iv_word;
+	zil_chain_t *zc = (zil_chain_t *)data;
+
+	bcopy(iv, iv_out, DATA_IV_LEN);
+	iv_word = (uint64_t *)iv_out;
+	*iv_word = LE_64(LE_64(*iv_word) + zc->zc_nused);
+}
+
 static void
 zio_crypt_destroy_uio(uio_t *uio)
 {
