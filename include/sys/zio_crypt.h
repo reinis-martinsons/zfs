@@ -160,6 +160,7 @@ void zio_crypt_decode_mac_bp(const blkptr_t *bp, uint8_t *mac);
 void zio_crypt_encode_mac_zil(const void *data, uint8_t *mac);
 void zio_crypt_decode_mac_zil(const void *data, uint8_t *mac);
 void zio_crypt_derive_zil_iv(const void *data, uint8_t *iv, uint8_t *iv_out);
+void zio_crypt_copy_dnode_bonus(uint8_t *src, uint8_t *dst, uint_t datalen);
 
 int zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key, uint8_t *salt,
     dmu_object_type_t ot, uint8_t *iv, uint8_t *mac, uint_t datalen,

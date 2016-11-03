@@ -114,19 +114,6 @@
  * is never a reproducible checksum of the plaindata available to the attacker.
  * The HMAC key is kept alongside the master key, encrypted on disk. The first
  * 64 bits are used in place of the salt, and the next 96 bits replace the IV.
- *
- *
- * XXX: There is some code in this file that allows dnode blocks to be
- * encrypted. The dnodes themselves are left in the clear while bonus buffers
- * are encrypted. This code allows dnodes to be scrubbed, sent, etc. without the
- * keys being loaded. This feature isn't currently used because the dbuf and
- * ARC layers will need a good amount of work before they are able to handle
- * partially encrypted dnodes. Once this work is done the code can be re-enabled
- * by flagging the DMU_OT_DNODE object type as encrypted in the dmu_ot table. In
- * the meantime all bonus buffers are forced off to spill blocks using the
- * sa_force_spill flag, keeping the user data safe since spill block encryption
- * can be managed the same way that normal blocks are. Enabling dnode encryption
- * shouldn't require any on-disk format changes
  */
 
 zio_crypt_info_t zio_crypt_table[ZIO_CRYPT_FUNCTIONS] = {
@@ -823,6 +810,38 @@ zio_crypt_decode_mac_zil(const void *data, uint8_t *mac)
 }
 
 /*
+ * This function is modeled off of zio_crypt_init_uios_dnode(). This function,
+ * however, copies bonus buffers instead of parsing them into a uio_t.
+ */
+void
+zio_crypt_copy_dnode_bonus(uint8_t *src, uint8_t *dst, uint_t datalen)
+{
+	uint_t i, crypt_len, max_dnp = datalen >> DNODE_SHIFT;
+	uint8_t *bonus, *bonus_end, *dn_end;
+	dnode_phys_t *dnp, *sdnp, *ddnp;
+
+	sdnp = (dnode_phys_t *)src;
+	ddnp = (dnode_phys_t *)dst;
+
+	for (i = 0; i < max_dnp; i += sdnp[i].dn_extra_slots + 1) {
+		dnp = &sdnp[i];
+		dn_end = (uint8_t *)(dnp + (dnp->dn_extra_slots + 1));
+		if (dnp->dn_type != DMU_OT_NONE &&
+		    DMU_OT_IS_ENCRYPTED(dnp->dn_bonustype) &&
+		    dnp->dn_bonuslen != 0) {
+			bonus = (uint8_t *)DN_BONUS(dnp);
+			if (dnp->dn_flags & DNODE_FLAG_SPILL_BLKPTR) {
+				bonus_end = (uint8_t *)DN_SPILL_BLKPTR(dnp);
+			} else {
+				bonus_end = (uint8_t *)dn_end;
+			}
+			crypt_len = bonus_end - bonus;
+			bcopy(bonus, DN_BONUS(&ddnp[i]), crypt_len);
+		}
+	}
+}
+
+/*
  * ZIL blocks are rewritten as new log entries are synced to
  * disk. We generated the IV randomly when we allocated the
  * block, but we cannot reuse this each time we do a rewrite.
@@ -876,7 +895,7 @@ zio_crypt_init_uios_zil(boolean_t encrypt, uint8_t *plainbuf,
 		src = cipherbuf;
 		dst = plainbuf;
 		nr_src = 1;
-		nr_dst = 1;
+		nr_dst = 0;
 	}
 
 	/* find the start and end record of the log block */
@@ -1022,7 +1041,7 @@ zio_crypt_init_uios_dnode(boolean_t encrypt, uint8_t *plainbuf,
 		src = cipherbuf;
 		dst = plainbuf;
 		nr_src = 1;
-		nr_dst = 1;
+		nr_dst = 0;
 	}
 
 	sdnp = (dnode_phys_t *)src;
@@ -1129,42 +1148,22 @@ zio_crypt_init_uios_normal(boolean_t encrypt, uint8_t *plainbuf,
     uint_t *enc_len)
 {
 	int ret;
-	uint_t nr_plain, nr_cipher;
+	uint_t nr_plain = 1, nr_cipher = 2;
 	iovec_t *plain_iovecs = NULL, *cipher_iovecs = NULL;
 
 	/* allocate the iovecs for the plain and cipher data */
-	if (encrypt) {
-		nr_plain = 1;
-		plain_iovecs = kmem_alloc(nr_plain * sizeof (iovec_t),
-		    KM_SLEEP);
-		if (!plain_iovecs) {
-			ret = SET_ERROR(ENOMEM);
-			goto error;
-		}
+	plain_iovecs = kmem_alloc(nr_plain * sizeof (iovec_t),
+	    KM_SLEEP);
+	if (!plain_iovecs) {
+		ret = SET_ERROR(ENOMEM);
+		goto error;
+	}
 
-		nr_cipher = 2;
-		cipher_iovecs = kmem_alloc(nr_cipher * sizeof (iovec_t),
-		    KM_SLEEP);
-		if (!cipher_iovecs) {
-			ret = SET_ERROR(ENOMEM);
-			goto error;
-		}
-	} else {
-		nr_plain = 2;
-		plain_iovecs = kmem_alloc(nr_plain * sizeof (iovec_t),
-		    KM_SLEEP);
-		if (!plain_iovecs) {
-			ret = SET_ERROR(ENOMEM);
-			goto error;
-		}
-
-		nr_cipher = 2;
-		cipher_iovecs = kmem_alloc(nr_cipher * sizeof (iovec_t),
-		    KM_SLEEP);
-		if (!cipher_iovecs) {
-			ret = SET_ERROR(ENOMEM);
-			goto error;
-		}
+	cipher_iovecs = kmem_alloc(nr_cipher * sizeof (iovec_t),
+	    KM_SLEEP);
+	if (!cipher_iovecs) {
+		ret = SET_ERROR(ENOMEM);
+		goto error;
 	}
 
 	plain_iovecs[0].iov_base = plainbuf;
@@ -1201,7 +1200,7 @@ zio_crypt_init_uios(boolean_t encrypt, dmu_object_type_t ot, uint8_t *plainbuf,
 {
 	int ret;
 	uint_t maclen;
-	iovec_t *mac_iov, *mac_out_iov;
+	iovec_t *mac_iov;
 
 	ASSERT(DMU_OT_IS_ENCRYPTED(ot) || ot == DMU_OT_NONE);
 
@@ -1235,12 +1234,6 @@ zio_crypt_init_uios(boolean_t encrypt, dmu_object_type_t ot, uint8_t *plainbuf,
 	mac_iov = ((iovec_t *)&cuio->uio_iov[cuio->uio_iovcnt - 1]);
 	mac_iov->iov_base = mac;
 	mac_iov->iov_len = maclen;
-
-	if (!encrypt) {
-		mac_out_iov = ((iovec_t *)&puio->uio_iov[puio->uio_iovcnt - 1]);
-		mac_out_iov->iov_base = out_mac;
-		mac_out_iov->iov_len = maclen;
-	}
 
 	return (0);
 

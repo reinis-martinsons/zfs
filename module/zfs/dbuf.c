@@ -999,7 +999,7 @@ dbuf_read_impl(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags)
 	dnode_t *dn;
 	zbookmark_phys_t zb;
 	uint32_t aflags = ARC_FLAG_NOWAIT;
-	int err;
+	int err, zio_flags = 0;
 
 	DB_DNODE_ENTER(db);
 	dn = DB_DNODE(db);
@@ -1017,6 +1017,17 @@ dbuf_read_impl(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags)
 		 */
 		int bonuslen = MIN(dn->dn_bonuslen, dn->dn_phys->dn_bonuslen);
 		int max_bonuslen = DN_SLOTS_TO_BONUSLEN(dn->dn_num_slots);
+		arc_buf_t *dn_buf = dn->dn_dbuf->db_buf;
+
+		if (arc_is_encrypted(dn_buf) && !(flags & DB_RF_NO_DECRYPT)) {
+			err = arc_untransform(dn_buf, dn->dn_objset->os_spa,
+			    B_TRUE);
+			if (err != 0) {
+				DB_DNODE_EXIT(db);
+				mutex_exit(&db->db_mtx);
+				return (err);
+			}
+		}
 
 		ASSERT3U(bonuslen, <=, db->db.db_size);
 		db->db.db_data = zio_buf_alloc(max_bonuslen);
@@ -1086,9 +1097,13 @@ dbuf_read_impl(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags)
 
 	dbuf_add_ref(db, NULL);
 
+	zio_flags = (flags & DB_RF_CANFAIL) ?
+	    ZIO_FLAG_CANFAIL : ZIO_FLAG_MUSTSUCCEED;
+	if (flags & DB_RF_NO_DECRYPT)
+		zio_flags |= ZIO_FLAG_RAW;
+
 	err = arc_read(zio, db->db_objset->os_spa, db->db_blkptr,
-	    dbuf_read_done, db, ZIO_PRIORITY_SYNC_READ,
-	    (flags & DB_RF_CANFAIL) ? ZIO_FLAG_CANFAIL : ZIO_FLAG_MUSTSUCCEED,
+	    dbuf_read_done, db, ZIO_PRIORITY_SYNC_READ, zio_flags,
 	    &aflags, &zb);
 
 	return (err);
@@ -1197,7 +1212,7 @@ dbuf_read(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags)
 		    arc_get_compression(db->db_buf) != ZIO_COMPRESS_OFF) {
 			dbuf_fix_old_data(db,
 			    spa_syncing_txg(dmu_objset_spa(db->db_objset)));
-			err = arc_untransform(db->db_buf, spa);
+			err = arc_untransform(db->db_buf, spa, B_FALSE);
 			dbuf_set_data(db, db->db_buf);
 		}
 		mutex_exit(&db->db_mtx);

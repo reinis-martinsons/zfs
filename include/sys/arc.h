@@ -219,9 +219,9 @@ typedef struct arc_buf_info {
 void arc_space_consume(uint64_t space, arc_space_type_t type);
 void arc_space_return(uint64_t space, arc_space_type_t type);
 boolean_t arc_is_metadata(arc_buf_t *buf);
-boolean_t arc_get_encryption(arc_buf_t *buf);
+boolean_t arc_is_encrypted(arc_buf_t *buf);
 enum zio_compress arc_get_compression(arc_buf_t *buf);
-int arc_untransform(arc_buf_t *buf, spa_t *spa);
+int arc_untransform(arc_buf_t *buf, spa_t *spa, boolean_t in_place);
 arc_buf_t *arc_alloc_buf(spa_t *spa, void *tag, arc_buf_contents_t type,
     int32_t size);
 arc_buf_t *arc_alloc_compressed_buf(spa_t *spa, void *tag,

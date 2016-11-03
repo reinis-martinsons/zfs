@@ -995,6 +995,13 @@ static kmutex_t l2arc_feed_thr_lock;
 static kcondvar_t l2arc_feed_thr_cv;
 static uint8_t l2arc_thread_exit;
 
+typedef enum arc_fill_flags {
+	ARC_FILL_LOCKED			= 1 << 0,
+	ARC_FILL_COMPRESSED		= 1 << 1,
+	ARC_FILL_ENCRYPTED		= 1 << 2,
+	ARC_FILL_IN_PLACE		= 1 << 3
+} arc_fill_flags_t;
+
 static void *arc_get_data_buf(arc_buf_hdr_t *, uint64_t, void *);
 static void arc_free_data_buf(arc_buf_hdr_t *, void *, uint64_t, void *);
 static void arc_hdr_free_data(arc_buf_hdr_t *hdr, boolean_t);
@@ -1378,7 +1385,7 @@ arc_buf_lsize(arc_buf_t *buf)
 }
 
 boolean_t
-arc_get_encryption(arc_buf_t *buf)
+arc_is_encrypted(arc_buf_t *buf)
 {
 	return (ARC_BUF_ENCRYPTED(buf) != 0);
 }
@@ -1863,13 +1870,14 @@ error:
  * the correct-sized data buffer.
  */
 static int
-arc_buf_fill(arc_buf_t *buf, spa_t *spa, boolean_t hdr_locked,
-    boolean_t compressed, boolean_t encrypted)
+arc_buf_fill(arc_buf_t *buf, spa_t *spa, arc_fill_flags_t flags)
 {
 	int error;
 	arc_buf_hdr_t *hdr = buf->b_hdr;
 	boolean_t hdr_compressed =
 	    (arc_hdr_get_compress(hdr) != ZIO_COMPRESS_OFF);
+	boolean_t compressed = (flags & ARC_FILL_COMPRESSED) != 0;
+	boolean_t encrypted = (flags & ARC_FILL_ENCRYPTED) != 0;
 	dmu_object_byteswap_t bswap = hdr->b_l1hdr.b_byteswap;
 
 	ASSERT3P(buf->b_data, !=, NULL);
@@ -1879,6 +1887,10 @@ arc_buf_fill(arc_buf_t *buf, spa_t *spa, boolean_t hdr_locked,
 	IMPLY(encrypted, ARC_BUF_ENCRYPTED(buf));
 	IMPLY(encrypted, ARC_BUF_COMPRESSED(buf));
 	IMPLY(encrypted, !ARC_BUF_SHARED(buf));
+	IMPLY((flags & ARC_FILL_IN_PLACE), ARC_BUF_ENCRYPTED(buf));
+	IMPLY((flags & ARC_FILL_IN_PLACE), HDR_ENCRYPT(hdr));
+	IMPLY((flags & ARC_FILL_IN_PLACE),
+	    hdr->b_crypt_hdr.b_ot == DMU_OT_DNODE);
 
 	if (encrypted) {
 		ASSERT(HDR_HAS_RDATA(hdr));
@@ -1891,13 +1903,32 @@ arc_buf_fill(arc_buf_t *buf, spa_t *spa, boolean_t hdr_locked,
 		 * unencrypted version was requested we take this opportunity
 		 * to store the decrypted version in the header for future use.
 		 */
-		error = arc_hdr_decrypt(hdr, hdr_locked, spa);
+		error = arc_hdr_decrypt(hdr, !!(flags & ARC_FILL_LOCKED), spa);
 		if (error)
 			return (error);
 	}
 
 	if (hdr_compressed == compressed) {
-		if (!arc_buf_is_shared(buf)) {
+		/*
+		 * There is a special case here for dnode blocks which are
+		 * decrypting their bonus buffers. These blocks may request to
+		 * be decrypted in-place. This is necessary because there may
+		 * be many dnodes pointing into this buffer and there is
+		 * currently no method to synchronize replacing the backing
+		 * b_data buffer and updating all of the pointers. If the need
+		 * arises for other types to be decrypted in-place, they must
+		 * add handling here as well.
+		 */
+		if (!arc_buf_is_shared(buf) && ARC_BUF_ENCRYPTED(buf) &&
+		    hdr->b_crypt_hdr.b_ot == DMU_OT_DNODE &&
+		    (flags & ARC_FILL_IN_PLACE)) {
+			ASSERT(!compressed);
+			ASSERT(!encrypted);
+			zio_crypt_copy_dnode_bonus(hdr->b_l1hdr.b_pdata,
+			    buf->b_data, arc_buf_size(buf));
+			buf->b_flags &= ~ARC_BUF_FLAG_ENCRYPTED;
+			buf->b_flags &= ~ARC_BUF_FLAG_COMPRESSED;
+		} else if (!arc_buf_is_shared(buf)) {
 			bcopy(hdr->b_l1hdr.b_pdata, buf->b_data,
 			    arc_buf_size(buf));
 		}
@@ -1983,9 +2014,9 @@ byteswap:
 }
 
 int
-arc_untransform(arc_buf_t *buf, spa_t *spa)
+arc_untransform(arc_buf_t *buf, spa_t *spa, boolean_t in_place)
 {
-	return (arc_buf_fill(buf, spa, B_FALSE, B_FALSE, B_FALSE));
+	return (arc_buf_fill(buf, spa, (in_place) ? ARC_FILL_IN_PLACE : 0));
 }
 
 /*
@@ -2522,6 +2553,7 @@ arc_buf_alloc_impl(arc_buf_hdr_t *hdr, spa_t *spa, void *tag,
 {
 	arc_buf_t *buf;
 	boolean_t can_share;
+	arc_fill_flags_t flags = ARC_FILL_LOCKED;
 
 	ASSERT(HDR_HAS_L1HDR(hdr));
 	ASSERT3U(HDR_GET_LSIZE(hdr), >, 0);
@@ -2559,9 +2591,11 @@ arc_buf_alloc_impl(arc_buf_hdr_t *hdr, spa_t *spa, void *tag,
 	if (encrypted && HDR_ENCRYPT(hdr)) {
 		buf->b_flags |= ARC_BUF_FLAG_COMPRESSED;
 		buf->b_flags |= ARC_BUF_FLAG_ENCRYPTED;
+		flags |= ARC_FILL_COMPRESSED | ARC_FILL_ENCRYPTED;
 	} else if (compressed &&
 	    arc_hdr_get_compress(hdr) != ZIO_COMPRESS_OFF) {
 		buf->b_flags |= ARC_BUF_FLAG_COMPRESSED;
+		flags |= ARC_FILL_COMPRESSED;
 	}
 
 	/*
@@ -2608,8 +2642,7 @@ arc_buf_alloc_impl(arc_buf_hdr_t *hdr, spa_t *spa, void *tag,
 	 * decompress the data.
 	 */
 	if (fill) {
-		return (arc_buf_fill(buf, spa, B_TRUE,
-		    ARC_BUF_COMPRESSED(buf) != 0, ARC_BUF_ENCRYPTED(buf) != 0));
+		return (arc_buf_fill(buf, spa, flags));
 	}
 
 	return (0);
