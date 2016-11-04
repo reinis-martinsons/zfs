@@ -1194,7 +1194,6 @@ dnode_hold_impl(objset_t *os, uint64_t object, int flag, int slots,
 	int epb, idx, err, i;
 	int drop_struct_lock = FALSE;
 	int type;
-	uint32_t read_flags = DB_RF_CANFAIL;
 	uint64_t blk;
 	dnode_t *mdn, *dn;
 	dmu_buf_impl_t *db;
@@ -1204,14 +1203,6 @@ dnode_hold_impl(objset_t *os, uint64_t object, int flag, int slots,
 
 	ASSERT(!(flag & DNODE_MUST_BE_ALLOCATED) || (slots == 0));
 	ASSERT(!(flag & DNODE_MUST_BE_FREE) || (slots > 0));
-
-	/*
-	 * If this is an encrypted os and we haven't owned it yet, we read it
-	 * as raw data now and decrypt it later when we need the bonus buffer.
-	 */
-	if (os->os_encrypted && (os->os_dsl_dataset == NULL ||
-	    !dsl_dataset_has_owner(os->os_dsl_dataset)))
-		read_flags |= DB_RF_NO_DECRYPT;
 
 	/*
 	 * If you are holding the spa config lock as writer, you shouldn't
@@ -1259,7 +1250,7 @@ dnode_hold_impl(objset_t *os, uint64_t object, int flag, int slots,
 		rw_exit(&mdn->dn_struct_rwlock);
 	if (db == NULL)
 		return (SET_ERROR(EIO));
-	err = dbuf_read(db, NULL, DB_RF_CANFAIL);
+	err = dbuf_read(db, NULL, DB_RF_CANFAIL | DB_RF_NO_DECRYPT);
 	if (err) {
 		dbuf_rele(db, FTAG);
 		return (err);
@@ -2035,7 +2026,8 @@ dnode_next_offset_level(dnode_t *dn, int flags, uint64_t *offset,
 			 */
 			return (SET_ERROR(ESRCH));
 		}
-		error = dbuf_read(db, NULL, DB_RF_CANFAIL | DB_RF_HAVESTRUCT);
+		error = dbuf_read(db, NULL,
+		    DB_RF_CANFAIL | DB_RF_HAVESTRUCT | DB_RF_NO_DECRYPT);
 		if (error) {
 			dbuf_rele(db, FTAG);
 			return (error);

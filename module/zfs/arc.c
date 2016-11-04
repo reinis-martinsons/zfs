@@ -2594,17 +2594,10 @@ arc_buf_alloc_impl(arc_buf_hdr_t *hdr, spa_t *spa, void *tag,
 		flags |= ARC_FILL_COMPRESSED | ARC_FILL_ENCRYPTED;
 	} else if (compressed &&
 	    arc_hdr_get_compress(hdr) != ZIO_COMPRESS_OFF) {
+		ASSERT(!encrypted);
 		buf->b_flags |= ARC_BUF_FLAG_COMPRESSED;
 		flags |= ARC_FILL_COMPRESSED;
 	}
-
-	/*
-	 * Although the ARC should handle it correctly, levels above the ARC
-	 * should prevent us from having multiple compressed bufs off the same
-	 * hdr. To ensure we notice it if this behavior changes, we assert this
-	 * here the best we can.
-	 */
-	IMPLY(ARC_BUF_COMPRESSED(buf), !HDR_SHARED_DATA(hdr));
 
 	/*
 	 * If the hdr's data can be shared then we share the data buffer and
@@ -5531,6 +5524,19 @@ top:
 				ASSERT0(refcount_count(&hdr->b_l1hdr.b_refcnt));
 				ASSERT3P(hdr->b_l1hdr.b_buf, ==, NULL);
 				ASSERT3P(hdr->b_l1hdr.b_freeze_cksum, ==, NULL);
+			} else if (HDR_IO_IN_PROGRESS(hdr)) {
+				/*
+				 * If this header already had an IO in progress
+				 * and we are performing another IO to fetch
+				 * encrypted data we must wait until the first
+				 * IO completes so as not to confuse
+				 * arc_read_done(). This should be very rare
+				 * and so the performance impact shouldn't
+				 * matter.
+				 */
+				cv_wait(&hdr->b_l1hdr.b_cv, hash_lock);
+				mutex_exit(hash_lock);
+				goto top;
 			}
 
 			/*

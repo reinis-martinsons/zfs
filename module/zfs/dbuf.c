@@ -1017,9 +1017,11 @@ dbuf_read_impl(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags)
 		 */
 		int bonuslen = MIN(dn->dn_bonuslen, dn->dn_phys->dn_bonuslen);
 		int max_bonuslen = DN_SLOTS_TO_BONUSLEN(dn->dn_num_slots);
-		arc_buf_t *dn_buf = dn->dn_dbuf->db_buf;
+		arc_buf_t *dn_buf = (dn->dn_dbuf) ? dn->dn_dbuf->db_buf : NULL;
 
-		if (arc_is_encrypted(dn_buf) && !(flags & DB_RF_NO_DECRYPT)) {
+		if (dn_buf != NULL && arc_is_encrypted(dn_buf) &&
+		    DMU_OT_IS_ENCRYPTED(dn->dn_bonustype) &&
+		    !(flags & DB_RF_NO_DECRYPT)) {
 			err = arc_untransform(dn_buf, dn->dn_objset->os_spa,
 			    B_TRUE);
 			if (err != 0) {
@@ -1099,7 +1101,7 @@ dbuf_read_impl(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags)
 
 	zio_flags = (flags & DB_RF_CANFAIL) ?
 	    ZIO_FLAG_CANFAIL : ZIO_FLAG_MUSTSUCCEED;
-	if (flags & DB_RF_NO_DECRYPT)
+	if ((flags & DB_RF_NO_DECRYPT) && BP_IS_ENCRYPTED(db->db_blkptr))
 		zio_flags |= ZIO_FLAG_RAW;
 
 	err = arc_read(zio, db->db_objset->os_spa, db->db_blkptr,
