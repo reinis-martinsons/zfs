@@ -1429,6 +1429,7 @@ static inline void
 arc_cksum_free(arc_buf_hdr_t *hdr)
 {
 	ASSERT(HDR_HAS_L1HDR(hdr));
+
 	mutex_enter(&hdr->b_l1hdr.b_freeze_lock);
 	if (hdr->b_l1hdr.b_freeze_cksum != NULL) {
 		kmem_free(hdr->b_l1hdr.b_freeze_cksum, sizeof (zio_cksum_t));
@@ -1526,7 +1527,8 @@ arc_cksum_compute(arc_buf_t *buf)
 		 * Since the checksum doesn't apply to compressed buffers, we
 		 * only keep a checksum if there are uncompressed buffers.
 		 * Therefore there must be another buffer, which is
-		 * uncompressed.
+		 * uncompressed. Encrypted buffers will also have the
+		 * compressed flag set.
 		 */
 		IMPLY(hdr->b_l1hdr.b_freeze_cksum != NULL,
 		    hdr->b_l1hdr.b_bufcnt > 1);
@@ -1534,6 +1536,7 @@ arc_cksum_compute(arc_buf_t *buf)
 		return;
 	}
 
+	ASSERT(!ARC_BUF_ENCRYPTED(buf));
 	ASSERT(!ARC_BUF_COMPRESSED(buf));
 	hdr->b_l1hdr.b_freeze_cksum = kmem_alloc(sizeof (zio_cksum_t),
 	    KM_SLEEP);
@@ -2899,9 +2902,10 @@ arc_buf_destroy_impl(arc_buf_t *buf)
 		 * There is an equivalent case for compressed bufs, but since
 		 * they aren't guaranteed to be the last buf in the list and
 		 * that is an exceedingly rare case, we just allow that space be
-		 * wasted temporarily.
+		 * wasted temporarily. We must also be careful not to share
+		 * encrypted buffers, since they cannot be shared.
 		 */
-		if (lastbuf != NULL) {
+		if (lastbuf != NULL && !ARC_BUF_ENCRYPTED(lastbuf)) {
 			/* Only one buf can be shared at once */
 			VERIFY(!arc_buf_is_shared(lastbuf));
 			/* hdr is uncompressed so can't have compressed buf */
@@ -5994,6 +5998,8 @@ arc_release(arc_buf_t *buf, void *tag)
 
 		nhdr->b_l1hdr.b_buf = buf;
 		nhdr->b_l1hdr.b_bufcnt = 1;
+		if (ARC_BUF_ENCRYPTED(buf))
+			nhdr->b_crypt_hdr.b_ebufcnt = 1;
 		nhdr->b_l1hdr.b_mru_hits = 0;
 		nhdr->b_l1hdr.b_mru_ghost_hits = 0;
 		nhdr->b_l1hdr.b_mfu_hits = 0;
@@ -6121,14 +6127,6 @@ arc_write_ready(zio_t *zio)
 	HDR_SET_PSIZE(hdr, psize);
 	arc_hdr_set_compress(hdr, compress);
 
-	/*
-	 * If the hdr is compressed, then copy the compressed
-	 * zio contents into arc_buf_hdr_t. If the data is encrypted we must
-	 * decrypt it first. Otherwise, copy the original data buf into the hdr.
-	 * Ideally, we would like to always copy the io_data into b_pdata but
-	 * the user may have disabled compressed arc thus the on-disk block may
-	 * or may not match what we maintain in the hdr's b_pdata field.
-	 */
 	/*
 	 * Here we copy or share the data to the header. If the buffer is
 	 * encrypted then we have no choice but to copy the encrypted data to
