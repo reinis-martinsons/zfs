@@ -2857,6 +2857,7 @@ arc_buf_destroy_impl(arc_buf_t *buf)
 {
 	arc_buf_t *lastbuf;
 	arc_buf_hdr_t *hdr = buf->b_hdr;
+	uint32_t ebufcnt = 0;
 
 	/*
 	 * Free up the data associated with the buf but only if we're not
@@ -2944,7 +2945,10 @@ arc_buf_destroy_impl(arc_buf_t *buf)
 		    arc_hdr_get_compress(hdr) != ZIO_COMPRESS_OFF);
 	}
 
-	if (hdr->b_l1hdr.b_bufcnt == 0)
+	if (HDR_ENCRYPT(hdr))
+		ebufcnt = hdr->b_crypt_hdr.b_ebufcnt;
+
+	if (hdr->b_l1hdr.b_bufcnt - ebufcnt == 0)
 		arc_cksum_free(hdr);
 
 	/* clean up the buf */

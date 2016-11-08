@@ -2266,7 +2266,7 @@ zio_write_gang_block(zio_t *pio)
 	zio_prop_t zp;
 	int g, error;
 	int flags = METASLAB_HINTBP_FAVOR | METASLAB_GANG_HEADER;
-	
+
 	/*
 	 * encrypted blocks need DVA[2] free so encrypted gang headers can't
 	 * have a third copy.
@@ -2274,7 +2274,7 @@ zio_write_gang_block(zio_t *pio)
 	gbh_copies = MIN(copies + 1, spa_max_replication(spa));
 	if (gio->io_prop.zp_encrypt && gbh_copies >= SPA_DVAS_PER_BP)
 		gbh_copies = SPA_DVAS_PER_BP - 1;
-	
+
 	if (pio->io_flags & ZIO_FLAG_IO_ALLOCATING) {
 		ASSERT(pio->io_priority == ZIO_PRIORITY_ASYNC_WRITE);
 		ASSERT(!(pio->io_flags & ZIO_FLAG_NODATA));
