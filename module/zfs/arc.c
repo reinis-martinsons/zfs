@@ -1798,17 +1798,16 @@ arc_hdr_size(arc_buf_hdr_t *hdr)
  * decompress the data as well.
  */
 static int
-arc_hdr_decrypt(arc_buf_hdr_t *hdr, boolean_t locked, spa_t *spa)
+arc_hdr_decrypt(arc_buf_hdr_t *hdr, kmutex_t *hash_lock, spa_t *spa)
 {
 	int ret;
 	dsl_crypto_key_t *dck = NULL;
-	kmutex_t *hash_lock = HDR_LOCK(hdr);
 	void *cbuf = NULL;
 
 	ASSERT(HDR_HAS_RDATA(hdr));
 	ASSERT3P(hdr->b_l1hdr.b_pdata, ==, NULL);
 
-	if (!locked)
+	if (hash_lock)
 		mutex_enter(hash_lock);
 
 	arc_hdr_alloc_data(hdr, B_FALSE);
@@ -1843,7 +1842,7 @@ arc_hdr_decrypt(arc_buf_hdr_t *hdr, boolean_t locked, spa_t *spa)
 
 	spa_keystore_dsl_key_rele(spa, dck, FTAG);
 
-	if (!locked)
+	if (hash_lock)
 		mutex_exit(hash_lock);
 
 	return (0);
@@ -1854,7 +1853,7 @@ error:
 		spa_keystore_dsl_key_rele(spa, dck, FTAG);
 	if (cbuf)
 		arc_free_data_buf(hdr, cbuf, arc_hdr_size(hdr), hdr);
-	if (!locked)
+	if (hash_lock)
 		mutex_exit(hash_lock);
 	return (ret);
 }
@@ -1882,6 +1881,7 @@ arc_buf_fill(arc_buf_t *buf, spa_t *spa, arc_fill_flags_t flags)
 	boolean_t compressed = (flags & ARC_FILL_COMPRESSED) != 0;
 	boolean_t encrypted = (flags & ARC_FILL_ENCRYPTED) != 0;
 	dmu_object_byteswap_t bswap = hdr->b_l1hdr.b_byteswap;
+	kmutex_t *hash_lock = (flags & ARC_FILL_LOCKED) ? NULL : HDR_LOCK(hdr);
 
 	ASSERT3P(buf->b_data, !=, NULL);
 	IMPLY(compressed, hdr_compressed || ARC_BUF_ENCRYPTED(buf));
@@ -1906,7 +1906,7 @@ arc_buf_fill(arc_buf_t *buf, spa_t *spa, arc_fill_flags_t flags)
 		 * unencrypted version was requested we take this opportunity
 		 * to store the decrypted version in the header for future use.
 		 */
-		error = arc_hdr_decrypt(hdr, !!(flags & ARC_FILL_LOCKED), spa);
+		error = arc_hdr_decrypt(hdr, hash_lock, spa);
 		if (error)
 			return (error);
 	}
@@ -1931,6 +1931,14 @@ arc_buf_fill(arc_buf_t *buf, spa_t *spa, arc_fill_flags_t flags)
 			    buf->b_data, arc_buf_size(buf));
 			buf->b_flags &= ~ARC_BUF_FLAG_ENCRYPTED;
 			buf->b_flags &= ~ARC_BUF_FLAG_COMPRESSED;
+
+			if (hash_lock) {
+				mutex_enter(hash_lock);
+				hdr->b_crypt_hdr.b_ebufcnt -= 1;
+				mutex_exit(hash_lock);
+			} else {
+				hdr->b_crypt_hdr.b_ebufcnt -= 1;
+			}
 		} else if (!arc_buf_is_shared(buf)) {
 			bcopy(hdr->b_l1hdr.b_pdata, buf->b_data,
 			    arc_buf_size(buf));
