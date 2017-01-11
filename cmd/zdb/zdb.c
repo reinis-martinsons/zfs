@@ -1923,7 +1923,7 @@ dump_object(objset_t *os, uint64_t object, int verbosity, int *print_header)
 		/*
 		 * Encrypted datasets will have sensitive bonus buffers
 		 * encrypted. Therefore we cannot hold the bonus buffer and
-		 * must get the dnode itself instead.
+		 * must hold the dnode itself instead.
 		 */
 		error = dmu_object_info(os, object, &doi);
 		if (error)
@@ -1998,7 +1998,13 @@ dump_object(objset_t *os, uint64_t object, int verbosity, int *print_header)
 			(void) printf("\t\t(bonus encrypted)\n");
 		}
 
-		object_viewer[ZDB_OT_TYPE(doi.doi_type)](os, object, NULL, 0);
+		if (!os->os_encrypted || !DMU_OT_IS_ENCRYPTED(doi.doi_type)) {
+			object_viewer[ZDB_OT_TYPE(doi.doi_type)](os, object,
+			    NULL, 0);
+		} else {
+			(void) printf("\t\t(object encrypted)\n");
+		}
+
 		*print_header = 1;
 	}
 
@@ -2489,7 +2495,7 @@ dump_one_dir(const char *dsname, void *arg)
 	}
 
 	dump_dir(os);
-	dmu_objset_disown(os, FTAG);
+	dmu_objset_disown(os, B_FALSE, FTAG);
 	fuid_table_destroy();
 	sa_loaded = B_FALSE;
 	return (0);
@@ -4122,7 +4128,10 @@ main(int argc, char **argv)
 			zdb_read_block(argv[i], spa);
 	}
 
-	(os != NULL) ? dmu_objset_disown(os, FTAG) : spa_close(spa, FTAG);
+	if (os != NULL)
+		dmu_objset_disown(os, B_FALSE, FTAG);
+	else
+		spa_close(spa, FTAG);
 
 	fuid_table_destroy();
 	sa_loaded = B_FALSE;
