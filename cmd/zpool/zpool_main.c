@@ -52,6 +52,7 @@
 #include <sys/fm/util.h>
 #include <sys/fm/protocol.h>
 #include <sys/zfs_ioctl.h>
+#include <sys/mount.h>
 #include <math.h>
 
 #include <libzfs.h>
@@ -2093,6 +2094,7 @@ static int
 do_import(nvlist_t *config, const char *newname, const char *mntopts,
     nvlist_t *props, int flags)
 {
+	int ret = 0;
 	zpool_handle_t *zhp;
 	char *name;
 	uint64_t state;
@@ -2148,16 +2150,25 @@ do_import(nvlist_t *config, const char *newname, const char *mntopts,
 	if ((zhp = zpool_open_canfail(g_zfs, name)) == NULL)
 		return (1);
 
+	/*
+	 * Loading keys is best effort. We don't want to return if it fails
+	 * but we do want to give the error to the caller.
+	 */
+	if (flags & ZFS_IMPORT_LOAD_KEYS) {
+		ret = zfs_crypto_attempt_load_keys(g_zfs, name);
+		if (ret != 0)
+			ret = 1;
+	}
+
 	if (zpool_get_state(zhp) != POOL_STATE_UNAVAIL &&
 	    !(flags & ZFS_IMPORT_ONLY) &&
-	    zpool_enable_datasets(zhp, mntopts, 0,
-	    !!(flags & ZFS_IMPORT_LOAD_KEYS)) != 0) {
+	    zpool_enable_datasets(zhp, mntopts, 0) != 0) {
 		zpool_close(zhp);
 		return (1);
 	}
 
 	zpool_close(zhp);
-	return (0);
+	return (ret);
 }
 
 /*
@@ -4996,8 +5007,8 @@ zpool_do_split(int argc, char **argv)
 	char *srcpool, *newpool, *propval;
 	char *mntopts = NULL;
 	splitflags_t flags;
-	boolean_t loadkeys = B_FALSE;
 	int c, ret = 0;
+	boolean_t loadkeys = B_FALSE;
 	zpool_handle_t *zhp;
 	nvlist_t *config, *props = NULL;
 
@@ -5122,8 +5133,15 @@ zpool_do_split(int argc, char **argv)
 		nvlist_free(props);
 		return (1);
 	}
+
+	if (loadkeys) {
+		ret = zfs_crypto_attempt_load_keys(g_zfs, newpool);
+		if (ret != 0)
+			ret = 1;
+	}
+
 	if (zpool_get_state(zhp) != POOL_STATE_UNAVAIL &&
-	    zpool_enable_datasets(zhp, mntopts, 0, loadkeys) != 0) {
+	    zpool_enable_datasets(zhp, mntopts, 0) != 0) {
 		ret = 1;
 		(void) fprintf(stderr, gettext("Split was successful, but "
 		    "the datasets could not all be mounted\n"));

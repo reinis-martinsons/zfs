@@ -150,7 +150,7 @@ zfs \- configures ZFS file systems
 
 .LP
 .nf
-\fBzfs\fR \fBmount\fR [\fB-vO\fR] [\fB-o \fIoptions\fR\fR] \fB-a\fR | \fIfilesystem\fR
+\fBzfs\fR \fBmount\fR [\fB-vlO\fR] [\fB-o \fIoptions\fR\fR] \fB-a\fR | \fIfilesystem\fR
 .fi
 
 .LP
@@ -268,6 +268,26 @@ zfs \- configures ZFS file systems
 .LP
 .nf
 \fBzfs\fR \fBdiff\fR [\fB-FHt\fR] \fIsnapshot\fR \fIsnapshot\fR|\fIfilesystem\fR
+.fi
+
+.LP
+.nf
+\fB\fBzfs load-key\fR [\fB-rn\fR] [\fB-L\fR \fI<keylocation>\fR] \fB-a\fR | \fIfilesystem\fR\fR
+.fi
+
+.LP
+.nf
+\fB\fBzfs unload-key\fR [\fB-r\fR] \fB-a\fR | \fIfilesystem\fR\fR
+.fi
+
+.LP
+.nf
+\fB\fBzfs change-key\fR [\fB-l\fR] [\fB-o\fR \fBkeylocation\fR=\fIvalue\fR] [\fB-o\fR \fBkeyformat\fR=\fIvalue\fR] [\fB-o\fR \fBpbkfd2iters\fR=\fIvalue\fR] \fIfilesystem\fR\fR
+.fi
+
+.LP
+.nf
+\fB\fBzfs change-key\fR \fB-i\fR [\fB-l\fR] \fIfilesystem\fR\fR
 
 .SH DESCRIPTION
 .LP
@@ -493,7 +513,9 @@ been set somewhere in the tree under which the dataset resides.
 .ad
 .sp .6
 .RS 4n
-Indicates if an encryption key is currently loaded into ZFS. The possible values are \fBnone\fR, \fBavailable\fR, and \fBunavaliable\fR. See \fBzfs key -l\fR and \fBzfs key -u\fR.
+Indicates if an encryption key is currently loaded into ZFS. The possible
+values are \fBnone\fR, \fBavailable\fR, and \fBunavaliable\fR. See
+\fBzfs load-key\fR and \fBzfs unload-key\fR.
 .RE
 
 .sp
@@ -996,15 +1018,20 @@ This property can also be referred to by its shortened column name,
 .sp
 .ne 2
 .na
-\fB\fBencryption\fR=\fBoff\fR | \fBon\fR | \fBaes-128-ccm\fR | \fBaes-192-ccm\fR | \fBaes-256-ccm\fR | \fBaes-128-gcm\fR | \fBaes-192-gcm\fR | \fBaes-256-gcm\fR
+\fB\fBencryption\fR=\fBoff\fR | \fBon\fR | \fBaes-128-ccm\fR |
+\fBaes-192-ccm\fR | \fBaes-256-ccm\fR | \fBaes-128-gcm\fR |
+\fBaes-192-gcm\fR | \fBaes-256-gcm\fR
 .ad
 .sp .6
 .RS 4n
-Controls the encryption cipher suite (block cipher, key length, and mode) used for this dataset. Requires the encryption feature to be enabled on the pool. Requires a keysource to be set at dataset creation time.
+Controls the encryption cipher suite (block cipher, key length, and mode) used
+for this dataset. Requires the encryption feature to be enabled on the pool.
+Requires a \fBkeyformat\fR to be set at dataset creation time.
 .sp
-Selecting \fBencryption\fR=\fBon\fR when creating a dataset indicates that the current default encryption suite will be selected, which is currently \fBaes-256-ccm\fR. In order to provide consistent data protection, encryption must be specified at dataset creation time and it cannot be changed afterwards.
-.sp
-The \fBencryption\fR property is inherited by child datasets by default. All inheriting datasets will be accessible when the root key is mounted. A child dataset may also set encryption locally, which will indicate that it should have a separate key and \fBkeysource\fR from the parent. Regardless, all children of an encrypted dataset must also be encrypted.
+Selecting \fBencryption\fR=\fBon\fR when creating a dataset indicates that the
+default encryption suite will be selected, which is currently \fBaes-256-ccm\fR.
+In order to provide consistent data protection, encryption must be specified at
+dataset creation time and it cannot be changed afterwards.
 .sp
 For more details and caveats about encryption see \fBzpool-features\fR.
 .RE
@@ -1013,13 +1040,46 @@ For more details and caveats about encryption see \fBzpool-features\fR.
 .ne 2
 .mk
 .na
-\fB\fBkeysource\fR=<\fBraw\fR | \fBhex\fR | \fBpassphrase\fR>,<\fBprompt\fR | \fBfile://\fR\fI<absolute file path\fR>>
+\fB\fBkeyformat\fR=\fBraw\fR | \fBhex\fR | \fBpassphrase\fR
 .ad
 .sp .6
 .RS 4n
-Controls what format the user's encryption key will be provided as and where it should be loaded from. This property is only set when the dataset is encrypted.
+Controls what format the user's encryption key will be provided as. This 
+property is only set when the dataset is encrypted.
 .sp
-Raw keys and hex keys must be 32 bytes long (regardless of the chosen encryption suite) and must be randomly generated. Passphrases must be between 8 and 64 bytes long and will be processed through PBKDF2 before being used (see the \fBpbkdf2iters\fR property). Even though the encryption suite cannot be changed after dataset creation, the keysource can be with \fBzfs key -c\fR. If prompt is selected as the key location ZFS will ask for the key at the command prompt when it is required (\fBzfs mount\fR and \fBzfs key -l\fR). If \fBfile\fR is selected, the key will be loaded from the specified absolute file path. The key may also be passed in via STDIN, but users should be careful not to place keys which should be kept secret on the command line.
+Raw keys and hex keys must be 32 bytes long (regardless of the chosen
+encryption suite) and must be randomly generated. Passphrases must be between
+8 and 64 bytes long and will be processed through PBKDF2 before being used
+(see the \fBpbkdf2iters\fR property). Even though the encryption suite cannot
+be changed after dataset creation, the keyformat can be with
+\fBzfs change-key\fR. 
+.RE
+
+.sp
+.ne 2
+.mk
+.na
+\fB\fBkeylocation\fR=\fBprompt\fR | \fBfile://\fR\fI<absolute file path\fR>
+.ad
+.sp .6
+.RS 4n
+Controls where the user's encryption key should be loaded from. This property
+is only set when the dataset is encrypted.
+.sp
+If \fBkeylocation\fR is set
+locally, the dataset is an encryption root. Encryption roots share their keys
+with all datasets that inherit this property. This means that when a key is
+loaded for the encryption root, all children that inherit the \fBkeylocation\fR
+property are automatically loaded as well.
+.sp
+Even though the encryption suite cannot be changed after dataset creation, the
+keylocation can be with \fBzfs change-key\fR. If the dataset is an encryption 
+root this property may also be changed with \fBzfs set\fR. If \fBprompt\fR is
+selected ZFS will ask for the key at the command prompt when it is required to
+access the encrypted data (see \fBzfs load-key\fR). This setting will also
+allow the key to be passed in via STDIN, but users should be careful not to
+place keys which should be kept secret on the command line. If a file URI is
+selected, the key will be loaded from the specified absolute file path.
 .RE
 
 .sp
@@ -1101,7 +1161,17 @@ This property is not used on Linux.
 .ad
 .sp .6
 .RS 4n
-Controls the number of PBKDF2 iterations that a \fBpassphrase\fR encryption key should be run through when processing it into an encryption key. This property is only defined when encryption is enabled and a \fBpassphrase\fR key is selected. The goal of PBKDF2 is to significantly increase the computational difficulty needed to brute force a user's passphrase. This is accomplished by forcing the attacker to run each passphrase through a computationally expensive hashing function many times before they arrive at the resulting key. A user who actually knows the passphrase will only have to pay this cost once. As CPUs become better at processing, this number should be raised to ensure that a brute force attack is still not possible. The current default (if not otherwise specified) is \fB100000\fR This may be changed with \fBzfs key -c\fR.
+Controls the number of PBKDF2 iterations that a \fBpassphrase\fR encryption key
+should be run through when processing it into an encryption key. This property
+is only defined when encryption is enabled and a \fBpassphrase\fR key is
+selected. The goal of PBKDF2 is to significantly increase the computational
+difficulty needed to brute force a user's passphrase. This is accomplished by
+forcing the attacker to run each passphrase through a computationally expensive
+hashing function many times before they arrive at the resulting key. A user who
+actually knows the passphrase will only have to pay this cost once. As CPUs
+become better at processing, this number should be raised to ensure that a
+brute force attack is still not possible. The current default is \fB100000\fR
+This property may be changed with \fBzfs change-key\fR.
 .RE
 
 .sp
@@ -1678,6 +1748,37 @@ The values of user properties are arbitrary strings, are always inherited, and a
 with the \fBzfs create\fR command set up and enable the swap area using the
 \fBmkswap\fR(8) and \fBswapon\fR(8) commands.  Do not swap to a file on a
 \fBZFS\fR file system. A \fBZFS\fR swap file configuration is not supported.
+.SS "Encryption"
+.LP
+Enabling the \fBencryption\fR feature allows the user to create natively
+encrypted filesystems and volumes. \fBZFS\fR will encrypt all user data
+including file and zvol data, file attributes, ACLs, permission bits, directory
+listings, and FUID mappings. \fBZFS\fR will not encrypt metadata related to the
+pool structure, including dataset names, dataset hierarchy, file size, file
+holes, and dedup tables. Key rotation is managed internally by the \fBZFS\fR
+kernel module and changing the user's key does not require re-encrypting the
+entire dataset. Datasets can be scrubbed, resilvered, renamed, and deleted
+without the encryption keys being loaded (see the \fBkeylocation\fR property
+and \fBzfs load-key\fR subcommand for more info).
+.sp
+.LP
+Encryption changes the behavior of a few \fBZFS\fR operations. Encryption is
+applied after compression so compression ratios are preserved. Normally
+checksums in ZFS are 256 bits long, but for encrypted data the checksum is
+128 bits of the user-chosen checksum and 128 bits of MAC from the encryption
+suite, which provides additional protection against maliciously altered data.
+Deduplication is still possible with encryption enabled but for security,
+datasets will only dedup against themselves, their snapshots, and their clones.
+.sp
+.LP
+There are a few limitations on encrypted datasets. Encrypted data cannot be
+embedded via the \fIembedded_data\fR feature. Encrypted datasets may not
+have \fIcopies=3\fR since the implementation stores some encryption metadata
+where the third copy would normally be. Since compression is applied before
+encryption datasets may be vulnerable to a CRIME-like attack if applications
+accessing the data allow for it. Deduplication with encryption will leak
+information about which blocks are equivalent in a dataset and will incur an
+extra CPU cost per block written.
 .SH SUBCOMMANDS
 .LP
 All subcommands that modify state are logged persistently to the pool in their original form. The log can be viewed with \fBzpool history\fR.
@@ -2590,7 +2691,7 @@ Displays all \fBZFS\fR file systems currently mounted.
 .sp
 .ne 2
 .na
-\fB\fBzfs mount\fR [\fB-vO\fR] [\fB-o\fR \fIoptions\fR] \fB-a\fR | \fIfilesystem\fR\fR
+\fB\fBzfs mount\fR [\fB-vlO\fR] [\fB-o\fR \fIoptions\fR] \fB-a\fR | \fIfilesystem\fR\fR
 .ad
 .sp .6
 .RS 4n
@@ -2629,6 +2730,19 @@ On Linux, this is the default for \fBmount\fR(8). In other words, \fBzfs mount -
 .sp .6
 .RS 4n
 Report mount progress. This is intended for use with \fBzfs mount -a\fR on a system with a significant number of filesystems.
+.RE
+
+.sp
+.ne 2
+.na
+\fB\fB-l\fR\fR
+.ad
+.sp .6
+.RS 4n
+Attempt to load keys for encrypted filesystems as they are being mounted. This
+is equivalent to executing \fbzfs load-key\fR on each encryption root before
+mounting it. Note that if a filesystem has a \fBkeylocation\fR of \fBprompt\fR
+this will cause the terminal to interactively block after asking for the key.
 .RE
 
 .sp
@@ -3207,6 +3321,10 @@ destroy          subcommand     Must also have the 'mount' ability
 diff             subcommand     Allows lookup of paths within a dataset
                                 given an object number, and the ability to
                                 create snapshots necessary to 'zfs diff'.
+load-key         subcommand    Allows loading and unloading of encryption key
+                               (see 'zfs load-key' and 'zfs unload-key').
+change-key       subcommand    Allows changing an encryption key via
+                                'zfs change-key'.
 mount            subcommand     Allows mount/umount of ZFS datasets
 promote          subcommand     Must also have the 'mount'
                                 and 'promote' ability in the origin file system
@@ -3458,31 +3576,152 @@ Display the path's inode change time as the first column of output.
 .sp
 .ne 2
 .na
-\fB\fBzfs key -l\fR \fIfilesystem\fR | \fIvolume\fR\fR
+\fB\fBzfs load-key\fR [\fB-rn\fR] [\fB-L\fR \fI<keylocation>\fR]
+\fB-a\fR | \fIfilesystem\fR\fR
 .ad
 .sp .6
 .RS 4n
-Loads a key into ZFS so that the dataset and all of its children that inherit the \fBencryption\fR property may be accessed. The key will be expected in the format and location specified by the \fBkeysource\fR property. Loading a key alone will not automatically mount the dataset. If that functionality is desired, \fBzfs mount\fR will ask for the key and mount the dataset. When a key is loaded the \fBkeystatus\fR property will be set to available.
+Loads a key into zfs so that the dataset and all of its children that inherit
+the \fBekeylocation\fR property may be accessed. The key will be expected in
+the format specified by the \fBkeyformat\fR and location specified by the
+\fBkeylocation\fR property. Note that if the \fBkeylocation\fR is set to
+\fBprompt\fR theterminal will interactively wait for the key to be entered.
+Loading a key will not automatically mount the dataset. If that functionality
+is desired, \fBzfs mount -l\fR will ask for the key and mount the dataset. When
+a key is loaded the \fBkeystatus\fR property will become \fBavailable\fR.
+.sp
+.ne 2
+.na
+\fB\fB-r\fR\fR
+.ad
+.sp .6
+.RS 4n
+Recursively loads the keys for the specified filesystem and all descendent
+encryption roots.
+.RE
+.sp
+.ne 2
+.na
+\fB\fB-a\fR\fR
+.ad
+.sp .6
+.RS 4n
+Loads the keys for all encryption roots in all imported pools.
+.RE
+.sp
+.ne 2
+.na
+\fB\fB-n\fR\fR
+.ad
+.sp .6
+.RS 4n
+Do a dry-run ("No-op") load-key. This will cause zfs to simply check that the
+provided key is correct. This command may be run even if the key is already
+loaded.
+.RE
+.sp
+.ne 2
+.na
+\fB\fB-L\fR \fIkeylocation\fR\fR
+.ad
+.sp .6
+.RS 4n
+Use \fIkeylocation\fR instead of the \fBkeylocation\fR property. This will not
+change the value of the property on the dataset. Note that if used with either
+\fB-r\fR or \fB-a\fR \fIkeylocation\fR may only be given as \fBprompt\fR.
+.RE
+
 .RE
 
 .sp
 .ne 2
 .na
-\fB\fBzfs key -u\fR \fIfilesystem\fR | \fIvolume\fR\fR
+\fB\fBzfs unload-key\fR [\fB-r\fR] \fB-a\fR | \fIfilesystem\fR\fR
 .ad
 .sp .6
 .RS 4n
-Unloads a key from ZFS, removing the ability to access the dataset and all of its children that inherit the \fBencryption\fR property. This requires that the dataset is not currently open or mounted. When a key is unloaded the \fBkeystatus\fR property will be set to \fBunavailable\fR.
+Unloads a key from ZFS, removing the ability to access the dataset and all of
+its children that inherit the \fBkeylocation\fR property. This requires that the
+dataset is not currently open or mounted. When a key is unloaded the
+\fBkeystatus\fR property will become \fBunavailable\fR.
+.sp
+.ne 2
+.na
+\fB\fB-r\fR\fR
+.ad
+.sp .6
+.RS 4n
+Recursively loads the keys for the specified filesystem and all descendent
+encryption roots.
+.RE
+.sp
+.ne 2
+.na
+\fB\fB-a\fR\fR
+.ad
+.sp .6
+.RS 4n
+Loads the keys for all encryption roots in all imported pools.
+.RE
+
 .RE
 
 .sp
 .ne 2
 .na
-\fB\fBzfs key -c\fR [\fB-o\fR \fIkeysource\fR=\fIkeysource\fR] [\fB-o\fR \fIpbkdf2iters\fR=\fIiterations\fR] \fIfilesystem\fR | \fIvolume\fR\fR
+\fB\fBzfs change-key\fR [\fB-l\fR] [\fB-o\fR \fBkeylocation\fR=\fIvalue\fR]
+[\fB-o\fR \fBkeyformat\fR=\fIvalue\fR]
+[\fB-o\fR \fBpbkfd2iters\fR=\fIvalue\fR] \fIfilesystem\fR\fR
+.ad
+.br
+.na
+\fB\fBzfs change-key\fR \fB-i\fR [\fB-l\fR] \fIfilesystem\fR\fR
 .ad
 .sp .6
 .RS 4n
-Allows a user to change the encryption key used to access a dataset. This command requires that the existing key for the dataset is already loaded into ZFS. This command may also be used to change the \fBpbkdf2iters\fR and / or \fBkeysource\fR properties as needed. If the dataset was previously inheriting the \fBencryption\fR property when this command is run it will now be locally set, indicating that this dataset must have its key loaded separately from the parent.
+Allows a user to change the encryption key used to access a dataset. This
+command requires that the existing key for the dataset is already loaded into
+ZFS. This command may also be used to change the \fBkeylocation\fR,
+\fBkeyformat\fR, \fBpbkdf2iters\fR properties as needed. If the dataset was
+previously inheriting the \fBkeylocation\fR property when this command is run it
+will now be locally set, indicating that this dataset must have its key loaded
+separately from the parent. Alternatively, the \fB-i\fR flag may be provided to
+cause an encryption root to inherit the parent's key instead.
+.sp
+.ne 2
+.na
+\fB\fB-l\fR\fR
+.ad
+.sp .6
+.RS 4n
+Ensures the key is loaded before attempting to change the key. This is
+effectively equivalent to "\fBzfs load-key\fR \fIfilesystem\fR;
+\fBzfs change-key\fR \fIfilesystem\fR"
+.RE
+.sp
+.ne 2
+.na
+\fB\fB-o\fR \fIproperty\fR=\fIvalue\fR\fR
+.ad
+.sp .6
+.RS 4n
+Allows the user to set encryption key properties (\fBkeyformat\fR,
+\fBkeylocation\fR, and \fBpbkdf2iters\fR) while changing the key. This is the
+only way to alter \fBkeyformat\fR and \fBpbkdf2iters\fR after the dataset has
+been created.
+.RE
+.sp
+.ne 2
+.na
+\fB\fB-i\fR\fR
+.ad
+.sp .6
+.RS 4n
+Indicates that zfs should make \fIfilesystem\fR inherit the key of its parent.
+Note that this command can only be run on an encryption root that has an
+encrypted parent.
+.RE
+
 .RE
 
 .SH EXAMPLES

@@ -419,7 +419,9 @@ zio_decrypt(zio_t *zio, abd_t *data, uint64_t size)
 	    bp->blk_birth, size, data, zio->io_abd, iv, mac, salt);
 	if (ret == ZIO_NO_ENCRYPTION_NEEDED) {
 		ASSERT3U(BP_GET_TYPE(bp), ==, DMU_OT_INTENT_LOG);
-	} else if (ret) {
+	} else if (ret != 0) {
+		/* assert that the key was found unless this was speculative */
+		ASSERT(ret != ENOENT || (zio->io_flags & ZIO_FLAG_SPECULATIVE));
 		zio->io_error = ret;
 	}
 }
@@ -3583,9 +3585,19 @@ zio_encrypt(zio_t *zio)
 		return (ZIO_PIPELINE_CONTINUE);
 	}
 
-	ASSERT3U(psize, !=, 0);
-	ASSERT(spa_feature_is_active(spa, SPA_FEATURE_ENCRYPTION));
+	/*
+	 * Later passes of sync-to-convergence may decide to rewrite data
+	 * in place to avoid more disk reallocations. This presents a problem
+	 * for encryption because this consitutes rewriting the new data with
+	 * the same encryption key and IV. However, this only applies to blocks
+	 * in the MOS (particularly the spacemaps) and we do not encrypt the
+	 * MOS. We assert that the zio is allocating or an intent log write
+	 * to enforce this.
+	 */
+	ASSERT(IO_IS_ALLOCATING(zio) || ot == DMU_OT_INTENT_LOG);
 	ASSERT(BP_GET_LEVEL(bp) == 0 || ot == DMU_OT_INTENT_LOG);
+	ASSERT(spa_feature_is_active(spa, SPA_FEATURE_ENCRYPTION));
+	ASSERT3U(psize, !=, 0);
 
 	enc_buf = zio_buf_alloc(psize);
 	eabd = abd_get_from_buf(enc_buf, psize);
@@ -3604,7 +3616,7 @@ zio_encrypt(zio_t *zio)
 	/* Perform the encryption. This should not fail */
 	ret = spa_do_crypt_abd(B_TRUE, spa, &zio->io_bookmark, bp,
 	    zio->io_txg, psize, zio->io_abd, eabd, iv, mac, salt);
-	if (ret) {
+	if (ret != 0) {
 		/*
 		 * Dnode blocks and ZIL blocks may not need encryption if there
 		 * is no private data in the blocks. We cannot disable

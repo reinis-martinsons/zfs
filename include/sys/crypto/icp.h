@@ -20,7 +20,7 @@
  * CDDL HEADER END
  */
 /*
- * Copyright (c) 2016, Datto, Inc. All rights reserved.
+ * Copyright (c) 2017, Datto, Inc. All rights reserved.
  */
 
 #ifndef	_SYS_CRYPTO_ALGS_H
