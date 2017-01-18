@@ -1304,7 +1304,7 @@ zfs_secpolicy_key(zfs_cmd_t *zc, nvlist_t *innvl, cred_t *cr)
 	uint64_t crypto_cmd;
 
 	ret = nvlist_lookup_uint64(innvl, "crypto_cmd", &crypto_cmd);
-	if (ret) {
+	if (ret != 0) {
 		ret = SET_ERROR(EINVAL);
 		goto out;
 	}
@@ -5770,7 +5770,7 @@ zfs_ioc_key(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl)
 	spa_t *spa;
 
 	ret = spa_open(dsname, &spa, FTAG);
-	if (ret)
+	if (ret != 0)
 		return (ret);
 
 	if (!spa_feature_is_enabled(spa, SPA_FEATURE_ENCRYPTION)) {
@@ -5786,7 +5786,7 @@ zfs_ioc_key(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl)
 	}
 
 	ret = nvlist_lookup_uint64(innvl, "crypto_cmd", &crypto_cmd);
-	if (ret) {
+	if (ret != 0) {
 		ret = (SET_ERROR(EINVAL));
 		goto error;
 	}
@@ -5795,46 +5795,46 @@ zfs_ioc_key(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl)
 	case ZFS_IOC_KEY_LOAD_KEY:
 		ret = nvlist_lookup_nvlist(innvl, ZPOOL_HIDDEN_ARGS,
 		    &hidden_args);
-		if (ret) {
+		if (ret != 0) {
 			ret = SET_ERROR(EINVAL);
 			goto error;
 		}
 
 		ret = dsl_crypto_params_create_nvlist(NULL, hidden_args, &dcp);
-		if (ret)
+		if (ret != 0)
 			goto error;
 
 		ret = spa_keystore_load_wkey(dsname, dcp);
-		if (ret)
+		if (ret != 0)
 			goto error;
 
 		break;
 	case ZFS_IOC_KEY_UNLOAD_KEY:
 		ret = spa_keystore_unload_wkey(dsname);
-		if (ret)
+		if (ret != 0)
 			goto error;
 
 		break;
 	case ZFS_IOC_KEY_REWRAP:
 		ret = nvlist_lookup_nvlist(innvl, "args", &args);
-		if (ret) {
+		if (ret != 0) {
 			ret = SET_ERROR(EINVAL);
 			goto error;
 		}
 
 		ret = nvlist_lookup_nvlist(innvl, ZPOOL_HIDDEN_ARGS,
 		    &hidden_args);
-		if (ret) {
+		if (ret != 0) {
 			ret = SET_ERROR(EINVAL);
 			goto error;
 		}
 
 		ret = dsl_crypto_params_create_nvlist(args, hidden_args, &dcp);
-		if (ret)
+		if (ret != 0)
 			goto error;
 
 		ret = spa_keystore_rewrap(dsname, dcp);
-		if (ret)
+		if (ret != 0)
 			goto error;
 
 		break;
