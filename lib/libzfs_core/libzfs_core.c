@@ -957,7 +957,7 @@ lzc_destroy_bookmarks(nvlist_t *bmarks, nvlist_t **errlist)
  * the hidden_args nvlist so that it is not logged
  */
 int
-lzc_load_key(const char *fsname, nvlist_t *hidden_args)
+lzc_load_key(const char *fsname, boolean_t noop, nvlist_t *hidden_args)
 {
 	int error;
 	nvlist_t *ioc_args = NULL;
@@ -967,6 +967,8 @@ lzc_load_key(const char *fsname, nvlist_t *hidden_args)
 
 	ioc_args = fnvlist_alloc();
 	fnvlist_add_nvlist(ioc_args, ZPOOL_HIDDEN_ARGS, hidden_args);
+	if (noop)
+		fnvlist_add_boolean(ioc_args, "noop");
 	error = lzc_ioctl(ZFS_IOC_LOAD_KEY, fsname, ioc_args, NULL);
 	nvlist_free(ioc_args);
 

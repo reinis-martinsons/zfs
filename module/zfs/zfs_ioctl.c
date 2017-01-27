@@ -5754,7 +5754,11 @@ out:
 
 /*
  * Load a user's wrapping key into the kernel.
- * innvl: "hidden_args" -> { "wkeydata" -> value }
+ * innvl: {
+ *     "hidden_args" -> { "wkeydata" -> value }
+ *     (optional) "noop" -> (value ignored)
+ *         presence indicated key should only be verified, not loaded
+ * }
  */
 /* ARGSUSED */
 static int
@@ -5763,18 +5767,7 @@ zfs_ioc_load_key(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl)
 	int ret;
 	dsl_crypto_params_t *dcp = NULL;
 	nvlist_t *hidden_args;
-	spa_t *spa;
-
-	ret = spa_open(dsname, &spa, FTAG);
-	if (ret != 0)
-		return (ret);
-
-	if (!spa_feature_is_enabled(spa, SPA_FEATURE_ENCRYPTION)) {
-		spa_close(spa, FTAG);
-		return (SET_ERROR(ENOTSUP));
-	}
-
-	spa_close(spa, FTAG);
+	boolean_t noop = nvlist_exists(innvl, "noop");
 
 	if (strchr(dsname, '@') != NULL || strchr(dsname, '%') != NULL) {
 		ret = (SET_ERROR(EINVAL));
@@ -5791,7 +5784,7 @@ zfs_ioc_load_key(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl)
 	if (ret != 0)
 		goto error;
 
-	ret = spa_keystore_load_wkey(dsname, dcp);
+	ret = spa_keystore_load_wkey(dsname, dcp, noop);
 	if (ret != 0)
 		goto error;
 
@@ -5813,18 +5806,6 @@ static int
 zfs_ioc_unload_key(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl)
 {
 	int ret;
-	spa_t *spa;
-
-	ret = spa_open(dsname, &spa, FTAG);
-	if (ret != 0)
-		return (ret);
-
-	if (!spa_feature_is_enabled(spa, SPA_FEATURE_ENCRYPTION)) {
-		spa_close(spa, FTAG);
-		return (SET_ERROR(ENOTSUP));
-	}
-
-	spa_close(spa, FTAG);
 
 	if (strchr(dsname, '@') != NULL || strchr(dsname, '%') != NULL) {
 		ret = (SET_ERROR(EINVAL));
@@ -5860,18 +5841,6 @@ zfs_ioc_change_key(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl)
 	int ret;
 	dsl_crypto_params_t *dcp = NULL;
 	nvlist_t *args, *hidden_args;
-	spa_t *spa;
-
-	ret = spa_open(dsname, &spa, FTAG);
-	if (ret != 0)
-		return (ret);
-
-	if (!spa_feature_is_enabled(spa, SPA_FEATURE_ENCRYPTION)) {
-		spa_close(spa, FTAG);
-		return (SET_ERROR(ENOTSUP));
-	}
-
-	spa_close(spa, FTAG);
 
 	if (strchr(dsname, '@') != NULL || strchr(dsname, '%') != NULL) {
 		ret = (SET_ERROR(EINVAL));

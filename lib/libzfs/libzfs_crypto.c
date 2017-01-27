@@ -715,6 +715,53 @@ proplist_has_encryption_props(nvlist_t *props)
 	return (B_FALSE);
 }
 
+/*
+ * Determines if the zhp is an encryption root. If it is not an encryption
+ * root and inherit_name is specified this function will fill inherit_name
+ * with the name of the encryption root this dataset belongs to. This function
+ * is mostly for external consumers, since most code in this file will want to
+ * keep using the values checked here.
+ */
+int
+zfs_crypto_is_encryption_root(zfs_handle_t *zhp, boolean_t *enc_root,
+    char *inherit_name, uint_t buf_len)
+{
+	int ret;
+	char prop_keylocation[MAXNAMELEN];
+	char keylocation_src[MAXNAMELEN];
+	zprop_source_t keylocation_srctype;
+
+	/* if the dataset isn't encrypted, just return */
+	if (zfs_prop_get_int(zhp, ZFS_PROP_ENCRYPTION) == ZIO_CRYPT_OFF) {
+		if (inherit_name)
+			inherit_name[0] = '\0';
+		*enc_root = B_FALSE;
+		return (0);
+	}
+
+	/* fetch the keylocation and its source */
+	ret = zfs_prop_get(zhp, ZFS_PROP_KEYLOCATION, prop_keylocation,
+	    sizeof (prop_keylocation), &keylocation_srctype, keylocation_src,
+	    sizeof (keylocation_src), B_TRUE);
+	if (ret != 0) {
+		if (inherit_name)
+			inherit_name[0] = '\0';
+		*enc_root = B_FALSE;
+		return (ret);
+	}
+
+	/* check if the keylocation was inheritted */
+	if (keylocation_srctype == ZPROP_SRC_INHERITED) {
+		if (inherit_name)
+			(void) strncpy(inherit_name, keylocation_src, buf_len);
+		*enc_root = B_FALSE;
+		return (EINVAL);
+	}
+
+	*enc_root = B_TRUE;
+	return (0);
+}
+
 int
 zfs_crypto_create(libzfs_handle_t *hdl, char *parent_name, nvlist_t *props,
     nvlist_t *pool_props, nvlist_t **hidden_args)
@@ -988,7 +1035,7 @@ out:
 }
 
 int
-zfs_crypto_load_key(zfs_handle_t *zhp)
+zfs_crypto_load_key(zfs_handle_t *zhp, boolean_t noop)
 {
 	int ret;
 	char errbuf[1024];
@@ -1040,13 +1087,15 @@ zfs_crypto_load_key(zfs_handle_t *zhp)
 		goto error;
 	}
 
-	/* check that the key is unloaded */
-	keystatus = zfs_prop_get_int(zhp, ZFS_PROP_KEYSTATUS);
-	if (keystatus == ZFS_KEYSTATUS_AVAILABLE) {
-		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-		    "Key already loaded."));
-		ret = EEXIST;
-		goto error;
+	/* check that the key is unloaded unless this is a noop */
+	if (!noop) {
+		keystatus = zfs_prop_get_int(zhp, ZFS_PROP_KEYSTATUS);
+		if (keystatus == ZFS_KEYSTATUS_AVAILABLE) {
+			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
+			    "Key already loaded."));
+			ret = EEXIST;
+			goto error;
+		}
 	}
 
 	/* get key material from key format and location */
@@ -1076,7 +1125,7 @@ zfs_crypto_load_key(zfs_handle_t *zhp)
 	if (ret != 0)
 		goto error;
 
-	ret = lzc_load_key(zhp->zfs_name, crypto_args);
+	ret = lzc_load_key(zhp->zfs_name, noop, crypto_args);
 	if (ret != 0) {
 		switch (ret) {
 		case EINVAL:

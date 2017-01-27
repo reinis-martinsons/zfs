@@ -29,31 +29,6 @@
 /* forward declarations */
 struct dsl_dataset;
 
-/* enums used by both userspace and kernelspace */
-typedef enum zfs_keystatus {
-	ZFS_KEYSTATUS_NONE = 0,
-	ZFS_KEYSTATUS_UNAVAILABLE,
-	ZFS_KEYSTATUS_AVAILABLE,
-} zfs_keystatus_t;
-
-typedef enum zfs_keyformat {
-	ZFS_KEYFORMAT_NONE = 0,
-	ZFS_KEYFORMAT_RAW,
-	ZFS_KEYFORMAT_HEX,
-	ZFS_KEYFORMAT_PASSPHRASE,
-	ZFS_KEYFORMAT_FORMATS
-} zfs_keyformat_t;
-
-typedef enum zfs_key_location {
-	ZFS_KEYLOCATION_NONE,
-	ZFS_KEYLOCATION_PROMPT,
-	ZFS_KEYLOCATION_URI,
-	ZFS_KEYLOCATION_LOCATIONS
-} zfs_keylocation_t;
-
-#define	DEFAULT_PBKDF2_ITERATIONS 350000
-#define	MIN_PBKDF2_ITERATIONS 100000
-
 /* in memory representation of a wrapping key */
 typedef struct dsl_wrapping_key {
 	/* link into the keystore's tree of wrapping keys */
@@ -172,7 +147,8 @@ int spa_keystore_dsl_key_hold_dd(spa_t *spa, dsl_dir_t *dd, void *tag,
     dsl_crypto_key_t **dck_out);
 void spa_keystore_dsl_key_rele(spa_t *spa, dsl_crypto_key_t *dck, void *tag);
 int spa_keystore_load_wkey_impl(spa_t *spa, dsl_wrapping_key_t *wkey);
-int spa_keystore_load_wkey(const char *dsname, dsl_crypto_params_t *dcp);
+int spa_keystore_load_wkey(const char *dsname, dsl_crypto_params_t *dcp,
+    boolean_t noop);
 int spa_keystore_unload_wkey_impl(spa_t *spa, uint64_t ddobj);
 int spa_keystore_unload_wkey(const char *dsname);
 int spa_keystore_create_mapping(spa_t *spa, struct dsl_dataset *ds, void *tag);

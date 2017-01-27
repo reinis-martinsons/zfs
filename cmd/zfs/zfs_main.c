@@ -332,9 +332,10 @@ get_usage(zfs_help_t idx)
 	case HELP_BOOKMARK:
 		return (gettext("\tbookmark <snapshot> <bookmark>\n"));
 	case HELP_LOAD_KEY:
-		return (gettext("\tload-key [-r] <filesystem|volume>\n"));
+		return (gettext("\tload-key [-rn] -a | <filesystem|volume>\n"));
 	case HELP_UNLOAD_KEY:
-		return (gettext("\tunload-key [-r] <filesystem|volume>\n"));
+		return (gettext("\tunload-key [-r] -a | "
+		    "<filesystem|volume>\n"));
 	case HELP_CHANGE_KEY:
 		return (gettext("\tchange-key [-l] [-o keyformat=<value>] "
 		    "[-o keylocation=<value>] [-o pbkfd2iters=<value>] "
@@ -6988,17 +6989,76 @@ usage:
 	return (-1);
 }
 
-static int
-zfs_do_load_key(int argc, char **argv)
-{
-	int c, ret;
-	boolean_t recursive = B_FALSE;
-	zfs_handle_t *zhp = NULL;
+typedef struct loadkey_cbdata {
+	boolean_t cb_loadkey;
+	boolean_t cb_noop;
+	uint64_t cb_numfailed;
+	uint64_t cb_numattempted;
+} loadkey_cbdata_t;
 
-	while ((c = getopt(argc, argv, "r")) != -1) {
+static int
+load_key_callback(zfs_handle_t *zhp, void *data)
+{
+	int ret;
+	boolean_t is_encroot;
+	loadkey_cbdata_t *cb = data;
+	uint64_t keystatus = zfs_prop_get_int(zhp, ZFS_PROP_KEYSTATUS);
+
+	/* only attempt to load keys for encryption roots */
+	ret = zfs_crypto_is_encryption_root(zhp, &is_encroot, NULL, 0);
+	if (ret != 0)
+		return (ret);
+	if (!is_encroot)
+		return (0);
+
+	/* if the key is already in the correct state just return */
+	if ((cb->cb_loadkey && keystatus == ZFS_KEYSTATUS_AVAILABLE) ||
+	    (!cb->cb_loadkey && keystatus == ZFS_KEYSTATUS_UNAVAILABLE))
+		return (0);
+
+	cb->cb_numattempted++;
+
+	if (cb->cb_loadkey)
+		ret = zfs_crypto_load_key(zhp, cb->cb_noop);
+	else
+		ret = zfs_crypto_unload_key(zhp);
+
+	if (ret != 0) {
+		cb->cb_numfailed++;
+		return (ret);
+	}
+
+	return (0);
+}
+
+static int
+zfs_change_keystatus(int argc, char **argv, boolean_t loadkey)
+{
+	int c, ret = 0, flags = 0;
+	boolean_t do_all = B_FALSE;
+	loadkey_cbdata_t cb = { 0 };
+
+	cb.cb_loadkey = loadkey;
+
+	while ((c = getopt(argc, argv, "anr")) != -1) {
 		switch (c) {
+		case 'a':
+			do_all = B_TRUE;
+			break;
 		case 'r':
-			recursive = B_TRUE;
+			flags |= ZFS_ITER_RECURSE;
+			break;
+		case 'n':
+			/* noop is only valid for 'zfs load-key' */
+			if (loadkey) {
+				cb.cb_noop = B_TRUE;
+			} else {
+				(void) fprintf(stderr,
+				    gettext("invalid option '%c'\n"), 'n');
+				usage(B_FALSE);
+			}
+
+			break;
 		default:
 			(void) fprintf(stderr,
 			    gettext("invalid option '%c'\n"), optopt);
@@ -7009,81 +7069,47 @@ zfs_do_load_key(int argc, char **argv)
 	argc -= optind;
 	argv += optind;
 
-	if (argc < 1) {
-		(void) fprintf(stderr, gettext("Missing dataset argument\n"));
+	if (!do_all && argc == 0) {
+		(void) fprintf(stderr,
+		    gettext("Missing dataset argument or -a option\n"));
 		usage(B_FALSE);
 	}
 
-	if (argc > 1) {
-		(void) fprintf(stderr, gettext("Too many arguments\n"));
+	if (do_all && argc != 0) {
+		(void) fprintf(stderr,
+		    gettext("Cannot specify dataset with -a option\n"));
 		usage(B_FALSE);
 	}
 
-	zhp = zfs_open(g_zfs, argv[argc - 1],
-	    ZFS_TYPE_FILESYSTEM|ZFS_TYPE_VOLUME);
-	if (zhp == NULL)
-		usage(B_FALSE);
+	ret = zfs_for_each(argc, argv, flags,
+	    ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME, NULL, NULL, 0,
+	    load_key_callback, &cb);
 
-	ret = zfs_crypto_load_key(zhp);
-	if (ret != 0)
-		goto error;
+	if ((do_all || (flags & ZFS_ITER_RECURSE)) &&
+	    cb.cb_numattempted != 0) {
+		(void) printf(gettext("%llu / %llu keys successfully %s\n"),
+		    (u_longlong_t)(cb.cb_numattempted - cb.cb_numfailed),
+		    (u_longlong_t)cb.cb_numattempted,
+		    loadkey ? "loaded" : "unloaded");
+	}
 
-	zfs_close(zhp);
-	return (0);
+	if (cb.cb_numfailed != 0)
+		ret = -1;
 
-error:
-	if (zhp != NULL)
-		zfs_close(zhp);
-	return (-1);
+	return (ret);
 }
+
+static int
+zfs_do_load_key(int argc, char **argv)
+{
+	return (zfs_change_keystatus(argc, argv, B_TRUE));
+}
+
 
 static int
 zfs_do_unload_key(int argc, char **argv)
 {
-	int c, ret = -1;
-	boolean_t recursive = B_FALSE;
-	zfs_handle_t *zhp = NULL;
-
-	while ((c = getopt(argc, argv, "r")) != -1) {
-		switch (c) {
-		case 'r':
-			recursive = B_TRUE;
-		default:
-			(void) fprintf(stderr,
-			    gettext("invalid option '%c'\n"), optopt);
-			usage(B_FALSE);
-		}
-	}
-
-	argc -= optind;
-	argv += optind;
-
-	if (argc < 1) {
-		(void) fprintf(stderr, gettext("Missing dataset argument\n"));
-		usage(B_FALSE);
-	}
-
-	if (argc > 1) {
-		(void) fprintf(stderr, gettext("Too many arguments\n"));
-		usage(B_FALSE);
-	}
-
-	zhp = zfs_open(g_zfs, argv[argc - 1],
-	    ZFS_TYPE_FILESYSTEM|ZFS_TYPE_VOLUME);
-	if (zhp == NULL)
-		usage(B_FALSE);
-
-	ret = zfs_crypto_unload_key(zhp);
-	if (ret != 0)
-		goto error;
-
-	zfs_close(zhp);
-	return (0);
-
-error:
-	if (zhp != NULL)
-		zfs_close(zhp);
-	return (-1);
+	return (zfs_change_keystatus(argc, argv, B_FALSE));
 }
 
 static int
@@ -7139,7 +7165,7 @@ zfs_do_change_key(int argc, char **argv)
 	}
 
 	zhp = zfs_open(g_zfs, argv[argc - 1],
-	    ZFS_TYPE_FILESYSTEM|ZFS_TYPE_VOLUME);
+	    ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME);
 	if (zhp == NULL)
 		usage(B_FALSE);
 

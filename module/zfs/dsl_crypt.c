@@ -820,7 +820,8 @@ error_unlock:
 }
 
 int
-spa_keystore_load_wkey(const char *dsname, dsl_crypto_params_t *dcp)
+spa_keystore_load_wkey(const char *dsname, dsl_crypto_params_t *dcp,
+    boolean_t noop)
 {
 	int ret;
 	dsl_dir_t *dd = NULL;
@@ -838,6 +839,11 @@ spa_keystore_load_wkey(const char *dsname, dsl_crypto_params_t *dcp)
 	if (ret != 0)
 		goto error;
 
+	if (!spa_feature_is_enabled(dp->dp_spa, SPA_FEATURE_ENCRYPTION)) {
+		ret = (SET_ERROR(ENOTSUP));
+		goto error;
+	}
+
 	/* hold the dsl dir */
 	ret = dsl_dir_hold(dp, dsname, FTAG, &dd, NULL);
 	if (ret != 0)
@@ -850,6 +856,13 @@ spa_keystore_load_wkey(const char *dsname, dsl_crypto_params_t *dcp)
 	ret = dsl_crypto_key_open(dp->dp_meta_objset, wkey,
 	    dd->dd_crypto_obj, FTAG, &dck);
 	if (ret != 0)
+		goto error;
+
+	/*
+	 * At this point we have verified the key. We can simply cleanup and
+	 * return if this is all the user wanted to do.
+	 */
+	if (noop)
 		goto error;
 
 	/* insert the wrapping key into the keystore */
@@ -924,6 +937,11 @@ spa_keystore_unload_wkey(const char *dsname)
 	ret = dsl_pool_hold(dsname, FTAG, &dp);
 	if (ret != 0)
 		goto error;
+
+	if (!spa_feature_is_enabled(dp->dp_spa, SPA_FEATURE_ENCRYPTION)) {
+		ret = (SET_ERROR(ENOTSUP));
+		goto error;
+	}
 
 	ret = dsl_dir_hold(dp, dsname, FTAG, &dd, NULL);
 	if (ret != 0)
@@ -1164,6 +1182,11 @@ spa_keystore_rewrap_check(void *arg, dmu_tx_t *tx)
 	if (ret != 0)
 		return (ret);
 
+	if (!spa_feature_is_enabled(dp->dp_spa, SPA_FEATURE_ENCRYPTION)) {
+		ret = (SET_ERROR(ENOTSUP));
+		goto error;
+	}
+
 	/* verify that the dataset is encrypted */
 	if (dd->dd_crypto_obj == 0) {
 		ret = SET_ERROR(EINVAL);
@@ -1294,7 +1317,7 @@ spa_keystore_rewrap_sync(void *arg, dmu_tx_t *tx)
 	spa_keystore_rewrap_args_t *skra = arg;
 	dsl_wrapping_key_t *wkey = skra->skra_cp->cp_wkey;
 	dsl_wrapping_key_t *found_wkey;
-	uint64_t keyformat, crypt;
+	uint64_t keyformat;
 	const char *keylocation = skra->skra_cp->cp_keylocation;
 
 	/* create and initialize the wrapping key */
@@ -1325,15 +1348,6 @@ spa_keystore_rewrap_sync(void *arg, dmu_tx_t *tx)
 
 	dsl_prop_set_sync_impl(ds, zfs_prop_to_name(ZFS_PROP_PBKDF2_SALT),
 	    ZPROP_SRC_LOCAL, 8, 1, &skra->skra_cp->cp_salt, tx);
-
-	/*
-	 * Rewrapping the dataset implies we are making this an encryption
-	 * root. Set the encryption property locally now.
-	 */
-	VERIFY0(dsl_prop_get_ds(ds, zfs_prop_to_name(ZFS_PROP_ENCRYPTION),
-	    8, 1, &crypt, NULL));
-	dsl_prop_set_sync_impl(ds, zfs_prop_to_name(ZFS_PROP_ENCRYPTION),
-	    ZPROP_SRC_LOCAL, 8, 1, &crypt, tx);
 
 	wkey->wk_ddobj = ds->ds_dir->dd_object;
 

@@ -506,12 +506,14 @@ zfs_mount(zfs_handle_t *zhp, const char *options, int flags)
 	 * During a mount, it is possible that a parent key may be loaded
 	 * without updating this zhp. Just in case, we refresh the properties.
 	 */
-	zfs_refresh_properties(zhp);
-	keystatus = zfs_prop_get_int(zhp, ZFS_PROP_KEYSTATUS);
-	if (keystatus == ZFS_KEYSTATUS_UNAVAILABLE) {
-		rc = zfs_crypto_load_key(zhp);
-		if (rc)
-			return (rc);
+	if (zfs_prop_get_int(zhp, ZFS_PROP_ENCRYPTION) != ZIO_CRYPT_OFF) {
+		zfs_refresh_properties(zhp);
+		keystatus = zfs_prop_get_int(zhp, ZFS_PROP_KEYSTATUS);
+		if (keystatus == ZFS_KEYSTATUS_UNAVAILABLE) {
+			rc = zfs_crypto_load_key(zhp, B_FALSE);
+			if (rc)
+				return (rc);
+		}
 	}
 
 	/*
