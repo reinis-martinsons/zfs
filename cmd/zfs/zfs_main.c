@@ -6991,6 +6991,7 @@ usage:
 
 typedef struct loadkey_cbdata {
 	boolean_t cb_loadkey;
+	boolean_t cb_recursive;
 	boolean_t cb_noop;
 	uint64_t cb_numfailed;
 	uint64_t cb_numattempted;
@@ -7004,17 +7005,22 @@ load_key_callback(zfs_handle_t *zhp, void *data)
 	loadkey_cbdata_t *cb = data;
 	uint64_t keystatus = zfs_prop_get_int(zhp, ZFS_PROP_KEYSTATUS);
 
-	/* only attempt to load keys for encryption roots */
-	ret = zfs_crypto_is_encryption_root(zhp, &is_encroot, NULL, 0);
-	if (ret != 0)
-		return (ret);
-	if (!is_encroot)
-		return (0);
+	/*
+	 * If we are doing a recursive load-key, we want to skip loading
+	 * keys for non-encryption roots and datasets whose keys are already
+	 * in the desired end-state.
+	 */
+	if (cb->cb_recursive) {
+		ret = zfs_crypto_is_encryption_root(zhp, &is_encroot, NULL, 0);
+		if (ret != 0)
+			return (ret);
+		if (!is_encroot)
+			return (0);
 
-	/* if the key is already in the correct state just return */
-	if ((cb->cb_loadkey && keystatus == ZFS_KEYSTATUS_AVAILABLE) ||
-	    (!cb->cb_loadkey && keystatus == ZFS_KEYSTATUS_UNAVAILABLE))
-		return (0);
+		if ((cb->cb_loadkey && keystatus == ZFS_KEYSTATUS_AVAILABLE) ||
+		    (!cb->cb_loadkey && keystatus == ZFS_KEYSTATUS_UNAVAILABLE))
+			return (0);
+	}
 
 	cb->cb_numattempted++;
 
@@ -7044,9 +7050,11 @@ zfs_change_keystatus(int argc, char **argv, boolean_t loadkey)
 		switch (c) {
 		case 'a':
 			do_all = B_TRUE;
+			cb.cb_recursive = B_TRUE;
 			break;
 		case 'r':
 			flags |= ZFS_ITER_RECURSE;
+			cb.cb_recursive = B_TRUE;
 			break;
 		case 'n':
 			/* noop is only valid for 'zfs load-key' */
@@ -7085,8 +7093,7 @@ zfs_change_keystatus(int argc, char **argv, boolean_t loadkey)
 	    ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME, NULL, NULL, 0,
 	    load_key_callback, &cb);
 
-	if ((do_all || (flags & ZFS_ITER_RECURSE)) &&
-	    cb.cb_numattempted != 0) {
+	if (cb.cb_recursive && cb.cb_numattempted != 0) {
 		(void) printf(gettext("%llu / %llu keys successfully %s\n"),
 		    (u_longlong_t)(cb.cb_numattempted - cb.cb_numfailed),
 		    (u_longlong_t)cb.cb_numattempted,

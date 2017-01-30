@@ -65,6 +65,7 @@ typedef enum key_locator {
 
 #define	MIN_PASSPHRASE_LEN 8
 #define	MAX_PASSPHRASE_LEN 64
+#define	MAX_KEY_PROMPT_ATTEMPTS 3
 
 static int caught_interrupt;
 
@@ -192,16 +193,17 @@ get_key_material_raw(FILE *fd, const char *fsname, zfs_keyformat_t keyformat,
 	} else {
 		/*
 		 * Raw keys may have newline characters in them and so can't
-		 * use getline(). Read 32 bytes directly instead.
+		 * use getline(). Here we attempt to read 33 bytes so that we
+		 * can properly check the key length (the file should only have
+		 * 32 bytes).
 		 */
-
-		*buf = malloc(32 * sizeof (char));
+		*buf = malloc((WRAPPING_KEY_LEN + 1) * sizeof (char));
 		if (*buf == NULL) {
 			ret = ENOMEM;
 			goto out;
 		}
 
-		bytes = fread(*buf, 1, 32, fd);
+		bytes = fread(*buf, 1, WRAPPING_KEY_LEN + 1, fd);
 		if (bytes < 0) {
 			/* size errors are handled by the calling function */
 			free(*buf);
@@ -240,16 +242,23 @@ out:
 
 }
 
+/*
+ * Attempts to fetch key material, no matter where it might live. The key
+ * material is allocated and returned in km_out. *can_retry_out will be set
+ * to B_TRUE if the user is providing the key material interactively, allowing
+ * for re-entry attempts.
+ */
 static int
 get_key_material(libzfs_handle_t *hdl, boolean_t do_verify,
     zfs_keyformat_t keyformat, char *keylocation, const char *fsname,
-    uint8_t **km_out, size_t *kmlen_out)
+    uint8_t **km_out, size_t *kmlen_out, boolean_t *can_retry_out)
 {
 	int ret, i;
-	zfs_keylocation_t keyloc;
+	zfs_keylocation_t keyloc = ZFS_KEYLOCATION_NONE;
 	FILE *fd = NULL;
 	uint8_t *km = NULL, *km2 = NULL;
 	size_t kmlen, kmlen2;
+	boolean_t can_retry = B_FALSE;
 
 	/* verify and parse the keylocation */
 	keyloc = zfs_prop_parse_keylocation(keylocation);
@@ -258,6 +267,8 @@ get_key_material(libzfs_handle_t *hdl, boolean_t do_verify,
 	switch (keyloc) {
 	case ZFS_KEYLOCATION_PROMPT:
 		fd = stdin;
+		if (isatty(fileno(fd)))
+			can_retry = B_TRUE;
 		break;
 	case ZFS_KEYLOCATION_URI:
 		fd = fopen(&keylocation[7], "r");
@@ -373,6 +384,9 @@ get_key_material(libzfs_handle_t *hdl, boolean_t do_verify,
 
 	*km_out = km;
 	*kmlen_out = kmlen;
+	if (can_retry_out != NULL)
+		*can_retry_out = can_retry;
+
 	return (0);
 
 error:
@@ -382,11 +396,14 @@ error:
 	if (km2 != NULL)
 		free(km2);
 
-	if (fd && fd != stdin)
+	if (fd != NULL && fd != stdin)
 		fclose(fd);
 
 	*km_out = NULL;
 	*kmlen_out = 0;
+	if (can_retry_out != NULL)
+		*can_retry_out = can_retry;
+
 	return (ret);
 }
 
@@ -615,7 +632,7 @@ populate_create_encryption_params_nvlists(libzfs_handle_t *hdl,
 
 	/* get key material from keyformat and keylocation */
 	ret = get_key_material(hdl, B_TRUE, keyformat, keylocation, fsname,
-	    &key_material, &key_material_len);
+	    &key_material, &key_material_len, NULL);
 	if (ret != 0)
 		goto error;
 
@@ -1037,16 +1054,17 @@ out:
 int
 zfs_crypto_load_key(zfs_handle_t *zhp, boolean_t noop)
 {
-	int ret;
+	int ret, attempts = 0;
 	char errbuf[1024];
 	uint64_t keystatus, iters = 0, salt = 0;
-	uint64_t keyformat;
+	uint64_t keyformat = ZFS_KEYFORMAT_NONE;
 	char prop_keylocation[MAXNAMELEN];
 	char keylocation_src[MAXNAMELEN];
 	uint8_t *key_material = NULL, *key_data = NULL;
 	size_t key_material_len;
 	nvlist_t *crypto_args = NULL;
 	zprop_source_t keylocation_srctype;
+	boolean_t can_retry = B_FALSE, correctible = B_FALSE;
 
 	(void) snprintf(errbuf, sizeof (errbuf),
 	    dgettext(TEXT_DOMAIN, "Key load error"));
@@ -1098,24 +1116,30 @@ zfs_crypto_load_key(zfs_handle_t *zhp, boolean_t noop)
 		}
 	}
 
-	/* get key material from key format and location */
-	ret = get_key_material(zhp->zfs_hdl, B_FALSE, keyformat,
-	    prop_keylocation, zfs_get_name(zhp), &key_material,
-	    &key_material_len);
-	if (ret != 0)
-		goto error;
-
 	/* passphrase formats require a salt and pbkdf2_iters property */
 	if (keyformat == ZFS_KEYFORMAT_PASSPHRASE) {
 		salt = zfs_prop_get_int(zhp, ZFS_PROP_PBKDF2_SALT);
 		iters = zfs_prop_get_int(zhp, ZFS_PROP_PBKDF2_ITERS);
 	}
 
+try_again:
+	/* fetching and deriving the key are correctible errors. set the flag */
+	correctible = B_TRUE;
+
+	/* get key material from key format and location */
+	ret = get_key_material(zhp->zfs_hdl, B_FALSE, keyformat,
+	    prop_keylocation, zfs_get_name(zhp), &key_material,
+	    &key_material_len, &can_retry);
+	if (ret != 0)
+		goto error;
+
 	/* derive a key from the key material */
 	ret = derive_key(zhp->zfs_hdl, keyformat, iters, key_material,
 	    key_material_len, salt, &key_data);
 	if (ret != 0)
 		goto error;
+
+	correctible = B_FALSE;
 
 	/* put the key in an nvlist and pass to the ioctl */
 	crypto_args = fnvlist_alloc();
@@ -1132,27 +1156,28 @@ zfs_crypto_load_key(zfs_handle_t *zhp, boolean_t noop)
 			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
 			    "Invalid parameters provided."));
 			break;
-		case EACCES:
-			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-			    "Incorrect key provided."));
-			break;
 		case EEXIST:
 			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-			    "Key is already loaded."));
+			    "Key already loaded."));
 			break;
 		case EBUSY:
 			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
 			    "Dataset is busy."));
 			break;
+		case EACCES:
+			correctible = B_TRUE;
+			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
+			    "Incorrect key provided."));
+			break;
 		}
-		zfs_error(zhp->zfs_hdl, EZFS_CRYPTOFAILED, errbuf);
+		goto error;
 	}
 
 	nvlist_free(crypto_args);
 	free(key_material);
 	free(key_data);
 
-	return (ret);
+	return (0);
 
 error:
 	zfs_error(zhp->zfs_hdl, EZFS_CRYPTOFAILED, errbuf);
@@ -1162,6 +1187,18 @@ error:
 		free(key_data);
 	if (crypto_args != NULL)
 		nvlist_free(crypto_args);
+
+	/*
+	 * Here we decide if it is ok to allow the user to retry entering their
+	 * key. The can_retry flag will be set if the user is entering their
+	 * key from an interactive prompt. The correctible flag will only be
+	 * set if an error that occured could be corrected by retrying. Both
+	 * flags are needed to allow the user to attempt key entry again
+	 */
+	if (can_retry && correctible && attempts <= MAX_KEY_PROMPT_ATTEMPTS) {
+		attempts++;
+		goto try_again;
+	}
 
 	return (ret);
 }
