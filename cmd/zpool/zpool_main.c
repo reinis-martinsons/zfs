@@ -52,6 +52,7 @@
 #include <sys/fm/util.h>
 #include <sys/fm/protocol.h>
 #include <sys/zfs_ioctl.h>
+#include <sys/mount.h>
 #include <math.h>
 
 #include <libzfs.h>
@@ -2150,8 +2151,8 @@ do_import(nvlist_t *config, const char *newname, const char *mntopts,
 
 	if (zpool_get_state(zhp) != POOL_STATE_UNAVAIL &&
 	    !(flags & ZFS_IMPORT_ONLY) &&
-	    zpool_enable_datasets(zhp, mntopts, 0,
-	    !!(flags & ZFS_IMPORT_LOAD_KEYS)) != 0) {
+	    zpool_enable_datasets(zhp, mntopts,
+	    (flags & ZFS_IMPORT_LOAD_KEYS) ? MS_CRYPT : 0) != 0) {
 		zpool_close(zhp);
 		return (1);
 	}
@@ -4996,8 +4997,7 @@ zpool_do_split(int argc, char **argv)
 	char *srcpool, *newpool, *propval;
 	char *mntopts = NULL;
 	splitflags_t flags;
-	boolean_t loadkeys = B_FALSE;
-	int c, ret = 0;
+	int c, mntflags = 0, ret = 0;
 	zpool_handle_t *zhp;
 	nvlist_t *config, *props = NULL;
 
@@ -5024,7 +5024,7 @@ zpool_do_split(int argc, char **argv)
 			}
 			break;
 		case 'l':
-			loadkeys = B_TRUE;
+			mntflags |= MS_CRYPT;
 			break;
 		case 'n':
 			flags.dryrun = B_TRUE;
@@ -5064,7 +5064,7 @@ zpool_do_split(int argc, char **argv)
 		usage(B_FALSE);
 	}
 
-	if (!flags.import && loadkeys) {
+	if (!flags.import && (mntflags & MS_CRYPT) != 0) {
 		(void) fprintf(stderr, gettext("loading keys is only "
 		    "valid when importing the pool\n"));
 		usage(B_FALSE);
@@ -5123,7 +5123,7 @@ zpool_do_split(int argc, char **argv)
 		return (1);
 	}
 	if (zpool_get_state(zhp) != POOL_STATE_UNAVAIL &&
-	    zpool_enable_datasets(zhp, mntopts, 0, loadkeys) != 0) {
+	    zpool_enable_datasets(zhp, mntopts, mntflags) != 0) {
 		ret = 1;
 		(void) fprintf(stderr, gettext("Split was successful, but "
 		    "the datasets could not all be mounted\n"));
