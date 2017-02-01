@@ -879,6 +879,17 @@ zfs_crypto_create(libzfs_handle_t *hdl, char *parent_name, nvlist_t *props,
 		goto out;
 	}
 
+	/*
+	 * Specifying a keylocation implies this will be a new encryption root.
+	 * Check that a keyformat is also specified.
+	 */
+	if (keylocation != NULL && keyformat == ZFS_KEYFORMAT_NONE) {
+		ret = EINVAL;
+		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+		    "Keyformat required for new encryption root."));
+		goto out;
+	}
+
 	/* default to prompt if no location is specified */
 	if (keyformat != ZFS_KEYFORMAT_NONE && keylocation == NULL) {
 		keylocation = "prompt";
@@ -889,21 +900,10 @@ zfs_crypto_create(libzfs_handle_t *hdl, char *parent_name, nvlist_t *props,
 	}
 
 	/*
-	 * If the parent doesn't have a keyformat to inherit
-	 * we need one provided to us
-	 */
-	if (pcrypt == ZIO_CRYPT_OFF && keyformat == ZFS_KEYFORMAT_NONE) {
-		ret = EINVAL;
-		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-		    "Keyformat required."));
-		goto out;
-	}
-
-	/*
 	 * If a local key format is provided, this dataset will be a new
 	 * encryption root. Populate the encryption params.
 	 */
-	if (keyformat != ZFS_KEYFORMAT_NONE) {
+	if (keylocation != NULL) {
 		ha = fnvlist_alloc();
 
 		ret = populate_create_encryption_params_nvlists(hdl, NULL,
@@ -997,6 +997,17 @@ zfs_crypto_clone(libzfs_handle_t *hdl, zfs_handle_t *origin_zhp,
 		goto out;
 	}
 
+	/*
+	 * Specifying a keylocation implies this will be a new encryption root.
+	 * Check that a keyformat is also specified.
+	 */
+	if (keylocation != NULL && keyformat == ZFS_KEYFORMAT_NONE) {
+		ret = EINVAL;
+		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+		    "Keyformat required for new encryption root."));
+		goto out;
+	}
+
 	/* default to prompt if no location is specified */
 	if (keyformat != ZFS_KEYFORMAT_NONE && keylocation == NULL) {
 		keylocation = "prompt";
@@ -1030,7 +1041,7 @@ zfs_crypto_clone(libzfs_handle_t *hdl, zfs_handle_t *origin_zhp,
 	}
 
 	/* prepare the key if needed */
-	if (keyformat != ZFS_KEYFORMAT_NONE) {
+	if (keylocation != NULL) {
 		ha = fnvlist_alloc();
 
 		ret = populate_create_encryption_params_nvlists(hdl, NULL,

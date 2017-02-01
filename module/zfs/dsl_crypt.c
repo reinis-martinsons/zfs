@@ -284,7 +284,7 @@ dsl_crypto_params_free(dsl_crypto_params_t *dcp, boolean_t unload)
 
 	if (dcp->cp_keylocation != NULL)
 		spa_strfree(dcp->cp_keylocation);
-	if (unload &&& dcp->cp_wkey != NULL)
+	if (unload && dcp->cp_wkey != NULL)
 		dsl_wrapping_key_free(dcp->cp_wkey);
 
 	kmem_free(dcp, sizeof (dsl_crypto_params_t));
@@ -400,67 +400,6 @@ dsl_dir_hold_keylocation_source_dd(dsl_dir_t *dd, void *tag,
 error:
 
 	*inherit_dd_out = NULL;
-	return (ret);
-}
-
-int
-dsl_crypto_can_set_keylocation(const char *dsname)
-{
-	int ret = 0;
-	dsl_dir_t *dd = NULL;
-	dsl_dir_t *inherit_dd = NULL;
-	dsl_pool_t *dp = NULL;
-
-	/* hold the dsl dir */
-	ret = dsl_pool_hold(dsname, FTAG, &dp);
-	if (ret != 0)
-		goto out;
-
-	ret = dsl_dir_hold(dp, dsname, FTAG, &dd, NULL);
-	if (ret != 0)
-		goto out;
-
-	/* check that the dd is encrypted */
-	if (dd->dd_crypto_obj == 0) {
-		ret = SET_ERROR(EACCES);
-		goto out;
-	}
-
-	/*
-	 * hold the dd where we are inheritting the keylocation from. If this
-	 * doesn't exist it means we are creating an encryption root (since
-	 * the property didn't exist in this dataset or any parents). It is
-	 * always vallid to set a keylocation at creation time, so just return
-	 * zero in that case.
-	 */
-	ret = dsl_dir_hold_keylocation_source_dd(dd, FTAG, &inherit_dd);
-	if (ret == ENOENT) {
-		ret = 0;
-		goto out;
-	} else if (ret != 0) {
-		goto out;
-	}
-
-	/* check that this is an encryption root */
-	if (inherit_dd->dd_object != dd->dd_object) {
-		ret = SET_ERROR(EACCES);
-		goto out;
-	}
-
-	dsl_dir_rele(inherit_dd, FTAG);
-	dsl_dir_rele(dd, FTAG);
-	dsl_pool_rele(dp, FTAG);
-
-	return (0);
-
-out:
-	if (inherit_dd != NULL)
-		dsl_dir_rele(inherit_dd, FTAG);
-	if (dd != NULL)
-		dsl_dir_rele(dd, FTAG);
-	if (dp != NULL)
-		dsl_pool_rele(dp, FTAG);
-
 	return (ret);
 }
 
@@ -583,6 +522,76 @@ error:
 		dsl_dir_rele(dd, FTAG);
 
 	*wkey_out = NULL;
+	return (ret);
+}
+
+int
+dsl_crypto_can_set_keylocation(const char *dsname)
+{
+	int ret = 0;
+	dsl_dir_t *dd = NULL;
+	dsl_dir_t *inherit_dd = NULL;
+	dsl_pool_t *dp = NULL;
+	dsl_wrapping_key_t *wkey = NULL;
+
+	/* hold the dsl dir */
+	ret = dsl_pool_hold(dsname, FTAG, &dp);
+	if (ret != 0)
+		goto out;
+
+	ret = dsl_dir_hold(dp, dsname, FTAG, &dd, NULL);
+	if (ret != 0)
+		goto out;
+
+	/* check that the dd is encrypted */
+	if (dd->dd_crypto_obj == 0) {
+		ret = SET_ERROR(EACCES);
+		goto out;
+	}
+
+	/*
+	 * Now we want to check that this dataset is an encryption root since
+	 * keylocation may only be set on encryption roots. Normally this is
+	 * trivial, using dsl_dir_hold_keylocation_source_dd(), but this
+	 * function also gets called during dataset creation when the
+	 * properties have not been setup yet. Fortunately, the wrapping key
+	 * will always be loaded at creation time, so we can check for this
+	 * first.
+	 */
+	rw_enter(&dp->dp_spa->spa_keystore.sk_wkeys_lock, RW_READER);
+	ret = spa_keystore_wkey_hold_ddobj_impl(dp->dp_spa, dd->dd_object,
+	    FTAG, &wkey);
+	rw_exit(&dp->dp_spa->spa_keystore.sk_wkeys_lock);
+	if (ret != 0) {
+		ret = dsl_dir_hold_keylocation_source_dd(dd, FTAG, &inherit_dd);
+		if (ret != 0)
+			goto out;
+
+		if (inherit_dd->dd_object != dd->dd_object) {
+			ret = SET_ERROR(EACCES);
+			goto out;
+		}
+	}
+
+	if (wkey != NULL)
+		dsl_wrapping_key_rele(wkey, FTAG);
+	if (inherit_dd != NULL)
+		dsl_dir_rele(inherit_dd, FTAG);
+	dsl_dir_rele(dd, FTAG);
+	dsl_pool_rele(dp, FTAG);
+
+	return (0);
+
+out:
+	if (wkey != NULL)
+		dsl_wrapping_key_rele(wkey, FTAG);
+	if (inherit_dd != NULL)
+		dsl_dir_rele(inherit_dd, FTAG);
+	if (dd != NULL)
+		dsl_dir_rele(dd, FTAG);
+	if (dp != NULL)
+		dsl_pool_rele(dp, FTAG);
+
 	return (ret);
 }
 
