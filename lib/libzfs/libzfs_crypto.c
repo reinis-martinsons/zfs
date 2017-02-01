@@ -1171,7 +1171,7 @@ zfs_crypto_load_key(zfs_handle_t *zhp, boolean_t noop)
 	keyformat = zfs_prop_get_int(zhp, ZFS_PROP_KEYFORMAT);
 	if (keyformat == ZFS_KEYFORMAT_NONE) {
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-		    "Dataset not encrypted."));
+		    "'%s' is not encrypted."), zfs_get_name(zhp));
 		ret = EINVAL;
 		goto error;
 	}
@@ -1185,12 +1185,12 @@ zfs_crypto_load_key(zfs_handle_t *zhp, boolean_t noop)
 	    sizeof (keylocation_src), B_TRUE);
 	if (ret != 0) {
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-		    "Failed to get keylocation property."));
+		    "Failed to get keylocation for '%s'."), zfs_get_name(zhp));
 		goto error;
 	} else if (keylocation_srctype == ZPROP_SRC_INHERITED) {
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-		    "Keys must be loaded for encryption root '%s'."),
-		    keylocation_src);
+		    "Keys must be loaded for encryption root of '%s' (%s)."),
+		    zfs_get_name(zhp), keylocation_src);
 		ret = EINVAL;
 		goto error;
 	}
@@ -1200,7 +1200,7 @@ zfs_crypto_load_key(zfs_handle_t *zhp, boolean_t noop)
 		keystatus = zfs_prop_get_int(zhp, ZFS_PROP_KEYSTATUS);
 		if (keystatus == ZFS_KEYSTATUS_AVAILABLE) {
 			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-			    "Key already loaded."));
+			    "Key already loaded for '%s'."), zfs_get_name(zhp));
 			ret = EEXIST;
 			goto error;
 		}
@@ -1244,20 +1244,22 @@ try_again:
 		switch (ret) {
 		case EINVAL:
 			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-			    "Invalid parameters provided."));
+			    "Invalid parameters provided for %s."),
+			    zfs_get_name(zhp));
 			break;
 		case EEXIST:
 			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-			    "Key already loaded."));
+			    "Key already loaded for '%s'."), zfs_get_name(zhp));
 			break;
 		case EBUSY:
 			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-			    "Dataset is busy."));
+			    "'%s' is busy."), zfs_get_name(zhp));
 			break;
 		case EACCES:
 			correctible = B_TRUE;
 			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-			    "Incorrect key provided."));
+			    "Incorrect key provided for '%s'."),
+			    zfs_get_name(zhp));
 			break;
 		}
 		goto error;
@@ -1318,7 +1320,7 @@ zfs_crypto_unload_key(zfs_handle_t *zhp)
 	keyformat = zfs_prop_get_int(zhp, ZFS_PROP_KEYFORMAT);
 	if (keyformat == ZFS_KEYFORMAT_NONE) {
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-		    "Dataset not encrypted."));
+		    "'%s' is not encrypted."), zfs_get_name(zhp));
 		ret = EINVAL;
 		goto error;
 	}
@@ -1332,12 +1334,12 @@ zfs_crypto_unload_key(zfs_handle_t *zhp)
 	    sizeof (keylocation_src), B_TRUE);
 	if (ret != 0) {
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-		    "Failed to get keylocation property."));
+		    "Failed to get keylocation for '%s'."), zfs_get_name(zhp));
 		goto error;
 	} else if (keylocation_srctype == ZPROP_SRC_INHERITED) {
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-		    "Keys must be unloaded for encryption root '%s'."),
-		    keylocation_src);
+		    "Keys must be unloaded for encryption root of '%s' (%s)."),
+		    zfs_get_name(zhp), keylocation_src);
 		ret = EINVAL;
 		goto error;
 	}
@@ -1346,7 +1348,7 @@ zfs_crypto_unload_key(zfs_handle_t *zhp)
 	keystatus = zfs_prop_get_int(zhp, ZFS_PROP_KEYSTATUS);
 	if (keystatus == ZFS_KEYSTATUS_UNAVAILABLE) {
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-		    "Key must be loaded. Try the '-l' flag."));
+		    "Key already unloaded for '%s'."), zfs_get_name(zhp));
 		ret = ENOENT;
 		goto error;
 	}
@@ -1358,11 +1360,12 @@ zfs_crypto_unload_key(zfs_handle_t *zhp)
 		switch (ret) {
 		case ENOENT:
 			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-			    "Key is not currently loaded."));
+			    "Key already unloaded for '%s'."),
+			    zfs_get_name(zhp));
 			break;
 		case EBUSY:
 			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-			    "Dataset is busy."));
+			    "'%s' is busy."), zfs_get_name(zhp));
 			break;
 		}
 		zfs_error(zhp->zfs_hdl, EZFS_CRYPTOFAILED, errbuf);
