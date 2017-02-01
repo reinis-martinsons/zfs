@@ -1166,6 +1166,12 @@ mount_cb(zfs_handle_t *zhp, void *data)
 		return (0);
 	}
 
+	if (zfs_prop_get_int(zhp, ZFS_PROP_KEYSTATUS) ==
+	    ZFS_KEYSTATUS_UNAVAILABLE) {
+		zfs_close(zhp);
+		return (0);
+	}
+
 	/*
 	 * If this filesystem is inconsistent and has a receive resume
 	 * token, we can not mount it.
@@ -1227,7 +1233,6 @@ zpool_enable_datasets(zpool_handle_t *zhp, const char *mntopts, int flags)
 	get_all_cb_t cb = { 0 };
 	libzfs_handle_t *hdl = zhp->zpool_hdl;
 	zfs_handle_t *zfsp;
-	uint64_t crypt;
 	int i, ret = -1;
 	int *good;
 
@@ -1256,14 +1261,6 @@ zpool_enable_datasets(zpool_handle_t *zhp, const char *mntopts, int flags)
 
 	ret = 0;
 	for (i = 0; i < cb.cb_used; i++) {
-		/*
-		 * don't attempt to mount encrypted datasets unless the MS_CRYPT
-		 * flag is set since this will distort the return codes
-		 */
-		crypt = zfs_prop_get_int(cb.cb_handles[i], ZFS_PROP_ENCRYPTION);
-		if (crypt != ZIO_CRYPT_OFF && (flags & MS_CRYPT) == 0)
-			continue;
-
 		if (zfs_mount(cb.cb_handles[i], mntopts, flags) != 0)
 			ret = -1;
 		else

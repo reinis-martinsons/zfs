@@ -132,7 +132,7 @@ get_format_prompt_string(key_format_t format)
 
 static int
 get_key_material_raw(FILE *fd, const char *fsname, zfs_keyformat_t keyformat,
-    boolean_t again, uint8_t **buf, size_t *len_out)
+    boolean_t again, boolean_t newkey, uint8_t **buf, size_t *len_out)
 {
 	int ret = 0, bytes;
 	size_t buflen = 0;
@@ -157,12 +157,14 @@ get_key_material_raw(FILE *fd, const char *fsname, zfs_keyformat_t keyformat,
 
 		/* prompt for the key */
 		if (fsname != NULL) {
-			(void) printf("%s %s for '%s': ",
-			    (!again) ? "Enter" : "Renter",
+			(void) printf("%s %s%s for '%s': ",
+			    (again) ? "Re-enter" : "Enter",
+			    (newkey) ? "new " : "",
 			    get_format_prompt_string(keyformat), fsname);
 		} else {
-			(void) printf("%s %s: ",
-			    (!again) ? "Enter" : "Renter",
+			(void) printf("%s %s%s: ",
+			    (again) ? "Re-enter" : "Enter",
+			    (newkey) ? "new " : "",
 			    get_format_prompt_string(keyformat));
 
 		}
@@ -249,7 +251,7 @@ out:
  * for re-entry attempts.
  */
 static int
-get_key_material(libzfs_handle_t *hdl, boolean_t do_verify,
+get_key_material(libzfs_handle_t *hdl, boolean_t do_verify, boolean_t newkey,
     zfs_keyformat_t keyformat, char *keylocation, const char *fsname,
     uint8_t **km_out, size_t *kmlen_out, boolean_t *can_retry_out)
 {
@@ -288,7 +290,8 @@ get_key_material(libzfs_handle_t *hdl, boolean_t do_verify,
 	}
 
 	/* fetch the key material into the buffer */
-	ret = get_key_material_raw(fd, fsname, keyformat, B_FALSE, &km, &kmlen);
+	ret = get_key_material_raw(fd, fsname, keyformat, B_FALSE, newkey,
+	    &km, &kmlen);
 	if (ret != 0)
 		goto error;
 
@@ -362,8 +365,8 @@ get_key_material(libzfs_handle_t *hdl, boolean_t do_verify,
 	}
 
 	if (do_verify && isatty(fileno(fd))) {
-		ret = get_key_material_raw(fd, fsname, keyformat, B_TRUE, &km2,
-		    &kmlen2);
+		ret = get_key_material_raw(fd, fsname, keyformat, B_TRUE,
+		    newkey, &km2, &kmlen2);
 		if (ret != 0)
 			goto error;
 
@@ -620,8 +623,8 @@ encryption_feature_is_enabled(zpool_handle_t *zph)
 
 static int
 populate_create_encryption_params_nvlists(libzfs_handle_t *hdl,
-    zfs_handle_t *zhp, zfs_keyformat_t keyformat, char *keylocation,
-    nvlist_t *props, nvlist_t *hidden_args)
+    zfs_handle_t *zhp, boolean_t newkey, zfs_keyformat_t keyformat,
+    char *keylocation, nvlist_t *props, nvlist_t *hidden_args)
 {
 	int ret;
 	uint64_t iters, salt = 0;
@@ -631,8 +634,8 @@ populate_create_encryption_params_nvlists(libzfs_handle_t *hdl,
 	const char *fsname = (zhp) ? zfs_get_name(zhp) : NULL;
 
 	/* get key material from keyformat and keylocation */
-	ret = get_key_material(hdl, B_TRUE, keyformat, keylocation, fsname,
-	    &key_material, &key_material_len, NULL);
+	ret = get_key_material(hdl, B_TRUE, newkey, keyformat, keylocation,
+	    fsname, &key_material, &key_material_len, NULL);
 	if (ret != 0)
 		goto error;
 
@@ -904,7 +907,7 @@ zfs_crypto_create(libzfs_handle_t *hdl, char *parent_name, nvlist_t *props,
 		ha = fnvlist_alloc();
 
 		ret = populate_create_encryption_params_nvlists(hdl, NULL,
-		    keyformat, keylocation, props, ha);
+		    B_FALSE, keyformat, keylocation, props, ha);
 		if (ret != 0)
 			goto out;
 	}
@@ -1031,7 +1034,7 @@ zfs_crypto_clone(libzfs_handle_t *hdl, zfs_handle_t *origin_zhp,
 		ha = fnvlist_alloc();
 
 		ret = populate_create_encryption_params_nvlists(hdl, NULL,
-		    keyformat, keylocation, props, ha);
+		    B_FALSE, keyformat, keylocation, props, ha);
 		if (ret != 0)
 			goto out;
 	}
@@ -1048,6 +1051,82 @@ out:
 		nvlist_free(ha);
 
 	*hidden_args = NULL;
+	return (ret);
+}
+
+typedef struct loadkeys_cbdata {
+	uint64_t cb_numfailed;
+	uint64_t cb_numattempted;
+} loadkey_cbdata_t;
+
+static int
+load_keys_cb(zfs_handle_t *zhp, void *arg)
+{
+	int ret;
+	boolean_t is_encroot;
+	loadkey_cbdata_t *cb = arg;
+	uint64_t keystatus = zfs_prop_get_int(zhp, ZFS_PROP_KEYSTATUS);
+
+	/* only attempt to load keys for encryption roots */
+	ret = zfs_crypto_is_encryption_root(zhp, &is_encroot, NULL, 0);
+	if (ret != 0 || !is_encroot)
+		goto out;
+
+	/* don't attempt to load already loaded keys */
+	if (keystatus == ZFS_KEYSTATUS_AVAILABLE)
+		goto out;
+
+	/* Attempt to load the key. Record status in cb. */
+	cb->cb_numattempted++;
+
+	ret = zfs_crypto_load_key(zhp, B_FALSE);
+	if (ret)
+		cb->cb_numfailed++;
+
+out:
+	(void) zfs_iter_filesystems(zhp, load_keys_cb, cb);
+	zfs_close(zhp);
+
+	/* always return 0, since this function is best effort */
+	return (0);
+}
+
+/*
+ * This function is best effort. It attempts to load all the keys for the given
+ * filesystem and all of its children.
+ */
+int
+zfs_crypto_attempt_load_keys(libzfs_handle_t *hdl, char *fsname)
+{
+	int ret;
+	zfs_handle_t *zhp = NULL;
+	loadkey_cbdata_t cb = { 0 };
+
+	zhp = zfs_open(hdl, fsname, ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME);
+	if (zhp == NULL) {
+		ret = ENOENT;
+		goto error;
+	}
+
+	ret = load_keys_cb(zfs_handle_dup(zhp), &cb);
+	if (ret)
+		goto error;
+
+	(void) printf(gettext("%llu / %llu keys successfully loaded\n"),
+	    (u_longlong_t)(cb.cb_numattempted - cb.cb_numfailed),
+	    (u_longlong_t)cb.cb_numattempted);
+
+	if (cb.cb_numfailed != 0) {
+		ret = -1;
+		goto error;
+	}
+
+	zfs_close(zhp);
+	return (0);
+
+error:
+	if (zhp != NULL)
+		zfs_close(zhp);
 	return (ret);
 }
 
@@ -1127,7 +1206,7 @@ try_again:
 	correctible = B_TRUE;
 
 	/* get key material from key format and location */
-	ret = get_key_material(zhp->zfs_hdl, B_FALSE, keyformat,
+	ret = get_key_material(zhp->zfs_hdl, B_FALSE, B_FALSE, keyformat,
 	    prop_keylocation, zfs_get_name(zhp), &key_material,
 	    &key_material_len, &can_retry);
 	if (ret != 0)
@@ -1256,7 +1335,7 @@ zfs_crypto_unload_key(zfs_handle_t *zhp)
 	keystatus = zfs_prop_get_int(zhp, ZFS_PROP_KEYSTATUS);
 	if (keystatus == ZFS_KEYSTATUS_UNAVAILABLE) {
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-		    "Key already unloaded."));
+		    "Key must be loaded. Try the '-l' flag."));
 		ret = ENOENT;
 		goto error;
 	}
@@ -1340,9 +1419,9 @@ zfs_crypto_rewrap(zfs_handle_t *zhp, nvlist_t *raw_props)
 	int ret;
 	char errbuf[1024];
 	nvlist_t *crypto_args = NULL;
-	uint64_t crypt;
-	char prop_keylocation[MAXNAMELEN];
+	uint64_t crypt, keystatus;
 	uint64_t keyformat = ZFS_KEYFORMAT_NONE;
+	char prop_keylocation[MAXNAMELEN];
 	char *keylocation = NULL;
 	nvlist_t *props = NULL;
 
@@ -1363,6 +1442,15 @@ zfs_crypto_rewrap(zfs_handle_t *zhp, nvlist_t *raw_props)
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
 		    "Dataset not encrypted."));
 		ret = EINVAL;
+		goto error;
+	}
+
+	/* check that the key is loaded */
+	keystatus = zfs_prop_get_int(zhp, ZFS_PROP_KEYSTATUS);
+	if (keystatus == ZFS_KEYSTATUS_UNAVAILABLE) {
+		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
+		    "Key must be loaded."));
+		ret = EACCES;
 		goto error;
 	}
 
@@ -1399,7 +1487,7 @@ zfs_crypto_rewrap(zfs_handle_t *zhp, nvlist_t *raw_props)
 	crypto_args = fnvlist_alloc();
 
 	ret = populate_create_encryption_params_nvlists(zhp->zfs_hdl, zhp,
-	    keyformat, keylocation, props, crypto_args);
+	    B_TRUE, keyformat, keylocation, props, crypto_args);
 	if (ret != 0)
 		goto error;
 

@@ -340,7 +340,7 @@ get_usage(zfs_help_t idx)
 		return (gettext("\tchange-key [-l] [-o keyformat=<value>] "
 		    "[-o keylocation=<value>] [-o pbkfd2iters=<value>] "
 		    "<filesystem|volume>\n"
-		    "\tchangekey -i <filesystem|volume>\n"));
+		    "\tchange-key -i [-l] <filesystem|volume>\n"));
 	}
 
 	abort();
@@ -7041,7 +7041,7 @@ load_key_callback(zfs_handle_t *zhp, void *data)
 }
 
 static int
-zfs_change_keystatus(int argc, char **argv, boolean_t loadkey)
+load_unload_keys(int argc, char **argv, boolean_t loadkey)
 {
 	int c, ret = 0, flags = 0;
 	boolean_t do_all = B_FALSE;
@@ -7112,20 +7112,21 @@ zfs_change_keystatus(int argc, char **argv, boolean_t loadkey)
 static int
 zfs_do_load_key(int argc, char **argv)
 {
-	return (zfs_change_keystatus(argc, argv, B_TRUE));
+	return (load_unload_keys(argc, argv, B_TRUE));
 }
 
 
 static int
 zfs_do_unload_key(int argc, char **argv)
 {
-	return (zfs_change_keystatus(argc, argv, B_FALSE));
+	return (load_unload_keys(argc, argv, B_FALSE));
 }
 
 static int
 zfs_do_change_key(int argc, char **argv)
 {
 	int c, ret;
+	uint64_t keystatus;
 	boolean_t loadkey = B_FALSE, inheritkey = B_FALSE;
 	zfs_handle_t *zhp = NULL;
 	nvlist_t *props = fnvlist_alloc();
@@ -7155,12 +7156,6 @@ zfs_do_change_key(int argc, char **argv)
 		usage(B_FALSE);
 	}
 
-	if (inheritkey && loadkey) {
-		(void) fprintf(stderr,
-		    gettext("Inherit flag incompatible with load flag\n"));
-		usage(B_FALSE);
-	}
-
 	argc -= optind;
 	argv += optind;
 
@@ -7178,6 +7173,18 @@ zfs_do_change_key(int argc, char **argv)
 	    ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME);
 	if (zhp == NULL)
 		usage(B_FALSE);
+
+	if (loadkey) {
+		keystatus = zfs_prop_get_int(zhp, ZFS_PROP_KEYSTATUS);
+		if (keystatus != ZFS_KEYSTATUS_AVAILABLE) {
+			ret = zfs_crypto_load_key(zhp, B_FALSE);
+			if (ret != 0)
+				goto error;
+		}
+
+		/* refresh the properties so the new keystatus is visable */
+		zfs_refresh_properties(zhp);
+	}
 
 	ret = zfs_crypto_rewrap(zhp, props);
 	if (ret != 0)
