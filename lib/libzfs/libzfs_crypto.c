@@ -1090,7 +1090,7 @@ load_keys_cb(zfs_handle_t *zhp, void *arg)
 	/* Attempt to load the key. Record status in cb. */
 	cb->cb_numattempted++;
 
-	ret = zfs_crypto_load_key(zhp, B_FALSE);
+	ret = zfs_crypto_load_key(zhp, B_FALSE, NULL);
 	if (ret)
 		cb->cb_numfailed++;
 
@@ -1142,7 +1142,7 @@ error:
 }
 
 int
-zfs_crypto_load_key(zfs_handle_t *zhp, boolean_t noop)
+zfs_crypto_load_key(zfs_handle_t *zhp, boolean_t noop, char *alt_keylocation)
 {
 	int ret, attempts = 0;
 	char errbuf[1024];
@@ -1150,6 +1150,7 @@ zfs_crypto_load_key(zfs_handle_t *zhp, boolean_t noop)
 	uint64_t keyformat = ZFS_KEYFORMAT_NONE;
 	char prop_keylocation[MAXNAMELEN];
 	char keylocation_src[MAXNAMELEN];
+	char *keylocation = NULL;
 	uint8_t *key_material = NULL, *key_data = NULL;
 	size_t key_material_len;
 	nvlist_t *crypto_args = NULL;
@@ -1195,6 +1196,15 @@ zfs_crypto_load_key(zfs_handle_t *zhp, boolean_t noop)
 		goto error;
 	}
 
+	/*
+	 * if the caller has elected to override the keylocation property
+	 * use that instead
+	 */
+	if (alt_keylocation != NULL)
+		keylocation = alt_keylocation;
+	else
+		keylocation = prop_keylocation;
+
 	/* check that the key is unloaded unless this is a noop */
 	if (!noop) {
 		keystatus = zfs_prop_get_int(zhp, ZFS_PROP_KEYSTATUS);
@@ -1218,8 +1228,8 @@ try_again:
 
 	/* get key material from key format and location */
 	ret = get_key_material(zhp->zfs_hdl, B_FALSE, B_FALSE, keyformat,
-	    prop_keylocation, zfs_get_name(zhp), &key_material,
-	    &key_material_len, &can_retry);
+	    keylocation, zfs_get_name(zhp), &key_material, &key_material_len,
+	    &can_retry);
 	if (ret != 0)
 		goto error;
 

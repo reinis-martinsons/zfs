@@ -519,7 +519,7 @@ zfs_mount(zfs_handle_t *zhp, const char *options, int flags)
 		 */
 		if (keystatus == ZFS_KEYSTATUS_UNAVAILABLE) {
 			if (flags & MS_CRYPT) {
-				rc = zfs_crypto_load_key(zhp, B_FALSE);
+				rc = zfs_crypto_load_key(zhp, B_FALSE, NULL);
 				if (rc)
 					return (rc);
 			} else {

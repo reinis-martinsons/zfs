@@ -332,10 +332,11 @@ get_usage(zfs_help_t idx)
 	case HELP_BOOKMARK:
 		return (gettext("\tbookmark <snapshot> <bookmark>\n"));
 	case HELP_LOAD_KEY:
-		return (gettext("\tload-key [-rn] -a | <filesystem|volume>\n"));
+		return (gettext("\tload-key [-rn] [-L <keylocation>] "
+		    "<-a | filesystem|volume>\n"));
 	case HELP_UNLOAD_KEY:
-		return (gettext("\tunload-key [-r] -a | "
-		    "<filesystem|volume>\n"));
+		return (gettext("\tunload-key [-r] "
+		    "<-a | filesystem|volume>\n"));
 	case HELP_CHANGE_KEY:
 		return (gettext("\tchange-key [-l] [-o keyformat=<value>] "
 		    "[-o keylocation=<value>] [-o pbkfd2iters=<value>] "
@@ -6996,6 +6997,7 @@ typedef struct loadkey_cbdata {
 	boolean_t cb_loadkey;
 	boolean_t cb_recursive;
 	boolean_t cb_noop;
+	char *cb_keylocation;
 	uint64_t cb_numfailed;
 	uint64_t cb_numattempted;
 } loadkey_cbdata_t;
@@ -7028,7 +7030,7 @@ load_key_callback(zfs_handle_t *zhp, void *data)
 	cb->cb_numattempted++;
 
 	if (cb->cb_loadkey)
-		ret = zfs_crypto_load_key(zhp, cb->cb_noop);
+		ret = zfs_crypto_load_key(zhp, cb->cb_noop, cb->cb_keylocation);
 	else
 		ret = zfs_crypto_unload_key(zhp);
 
@@ -7049,7 +7051,21 @@ load_unload_keys(int argc, char **argv, boolean_t loadkey)
 
 	cb.cb_loadkey = loadkey;
 
-	while ((c = getopt(argc, argv, "anr")) != -1) {
+	while ((c = getopt(argc, argv, "anrL:")) != -1) {
+		/* noop and alternate keysources only apply to zfs load-key */
+		if (loadkey) {
+			switch (c) {
+			case 'n':
+				cb.cb_noop = B_TRUE;
+				continue;
+			case 'L':
+				cb.cb_keylocation = optarg;
+				continue;
+			default:
+				break;
+			}
+		}
+
 		switch (c) {
 		case 'a':
 			do_all = B_TRUE;
@@ -7058,17 +7074,6 @@ load_unload_keys(int argc, char **argv, boolean_t loadkey)
 		case 'r':
 			flags |= ZFS_ITER_RECURSE;
 			cb.cb_recursive = B_TRUE;
-			break;
-		case 'n':
-			/* noop is only valid for 'zfs load-key' */
-			if (loadkey) {
-				cb.cb_noop = B_TRUE;
-			} else {
-				(void) fprintf(stderr,
-				    gettext("invalid option '%c'\n"), 'n');
-				usage(B_FALSE);
-			}
-
 			break;
 		default:
 			(void) fprintf(stderr,
@@ -7089,6 +7094,13 @@ load_unload_keys(int argc, char **argv, boolean_t loadkey)
 	if (do_all && argc != 0) {
 		(void) fprintf(stderr,
 		    gettext("Cannot specify dataset with -a option\n"));
+		usage(B_FALSE);
+	}
+
+	if (cb.cb_recursive && cb.cb_keylocation != NULL &&
+	    strcmp(cb.cb_keylocation, "prompt") != 0) {
+		(void) fprintf(stderr, gettext("alternate keylocation may only "
+		    "be 'prompt' with -r or -a\n"));
 		usage(B_FALSE);
 	}
 
@@ -7140,8 +7152,10 @@ zfs_do_change_key(int argc, char **argv)
 			inheritkey = B_TRUE;
 			break;
 		case 'o':
-			if (parseprop(props, optarg) != 0)
+			if (parseprop(props, optarg) != 0) {
+				nvlist_free(props);
 				return (1);
+			}
 			break;
 		default:
 			(void) fprintf(stderr,
@@ -7177,7 +7191,7 @@ zfs_do_change_key(int argc, char **argv)
 	if (loadkey) {
 		keystatus = zfs_prop_get_int(zhp, ZFS_PROP_KEYSTATUS);
 		if (keystatus != ZFS_KEYSTATUS_AVAILABLE) {
-			ret = zfs_crypto_load_key(zhp, B_FALSE);
+			ret = zfs_crypto_load_key(zhp, B_FALSE, NULL);
 			if (ret != 0)
 				goto error;
 		}
