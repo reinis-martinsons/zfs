@@ -3161,6 +3161,12 @@ parent_name(const char *path, char *buf, size_t buflen)
 	return (0);
 }
 
+int
+zfs_parent_name(zfs_handle_t *zhp, char *buf, size_t buflen)
+{
+	return (parent_name(zfs_get_name(zhp), buf, buflen));
+}
+
 /*
  * If accept_ancestor is false, then check to make sure that the given path has
  * a parent, and that it exists.  If accept_ancestor is true, then find the

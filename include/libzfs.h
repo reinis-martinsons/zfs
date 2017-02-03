@@ -499,8 +499,7 @@ extern nvlist_t *zfs_get_clones_nvl(zfs_handle_t *);
 /*
  * zfs encryption management
  */
-extern int zfs_crypto_is_encryption_root(zfs_handle_t *, boolean_t *,
-    char *, uint_t);
+extern int zfs_crypto_is_encryption_root(zfs_handle_t *, boolean_t *);
 extern int zfs_crypto_create(libzfs_handle_t *, char *, nvlist_t *, nvlist_t *,
     nvlist_t **);
 extern int zfs_crypto_clone(libzfs_handle_t *, zfs_handle_t *, char *,
@@ -742,6 +741,7 @@ extern const char *zfs_type_to_name(zfs_type_t);
 extern void zfs_refresh_properties(zfs_handle_t *);
 extern int zfs_name_valid(const char *, zfs_type_t);
 extern zfs_handle_t *zfs_path_to_zhandle(libzfs_handle_t *, char *, zfs_type_t);
+extern int zfs_parent_name(zfs_handle_t *, char *, size_t);
 extern boolean_t zfs_dataset_exists(libzfs_handle_t *, const char *,
     zfs_type_t);
 extern int zfs_spa_version(zfs_handle_t *, int *);

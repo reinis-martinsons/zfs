@@ -735,16 +735,8 @@ proplist_has_encryption_props(nvlist_t *props)
 	return (B_FALSE);
 }
 
-/*
- * Determines if the zhp is an encryption root. If it is not an encryption
- * root and inherit_name is specified this function will fill inherit_name
- * with the name of the encryption root this dataset belongs to. This function
- * is mostly for external consumers, since most code in this file will want to
- * keep using the values checked here.
- */
 int
-zfs_crypto_is_encryption_root(zfs_handle_t *zhp, boolean_t *enc_root,
-    char *inherit_name, uint_t buf_len)
+zfs_crypto_is_encryption_root(zfs_handle_t *zhp, boolean_t *enc_root)
 {
 	int ret;
 	char prop_keylocation[MAXNAMELEN];
@@ -753,8 +745,6 @@ zfs_crypto_is_encryption_root(zfs_handle_t *zhp, boolean_t *enc_root,
 
 	/* if the dataset isn't encrypted, just return */
 	if (zfs_prop_get_int(zhp, ZFS_PROP_ENCRYPTION) == ZIO_CRYPT_OFF) {
-		if (inherit_name)
-			inherit_name[0] = '\0';
 		*enc_root = B_FALSE;
 		return (0);
 	}
@@ -764,16 +754,12 @@ zfs_crypto_is_encryption_root(zfs_handle_t *zhp, boolean_t *enc_root,
 	    sizeof (prop_keylocation), &keylocation_srctype, keylocation_src,
 	    sizeof (keylocation_src), B_TRUE);
 	if (ret != 0) {
-		if (inherit_name)
-			inherit_name[0] = '\0';
 		*enc_root = B_FALSE;
 		return (ret);
 	}
 
 	/* check if the keylocation was inheritted */
 	if (keylocation_srctype == ZPROP_SRC_INHERITED) {
-		if (inherit_name)
-			(void) strncpy(inherit_name, keylocation_src, buf_len);
 		*enc_root = B_FALSE;
 		return (EINVAL);
 	}
@@ -1079,7 +1065,7 @@ load_keys_cb(zfs_handle_t *zhp, void *arg)
 	uint64_t keystatus = zfs_prop_get_int(zhp, ZFS_PROP_KEYSTATUS);
 
 	/* only attempt to load keys for encryption roots */
-	ret = zfs_crypto_is_encryption_root(zhp, &is_encroot, NULL, 0);
+	ret = zfs_crypto_is_encryption_root(zhp, &is_encroot);
 	if (ret != 0 || !is_encroot)
 		goto out;
 
@@ -1442,12 +1428,15 @@ zfs_crypto_rewrap(zfs_handle_t *zhp, nvlist_t *raw_props, boolean_t inheritkey)
 {
 	int ret;
 	char errbuf[1024];
+	boolean_t is_encroot;
 	nvlist_t *props = NULL;
 	nvlist_t *crypto_args = NULL;
-	uint64_t crypt, keystatus;
+	uint64_t crypt, pcrypt, keystatus, pkeystatus;
 	uint64_t keyformat = ZFS_KEYFORMAT_NONE;
-	char prop_keylocation[MAXNAMELEN];
+	zfs_handle_t *pzhp = NULL;
 	char *keylocation = NULL;
+	char prop_keylocation[MAXNAMELEN];
+	char parent_name[ZFS_MAX_DATASET_NAME_LEN];
 
 	(void) snprintf(errbuf, sizeof (errbuf),
 	    dgettext(TEXT_DOMAIN, "Key change error"));
@@ -1466,15 +1455,6 @@ zfs_crypto_rewrap(zfs_handle_t *zhp, nvlist_t *raw_props, boolean_t inheritkey)
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
 		    "Dataset not encrypted."));
 		ret = EINVAL;
-		goto error;
-	}
-
-	/* check that the key is loaded */
-	keystatus = zfs_prop_get_int(zhp, ZFS_PROP_KEYSTATUS);
-	if (keystatus == ZFS_KEYSTATUS_UNAVAILABLE) {
-		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-		    "Key must be loaded."));
-		ret = EACCES;
 		goto error;
 	}
 
@@ -1522,6 +1502,61 @@ zfs_crypto_rewrap(zfs_handle_t *zhp, nvlist_t *raw_props, boolean_t inheritkey)
 		    zhp, B_TRUE, keyformat, keylocation, props, crypto_args);
 		if (ret != 0)
 			goto error;
+	} else {
+		/* check that zhp is an encryption root */
+		ret = zfs_crypto_is_encryption_root(zhp, &is_encroot);
+		if (ret != 0 || !is_encroot) {
+			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
+			    "Key inheritting can only be performed on "
+			    "encryption roots."));
+			ret = EINVAL;
+			goto error;
+		}
+
+		/* get the parent's name */
+		ret = zfs_parent_name(zhp, parent_name, sizeof (parent_name));
+		if (ret != 0) {
+			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
+			    "Root dataset cannot inherit key."));
+			ret = EINVAL;
+			goto error;
+		}
+
+		/* get a handle to the parent */
+		pzhp = make_dataset_handle(zhp->zfs_hdl, parent_name);
+		if (pzhp == NULL) {
+			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
+			    "Failed to lookup parent."));
+			ret = ENOENT;
+			goto error;
+		}
+
+		/* parent must be encrypted */
+		pcrypt = zfs_prop_get_int(pzhp, ZFS_PROP_ENCRYPTION);
+		if (pcrypt == ZIO_CRYPT_OFF) {
+			zfs_error_aux(pzhp->zfs_hdl, dgettext(TEXT_DOMAIN,
+			    "Parent must be encrypted."));
+			ret = EINVAL;
+			goto error;
+		}
+
+		/* check that the parent's key is loaded */
+		pkeystatus = zfs_prop_get_int(pzhp, ZFS_PROP_KEYSTATUS);
+		if (pkeystatus == ZFS_KEYSTATUS_UNAVAILABLE) {
+			zfs_error_aux(pzhp->zfs_hdl, dgettext(TEXT_DOMAIN,
+			    "Parent key must be loaded."));
+			ret = EACCES;
+			goto error;
+		}
+	}
+
+	/* check that the key is loaded */
+	keystatus = zfs_prop_get_int(zhp, ZFS_PROP_KEYSTATUS);
+	if (keystatus == ZFS_KEYSTATUS_UNAVAILABLE) {
+		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
+		    "Key must be loaded."));
+		ret = EACCES;
+		goto error;
 	}
 
 	/* call the ioctl */
@@ -1540,6 +1575,8 @@ zfs_crypto_rewrap(zfs_handle_t *zhp, nvlist_t *raw_props, boolean_t inheritkey)
 		zfs_error(zhp->zfs_hdl, EZFS_CRYPTOFAILED, errbuf);
 	}
 
+	if (pzhp != NULL)
+		zfs_close(pzhp);
 	if (props != NULL)
 		nvlist_free(props);
 	if (crypto_args != NULL)
@@ -1548,6 +1585,8 @@ zfs_crypto_rewrap(zfs_handle_t *zhp, nvlist_t *raw_props, boolean_t inheritkey)
 	return (ret);
 
 error:
+	if (pzhp != NULL)
+		zfs_close(pzhp);
 	if (props != NULL)
 		nvlist_free(props);
 	if (crypto_args != NULL)

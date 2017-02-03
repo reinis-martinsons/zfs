@@ -88,6 +88,9 @@ dsl_wrapping_key_rele(dsl_wrapping_key_t *wkey, void *tag)
 void
 dsl_wrapping_key_free(dsl_wrapping_key_t *wkey)
 {
+#ifdef _KERNEL
+	printk(KERN_DEBUG "wkey = %llu\n", wkey->wk_ddobj);
+#endif
 	ASSERT0(refcount_count(&wkey->wk_refcnt));
 
 	if (wkey->wk_key.ck_data) {
@@ -1460,6 +1463,8 @@ spa_keystore_rewrap_sync(void *arg, dmu_tx_t *tx)
 	if (skra->skra_cp != NULL) {
 		avl_find(&spa->spa_keystore.sk_wkeys, wkey, &where);
 		avl_insert(&spa->spa_keystore.sk_wkeys, wkey, where);
+	} else {
+		dsl_wrapping_key_rele(wkey, FTAG);
 	}
 
 	rw_exit(&spa->spa_keystore.sk_wkeys_lock);
