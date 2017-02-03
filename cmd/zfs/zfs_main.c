@@ -4196,8 +4196,8 @@ zfs_do_receive(int argc, char **argv)
 #define	ZFS_DELEG_PERM_RELEASE		"release"
 #define	ZFS_DELEG_PERM_DIFF		"diff"
 #define	ZFS_DELEG_PERM_BOOKMARK		"bookmark"
-#define	ZFS_DELEG_PERM_LOAD_KEY		"keyuse"
-#define	ZFS_DELEG_PERM_CHANGE_KEY	"keychange"
+#define	ZFS_DELEG_PERM_LOAD_KEY		"load-key"
+#define	ZFS_DELEG_PERM_CHANGE_KEY	"change-key"
 
 #define	ZFS_NUM_DELEG_NOTES ZFS_DELEG_NOTE_NONE
 
@@ -7052,7 +7052,7 @@ load_unload_keys(int argc, char **argv, boolean_t loadkey)
 	cb.cb_loadkey = loadkey;
 
 	while ((c = getopt(argc, argv, "anrL:")) != -1) {
-		/* noop and alternate keysources only apply to zfs load-key */
+		/* noop and alternate keylocations only apply to zfs load-key */
 		if (loadkey) {
 			switch (c) {
 			case 'n':

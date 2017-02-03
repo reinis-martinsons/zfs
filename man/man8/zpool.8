@@ -154,7 +154,7 @@ zpool \- configures ZFS storage pools
 
 .LP
 .nf
-\fBzpool split\fR [\fB-gLnP\fR] [\fB-R\fR \fIaltroot\fR] [\fB-o\fR \fIproperty=value\fR] \fIpool\fR \fInewpool\fR [\fIdevice\fR ...]
+\fBzpool split\fR [\fB-glLnP\fR] [\fB-R\fR \fIaltroot\fR] [\fB-o\fR \fIproperty=value\fR] \fIpool\fR \fInewpool\fR [\fIdevice\fR ...]
 .fi
 
 .LP
@@ -1296,7 +1296,11 @@ Recovery mode for a non-importable pool. Attempt to return the pool to an import
 \fB\fB-l\fR\fR
 .ad
 .RS 21n
-Indicates that the zpool command will request encryption keys for all encrypted datasets it attempts to mount as it is bringing the pool online. This is equivalent to running \fBzfs mount\fR on each encrypted dataset immediately after the pool is imported. If any datasets have a \fBprompt\fR keysource this command will block waiting for the key to be entered. Otherwise, encrypted datasets will be left unavailable until the keys are loaded.
+Indicates that this command will request encryption keys for all encrypted
+datasets it attempts to mount as it is bringing the pool online. Note that
+if any datasets have a \fBkeylocation\fR of \fBprompt\fR this command will
+block waiting for the keys to be entered. Without this flag encrypted datasets
+will be left unavailable until the keys are loaded.
 .RE
 
 .sp
@@ -1462,7 +1466,11 @@ Recovery mode for a non-importable pool. Attempt to return the pool to an import
 .ad
 .sp .6
 .RS 4n
-Indicates that the zpool command will request encryption keys for all encrypted datasets it attempts to mount as it is bringing the pool online. This is equivalent to running \fBzfs mount\fR on each encrypted dataset immediately after the pool is imported. If any datasets have a \fBprompt\fR keysource this command will block waiting for the key to be entered. Otherwise, encrypted datasets will be left unavailable until the keys are loaded.
+Indicates that this command will request encryption keys for all encrypted
+datasets it attempts to mount as it is bringing the pool online. Note that if
+any datasets have a \fBkeylocation\fR of \fBprompt\fR this command will block
+waiting for the keys to be entered. Without this flag encrypted datasets will
+be left unavailable until the keys are loaded.
 .RE
 
 .sp
@@ -2048,7 +2056,7 @@ Sets the given property on the specified pool. See the "Properties" section for 
 .sp
 .ne 2
 .na
-\fBzpool split\fR [\fB-gLnP\fR] [\fB-R\fR \fIaltroot\fR] [\fB-o\fR \fIproperty=value\fR] \fIpool\fR \fInewpool\fR [\fIdevice\fR ...]
+\fBzpool split\fR [\fB-glLnP\fR] [\fB-R\fR \fIaltroot\fR] [\fB-o\fR \fIproperty=value\fR] \fIpool\fR \fInewpool\fR [\fIdevice\fR ...]
 .ad
 .sp .6
 .RS 4n
@@ -2063,6 +2071,19 @@ The optional \fIdevice\fR specification causes the specified device(s) to be inc
 .ad
 .RS 6n
 Display vdev GUIDs instead of the normal device names. These GUIDs can be used in place of device names for the zpool detach/offline/remove/replace commands.
+.RE
+
+.sp
+.ne 2
+.na
+\fB\fB-l\fR\fR
+.ad
+.RS 6n
+Indicates that this command will request encryption keys for all encrypted
+datasets it attempts to mount as it is bringing the new pool online. Note that
+if any datasets have a \fBkeylocation\fR of \fBprompt\fR this command will
+block waiting for the keys to be entered. Without this flag encrypted datasets
+will be left unavailable until the keys are loaded.
 .RE
 
 .sp
