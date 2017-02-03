@@ -1438,16 +1438,16 @@ error:
 }
 
 int
-zfs_crypto_rewrap(zfs_handle_t *zhp, nvlist_t *raw_props)
+zfs_crypto_rewrap(zfs_handle_t *zhp, nvlist_t *raw_props, boolean_t inheritkey)
 {
 	int ret;
 	char errbuf[1024];
+	nvlist_t *props = NULL;
 	nvlist_t *crypto_args = NULL;
 	uint64_t crypt, keystatus;
 	uint64_t keyformat = ZFS_KEYFORMAT_NONE;
 	char prop_keylocation[MAXNAMELEN];
 	char *keylocation = NULL;
-	nvlist_t *props = NULL;
 
 	(void) snprintf(errbuf, sizeof (errbuf),
 	    dgettext(TEXT_DOMAIN, "Key change error"));
@@ -1478,42 +1478,51 @@ zfs_crypto_rewrap(zfs_handle_t *zhp, nvlist_t *raw_props)
 		goto error;
 	}
 
-	/* validate the provided properties */
-	ret = zfs_crypto_verify_rewrap_nvlist(zhp, raw_props, &props, errbuf);
-	if (ret != 0)
-		goto error;
-
 	/*
-	 * Load keyformat and keylocation from the nvlist. Fetch from the
-	 * dataset properties if not specified.
+	 * if the user wants to use the inheritkey variant of this function
+	 * we son't need to collect any crypto arguments
 	 */
-	(void) nvlist_lookup_uint64(props,
-	    zfs_prop_to_name(ZFS_PROP_KEYFORMAT), &keyformat);
-	(void) nvlist_lookup_string(props,
-	    zfs_prop_to_name(ZFS_PROP_KEYLOCATION), &keylocation);
-
-	if (keyformat == ZFS_KEYFORMAT_NONE)
-		keyformat = zfs_prop_get_int(zhp, ZFS_PROP_KEYFORMAT);
-
-	if (keylocation == NULL) {
-		ret = zfs_prop_get(zhp, ZFS_PROP_KEYLOCATION, prop_keylocation,
-		    sizeof (prop_keylocation), NULL, NULL, 0, B_TRUE);
-		if (ret != 0) {
-			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-			    "Failed to get existing keylocation property."));
+	if (!inheritkey) {
+		/* validate the provided properties */
+		ret = zfs_crypto_verify_rewrap_nvlist(zhp, raw_props, &props,
+		    errbuf);
+		if (ret != 0)
 			goto error;
+
+		/*
+		 * Load keyformat and keylocation from the nvlist. Fetch from
+		 * the dataset properties if not specified.
+		 */
+		(void) nvlist_lookup_uint64(props,
+		    zfs_prop_to_name(ZFS_PROP_KEYFORMAT), &keyformat);
+		(void) nvlist_lookup_string(props,
+		    zfs_prop_to_name(ZFS_PROP_KEYLOCATION), &keylocation);
+
+		if (keyformat == ZFS_KEYFORMAT_NONE)
+			keyformat = zfs_prop_get_int(zhp, ZFS_PROP_KEYFORMAT);
+
+		if (keylocation == NULL) {
+			ret = zfs_prop_get(zhp, ZFS_PROP_KEYLOCATION,
+			    prop_keylocation, sizeof (prop_keylocation),
+			    NULL, NULL, 0, B_TRUE);
+			if (ret != 0) {
+				zfs_error_aux(zhp->zfs_hdl,
+				    dgettext(TEXT_DOMAIN, "Failed to get "
+				    "existing keylocation property."));
+				goto error;
+			}
+
+			keylocation = prop_keylocation;
 		}
 
-		keylocation = prop_keylocation;
+		/* populate an nvlist with the new wrapping key */
+		crypto_args = fnvlist_alloc();
+
+		ret = populate_create_encryption_params_nvlists(zhp->zfs_hdl,
+		    zhp, B_TRUE, keyformat, keylocation, props, crypto_args);
+		if (ret != 0)
+			goto error;
 	}
-
-	/* populate an nvlist with the encryption params */
-	crypto_args = fnvlist_alloc();
-
-	ret = populate_create_encryption_params_nvlists(zhp->zfs_hdl, zhp,
-	    B_TRUE, keyformat, keylocation, props, crypto_args);
-	if (ret != 0)
-		goto error;
 
 	/* call the ioctl */
 	ret = lzc_change_key(zhp->zfs_name, props, crypto_args);
@@ -1531,15 +1540,16 @@ zfs_crypto_rewrap(zfs_handle_t *zhp, nvlist_t *raw_props)
 		zfs_error(zhp->zfs_hdl, EZFS_CRYPTOFAILED, errbuf);
 	}
 
-	nvlist_free(props);
-	nvlist_free(crypto_args);
+	if (props != NULL)
+		nvlist_free(props);
+	if (crypto_args != NULL)
+		nvlist_free(crypto_args);
 
 	return (ret);
 
 error:
 	if (props != NULL)
 		nvlist_free(props);
-
 	if (crypto_args != NULL)
 		nvlist_free(crypto_args);
 

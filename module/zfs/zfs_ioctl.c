@@ -5828,8 +5828,8 @@ error:
  * here to change how the key is derived in userspace.
  *
  * innvl: {
- *    "hidden_args" -> { "wkeydata" -> value }
- *    "props" -> { prop -> value }
+ *    "hidden_args" (optional) -> { "wkeydata" -> value }
+ *    "props" (optional) -> { prop -> value }
  * }
  *
  * outnvl is unused
@@ -5840,34 +5840,15 @@ zfs_ioc_change_key(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl)
 {
 	int ret;
 	dsl_crypto_params_t *dcp = NULL;
-	nvlist_t *args, *hidden_args;
+	nvlist_t *args = NULL, *hidden_args = NULL;
 
 	if (strchr(dsname, '@') != NULL || strchr(dsname, '%') != NULL) {
 		ret = (SET_ERROR(EINVAL));
 		goto error;
 	}
 
-	ret = nvlist_lookup_nvlist(innvl, ZPOOL_HIDDEN_ARGS, &hidden_args);
-	if (ret != 0) {
-		ret = SET_ERROR(EINVAL);
-		goto error;
-	}
-
-	ret = dsl_crypto_params_create_nvlist(NULL, hidden_args, &dcp);
-	if (ret != 0)
-		goto error;
-
-	ret = nvlist_lookup_nvlist(innvl, "props", &args);
-	if (ret != 0) {
-		ret = SET_ERROR(EINVAL);
-		goto error;
-	}
-
-	ret = nvlist_lookup_nvlist(innvl, ZPOOL_HIDDEN_ARGS, &hidden_args);
-	if (ret != 0) {
-		ret = SET_ERROR(EINVAL);
-		goto error;
-	}
+	(void) nvlist_lookup_nvlist(innvl, "props", &args);
+	(void) nvlist_lookup_nvlist(innvl, ZPOOL_HIDDEN_ARGS, &hidden_args);
 
 	ret = dsl_crypto_params_create_nvlist(args, hidden_args, &dcp);
 	if (ret != 0)

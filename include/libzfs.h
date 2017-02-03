@@ -508,7 +508,7 @@ extern int zfs_crypto_clone(libzfs_handle_t *, zfs_handle_t *, char *,
 extern int zfs_crypto_attempt_load_keys(libzfs_handle_t *, char *);
 extern int zfs_crypto_load_key(zfs_handle_t *, boolean_t, char *);
 extern int zfs_crypto_unload_key(zfs_handle_t *);
-extern int zfs_crypto_rewrap(zfs_handle_t *, nvlist_t *);
+extern int zfs_crypto_rewrap(zfs_handle_t *, nvlist_t *, boolean_t);
 
 typedef struct zprop_list {
 	int		pl_prop;

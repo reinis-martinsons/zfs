@@ -987,11 +987,9 @@ lzc_change_key(const char *fsname, nvlist_t *args, nvlist_t *hidden_args)
 	int error;
 	nvlist_t *ioc_args = NULL;
 
-	if (hidden_args == NULL)
-		return (EINVAL);
-
 	ioc_args = fnvlist_alloc();
-	fnvlist_add_nvlist(ioc_args, ZPOOL_HIDDEN_ARGS, hidden_args);
+	if (hidden_args != NULL)
+		fnvlist_add_nvlist(ioc_args, ZPOOL_HIDDEN_ARGS, hidden_args);
 	if (args != NULL)
 		fnvlist_add_nvlist(ioc_args, "props", args);
 	error = lzc_ioctl(ZFS_IOC_CHANGE_KEY, fsname, ioc_args, NULL);

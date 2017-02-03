@@ -1135,6 +1135,22 @@ error_unlock:
 	return (ret);
 }
 
+static int
+dmu_objset_check_wkey_loaded(dsl_dir_t *dd)
+{
+	int ret;
+	dsl_wrapping_key_t *wkey = NULL;
+
+	ret = spa_keystore_wkey_hold_ddobj(dd->dd_pool->dp_spa,
+	    dd->dd_object, FTAG, &wkey);
+	if (ret != 0)
+		return (SET_ERROR(EACCES));
+
+	dsl_wrapping_key_rele(wkey, FTAG);
+
+	return (0);
+}
+
 static void
 dsl_crypto_key_sync(dsl_crypto_key_t *dck, dmu_tx_t *tx)
 {
@@ -1181,7 +1197,7 @@ spa_keystore_rewrap_check(void *arg, dmu_tx_t *tx)
 	int ret;
 	uint64_t keyformat = ZFS_KEYFORMAT_NONE;
 	dsl_dir_t *dd = NULL;
-	dsl_crypto_key_t *dck = NULL;
+	dsl_dir_t *inherit_dd = NULL;
 	dsl_pool_t *dp = dmu_tx_pool(tx);
 	spa_keystore_rewrap_args_t *skra = arg;
 	dsl_crypto_params_t *dcp = skra->skra_cp;
@@ -1189,8 +1205,9 @@ spa_keystore_rewrap_check(void *arg, dmu_tx_t *tx)
 	/* hold the dd */
 	ret = dsl_dir_hold(dp, skra->skra_dsname, FTAG, &dd, NULL);
 	if (ret != 0)
-		return (ret);
+		goto error;
 
+	/* check for the encryption feature */
 	if (!spa_feature_is_enabled(dp->dp_spa, SPA_FEATURE_ENCRYPTION)) {
 		ret = (SET_ERROR(ENOTSUP));
 		goto error;
@@ -1202,10 +1219,41 @@ spa_keystore_rewrap_check(void *arg, dmu_tx_t *tx)
 		goto error;
 	}
 
-	/* all callers must specify a dcp */
-	if (dcp == NULL) {
+	/* check that dd is an encryption root */
+	ret = dsl_dir_hold_keylocation_source_dd(dd, FTAG, &inherit_dd);
+	if (ret != 0)
+		goto error;
+
+	if (dd->dd_object != inherit_dd->dd_object) {
 		ret = SET_ERROR(EINVAL);
 		goto error;
+	}
+
+	/*
+	 * A NULL dcp implies that the user wants this dataset to inherit
+	 * the parent's wrapping key.
+	 */
+	if (dcp == NULL) {
+		/* Quickly check that the parent is encrypted */
+		if (dd->dd_parent->dd_crypto_obj == 0) {
+			ret = SET_ERROR(EINVAL);
+			goto error;
+		}
+
+		ret = dmu_objset_check_wkey_loaded(dd);
+		if (ret != 0)
+			goto error;
+
+		ret = dmu_objset_check_wkey_loaded(dd->dd_parent);
+		if (ret != 0)
+			goto error;
+
+		if (inherit_dd != NULL)
+			dsl_dir_rele(inherit_dd, FTAG);
+		if (dd != NULL)
+			dsl_dir_rele(dd, FTAG);
+
+		return (0);
 	}
 
 	/* figure out what the new format will be */
@@ -1218,7 +1266,7 @@ spa_keystore_rewrap_check(void *arg, dmu_tx_t *tx)
 		keyformat = dcp->cp_keyformat;
 	}
 
-	/* all callers must specify a wkey */
+	/* we are not inheritting our parent's wkey so we need one ourselves */
 	if (dcp->cp_wkey == NULL) {
 		ret = SET_ERROR(EINVAL);
 		goto error;
@@ -1238,22 +1286,23 @@ spa_keystore_rewrap_check(void *arg, dmu_tx_t *tx)
 		goto error;
 	}
 
-	/* make sure the dsl key is loaded */
-	ret = spa_keystore_dsl_key_hold_dd(dp->dp_spa, dd, FTAG, &dck);
+	/* make sure the dd's wkey is loaded */
+	ret = dmu_objset_check_wkey_loaded(dd);
 	if (ret != 0)
 		goto error;
 
-	ASSERT(dck->dck_wkey != NULL);
-
-	spa_keystore_dsl_key_rele(dp->dp_spa, dck, FTAG);
-	dsl_dir_rele(dd, FTAG);
+	if (inherit_dd != NULL)
+		dsl_dir_rele(inherit_dd, FTAG);
+	if (dd != NULL)
+		dsl_dir_rele(dd, FTAG);
 
 	return (0);
 
 error:
-	if (dck != NULL)
-		spa_keystore_dsl_key_rele(dp->dp_spa, dck, FTAG);
-	dsl_dir_rele(dd, FTAG);
+	if (inherit_dd != NULL)
+		dsl_dir_rele(inherit_dd, FTAG);
+	if (dd != NULL)
+		dsl_dir_rele(dd, FTAG);
 
 	return (ret);
 }
@@ -1324,61 +1373,94 @@ spa_keystore_rewrap_sync(void *arg, dmu_tx_t *tx)
 	dsl_pool_t *dp = dmu_tx_pool(tx);
 	spa_t *spa = dp->dp_spa;
 	spa_keystore_rewrap_args_t *skra = arg;
-	dsl_wrapping_key_t *wkey = skra->skra_cp->cp_wkey;
-	dsl_wrapping_key_t *found_wkey;
+	dsl_wrapping_key_t *wkey, *found_wkey;
+	dsl_wrapping_key_t wkey_search;
 	uint64_t keyformat;
-	const char *keylocation = skra->skra_cp->cp_keylocation;
+	const char *keylocation;
 
 	/* create and initialize the wrapping key */
 	VERIFY0(dsl_dataset_hold(dp, skra->skra_dsname, FTAG, &ds));
 	ASSERT(!ds->ds_is_snapshot);
 
-	/*
-	 * Set additional properties which can be sent along with this ioctl.
-	 * Note that this command can set keylocation even if it can't normally
-	 * be set via 'zfs set' due to a non-local keylocation. In this case we
-	 * will actually sever the inheritted keyocation.
-	 */
-	if (keylocation != NULL) {
+	if (skra->skra_cp != NULL) {
+		/*
+		 * We are changing to a new wkey. Set additional properties
+		 * which can be sent along with this ioctl. Note that this
+		 * command can set keylocation even if it can't normally be
+		 * set via 'zfs set' due to a non-local keylocation.
+		 */
+		keylocation = skra->skra_cp->cp_keylocation;
+		wkey = skra->skra_cp->cp_wkey;
+		wkey->wk_ddobj = ds->ds_dir->dd_object;
+
+		if (keylocation != NULL) {
+			dsl_prop_set_sync_impl(ds,
+			    zfs_prop_to_name(ZFS_PROP_KEYLOCATION),
+			    ZPROP_SRC_LOCAL, 1, strlen(keylocation) + 1,
+			    keylocation, tx);
+		}
+
+		if (skra->skra_cp->cp_keyformat != ZFS_KEYFORMAT_NONE) {
+			keyformat = skra->skra_cp->cp_keyformat;
+			dsl_prop_set_sync_impl(ds,
+			    zfs_prop_to_name(ZFS_PROP_KEYFORMAT),
+			    ZPROP_SRC_LOCAL, 8, 1, &keyformat, tx);
+		}
+
 		dsl_prop_set_sync_impl(ds,
-		    zfs_prop_to_name(ZFS_PROP_KEYLOCATION), ZPROP_SRC_LOCAL,
-		    1, strlen(keylocation) + 1, keylocation, tx);
-	}
+		    zfs_prop_to_name(ZFS_PROP_PBKDF2_ITERS), ZPROP_SRC_LOCAL,
+		    8, 1, &skra->skra_cp->cp_iters, tx);
 
-	if (skra->skra_cp->cp_keyformat != ZFS_KEYFORMAT_NONE) {
-		keyformat = skra->skra_cp->cp_keyformat;
 		dsl_prop_set_sync_impl(ds,
-		    zfs_prop_to_name(ZFS_PROP_KEYFORMAT), ZPROP_SRC_LOCAL,
-		    8, 1, &keyformat, tx);
+		    zfs_prop_to_name(ZFS_PROP_PBKDF2_SALT), ZPROP_SRC_LOCAL,
+		    8, 1, &skra->skra_cp->cp_salt, tx);
+	} else {
+		/*
+		 * We are inheritting the parent's wkey. Unset encryption all
+		 * parameters and grab a reference to the wkey.
+		 */
+		VERIFY0(spa_keystore_wkey_hold_ddobj(spa,
+		    ds->ds_dir->dd_parent->dd_object, FTAG, &wkey));
+
+		dsl_prop_set_sync_impl(ds,
+		    zfs_prop_to_name(ZFS_PROP_KEYLOCATION), ZPROP_SRC_NONE,
+		    0, 0, NULL, tx);
+
+		dsl_prop_set_sync_impl(ds,
+		    zfs_prop_to_name(ZFS_PROP_KEYFORMAT), ZPROP_SRC_NONE,
+		    0, 0, NULL, tx);
+
+		dsl_prop_set_sync_impl(ds,
+		    zfs_prop_to_name(ZFS_PROP_PBKDF2_ITERS), ZPROP_SRC_NONE,
+		    0, 0, NULL, tx);
+
+		dsl_prop_set_sync_impl(ds,
+		    zfs_prop_to_name(ZFS_PROP_PBKDF2_SALT), ZPROP_SRC_NONE,
+		    0, 0, NULL, tx);
 	}
-
-	dsl_prop_set_sync_impl(ds, zfs_prop_to_name(ZFS_PROP_PBKDF2_ITERS),
-	    ZPROP_SRC_LOCAL, 8, 1, &skra->skra_cp->cp_iters, tx);
-
-	dsl_prop_set_sync_impl(ds, zfs_prop_to_name(ZFS_PROP_PBKDF2_SALT),
-	    ZPROP_SRC_LOCAL, 8, 1, &skra->skra_cp->cp_salt, tx);
-
-	wkey->wk_ddobj = ds->ds_dir->dd_object;
 
 	rw_enter(&spa->spa_keystore.sk_wkeys_lock, RW_WRITER);
 
 	/* recurse through all children and rewrap their keys */
-	spa_keystore_rewrap_sync_impl(ds->ds_dir->dd_object,
-	    ds->ds_dir->dd_object, wkey, tx);
+	spa_keystore_rewrap_sync_impl(wkey->wk_ddobj, ds->ds_dir->dd_object,
+	    wkey, tx);
 
 	/*
 	 * All references to the old wkey should be released now (if it
 	 * existed). Replace the wrapping key.
 	 */
-	found_wkey = avl_find(&spa->spa_keystore.sk_wkeys, wkey, NULL);
+	wkey_search.wk_ddobj = ds->ds_dir->dd_object;
+	found_wkey = avl_find(&spa->spa_keystore.sk_wkeys, &wkey_search, NULL);
 	if (found_wkey != NULL) {
 		ASSERT0(refcount_count(&found_wkey->wk_refcnt));
 		avl_remove(&spa->spa_keystore.sk_wkeys, found_wkey);
 		dsl_wrapping_key_free(found_wkey);
 	}
 
-	avl_find(&spa->spa_keystore.sk_wkeys, wkey, &where);
-	avl_insert(&spa->spa_keystore.sk_wkeys, wkey, where);
+	if (skra->skra_cp != NULL) {
+		avl_find(&spa->spa_keystore.sk_wkeys, wkey, &where);
+		avl_insert(&spa->spa_keystore.sk_wkeys, wkey, where);
+	}
 
 	rw_exit(&spa->spa_keystore.sk_wkeys_lock);
 
@@ -1398,23 +1480,6 @@ spa_keystore_rewrap(const char *dsname, dsl_crypto_params_t *dcp)
 	return (dsl_sync_task(dsname, spa_keystore_rewrap_check,
 	    spa_keystore_rewrap_sync, &skra, 0, ZFS_SPACE_CHECK_NORMAL));
 }
-
-static int
-dmu_objset_check_wkey_loaded(dsl_dir_t *dd)
-{
-	int ret;
-	dsl_wrapping_key_t *wkey = NULL;
-
-	ret = spa_keystore_wkey_hold_ddobj(dd->dd_pool->dp_spa,
-	    dd->dd_object, FTAG, &wkey);
-	if (ret != 0)
-		return (SET_ERROR(EACCES));
-
-	dsl_wrapping_key_rele(wkey, FTAG);
-
-	return (0);
-}
-
 
 /*
  * This is the combined check function for verifying encrypted create and

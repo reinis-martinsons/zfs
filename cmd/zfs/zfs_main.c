@@ -7200,7 +7200,7 @@ zfs_do_change_key(int argc, char **argv)
 		zfs_refresh_properties(zhp);
 	}
 
-	ret = zfs_crypto_rewrap(zhp, props);
+	ret = zfs_crypto_rewrap(zhp, props, inheritkey);
 	if (ret != 0)
 		goto error;
 
