@@ -14,7 +14,7 @@
  */
 
 /*
- * Copyright (c) 2016, Datto, Inc. All rights reserved.
+ * Copyright (c) 2017, Datto, Inc. All rights reserved.
  */
 
 #ifndef	_SYS_DSL_CRYPT_H
@@ -31,7 +31,7 @@ struct dsl_dataset;
 
 /* in memory representation of a wrapping key */
 typedef struct dsl_wrapping_key {
-	/* link into the keystore's tree of wrapping keys */
+	/* link on spa_keystore_t:sk_wkeys */
 	avl_node_t wk_avl_link;
 
 	/* actual wrapping key */
@@ -71,7 +71,7 @@ typedef struct dsl_crypto_params {
 
 /* in-memory representation of an encryption key for a dataset */
 typedef struct dsl_crypto_key {
-	/* avl node for linking into the keystore */
+	/* link on spa_keystore_t:sk_dsl_keys */
 	avl_node_t dck_avl_link;
 
 	/* refcount of dsl_key_mapping_t's holding this key */
@@ -93,7 +93,7 @@ typedef struct dsl_crypto_key {
  * for performing data encryption and decryption.
  */
 typedef struct dsl_key_mapping {
-	/* avl node for linking into the keystore */
+	/* link on spa_keystore_t:sk_key_mappings */
 	avl_node_t km_avl_link;
 
 	/* refcount of how many users are depending on this mapping */
@@ -123,7 +123,7 @@ typedef struct spa_keystore {
 	/* lock for protecting the wrapping keys tree */
 	krwlock_t sk_wkeys_lock;
 
-	/* tree of all wrapping keys, indexed by ddobj */
+	/* tree of all dsl_wrapping_key_t's, indexed by ddobj */
 	avl_tree_t sk_wkeys;
 } spa_keystore_t;
 

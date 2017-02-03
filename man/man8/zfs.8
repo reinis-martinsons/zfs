@@ -150,7 +150,7 @@ zfs \- configures ZFS file systems
 
 .LP
 .nf
-\fBzfs\fR \fBmount\fR [\fB-vO\fR] [\fB-o \fIoptions\fR\fR] \fB-a\fR | \fIfilesystem\fR
+\fBzfs\fR \fBmount\fR [\fB-vlO\fR] [\fB-o \fIoptions\fR\fR] \fB-a\fR | \fIfilesystem\fR
 .fi
 
 .LP
@@ -2690,7 +2690,7 @@ Displays all \fBZFS\fR file systems currently mounted.
 .sp
 .ne 2
 .na
-\fB\fBzfs mount\fR [\fB-vO\fR] [\fB-o\fR \fIoptions\fR] \fB-a\fR | \fIfilesystem\fR\fR
+\fB\fBzfs mount\fR [\fB-vlO\fR] [\fB-o\fR \fIoptions\fR] \fB-a\fR | \fIfilesystem\fR\fR
 .ad
 .sp .6
 .RS 4n
@@ -2729,6 +2729,19 @@ On Linux, this is the default for \fBmount\fR(8). In other words, \fBzfs mount -
 .sp .6
 .RS 4n
 Report mount progress. This is intended for use with \fBzfs mount -a\fR on a system with a significant number of filesystems.
+.RE
+
+.sp
+.ne 2
+.na
+\fB\fB-l\fR\fR
+.ad
+.sp .6
+.RS 4n
+Attempt to load keys for encrypted filesystems as they are being mounted. This
+is equivalent to executing \fbzfs load-key\fR on each encryption root before
+mounting it. Note that if a filesystem has a \fBkeylocation\fR of \fBprompt\fR
+this will cause the terminal to interactively block after asking for the key.
 .RE
 
 .sp

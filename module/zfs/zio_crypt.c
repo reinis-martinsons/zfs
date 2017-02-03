@@ -14,7 +14,7 @@
  */
 
 /*
- * Copyright (c) 2016, Datto, Inc. All rights reserved.
+ * Copyright (c) 2017, Datto, Inc. All rights reserved.
  */
 
 #include <sys/zio_crypt.h>
@@ -32,7 +32,8 @@
  * Encryption Algorithm (crypt):
  * The encryption algorithm and mode we are going to use. We currently support
  * AES-GCM and AES-CCM in 128, 192, and 256 bits. All encryption parameters are
- * stored in little endian format (regardless of the host machine's byteorder).
+ * stored in little endian format (regardless of the host machine's byteorder)
+ * on-disk and in memory.
  *
  * Plaintext:
  * The unencrypted data that we want to encrypt

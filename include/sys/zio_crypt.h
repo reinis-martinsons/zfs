@@ -14,7 +14,7 @@
  */
 
 /*
- * Copyright (c) 2016, Datto, Inc. All rights reserved.
+ * Copyright (c) 2017, Datto, Inc. All rights reserved.
  */
 
 #ifndef	_SYS_ZIO_CRYPT_H
@@ -43,23 +43,32 @@ struct zbookmark_phys;
 #define	ZIO_NO_ENCRYPTION_NEEDED -1
 
 /*
- * After encrypting many blocks with the same salt we may start to run
- * up against the theoretical limits of how much data can securely be
- * encrypted a single key using the supported encryption modes. To
- * counteract this we generate a new salt after writing
- * ZIO_CRYPT_MAX_SALT_USAGE blocks of data, tracked by zk_salt_count.
- * The current value was chosen because it is approximately the number
- * of blocks that would have to be written in order to acheive a
- * 1 / 1 trillion chance of having an IV collision. Developers looking to
- * change this number should make sure they take into account the
- * birthday problem in regards to IV generation and the limits of what the
- * underlying mode can actually handle.
+ * After encrypting many blocks with the same key we may start to run up
+ * against the theoretical limits of how much data can securely be encrypted
+ * with a single key using the supported encryption modes. The most obvious
+ * limitation is that our risk of generating 2 equivalent 96 bit IVs increases
+ * the more IVs we generate (which both GCM and CCM modes strictly forbid).
+ * This risk actually grows surprisingly quickly over time according to the
+ * Birthday Problem. With a total IV space of 2^(96 bits), and assuming we have
+ * generated n IVs with a cryptographically secure RNG, the approximate
+ * probability p(n) of a collision is given as:
+ *
+ * p(n) ~= e^(-n(n-1)/(2*(2^96)))
+ *
+ * [http://www.math.cornell.edu/~mec/2008-2009/TianyiZheng/Birthday.html]
+ *
+ * Assuming that we want to ensure that p(n) never goes over 1 / 1 trillion
+ * we must not write more than 398065730 blocks with the same encryption key,
+ * which is significantly less than the zettabyte of data that ZFS claims to
+ * be able to store. To counteract this, we rotate our keys after 400000000
+ * blocks have been written by generating a new random 64 bit salt for our
+ * HKDF encryption key generation function.
  */
 #define	ZIO_CRYPT_MAX_SALT_USAGE 400000000
 
 /* utility macros */
-#define	BITS_TO_BYTES(x) (((x) + 7) >> 3)
-#define	BYTES_TO_BITS(x) (x << 3)
+#define	BITS_TO_BYTES(x) ((x + NBBY - 1) / NBBY)
+#define	BYTES_TO_BITS(x) (x * NBBY)
 
 typedef enum zio_crypt_type {
 	ZC_TYPE_NONE = 0,
@@ -85,11 +94,11 @@ typedef struct zio_crypt_info {
 extern zio_crypt_info_t zio_crypt_table[ZIO_CRYPT_FUNCTIONS];
 
 /* ZAP entry keys for DSL Encryption Keys stored on disk */
-#define	DSL_CRYPTO_KEY_CRYPT "DSL_CRYPTO_CRYPT"
+#define	DSL_CRYPTO_KEY_CRYPTO_SUITE "DSL_CRYPTO_SUITE"
 #define	DSL_CRYPTO_KEY_IV "DSL_CRYPTO_IV"
 #define	DSL_CRYPTO_KEY_MAC "DSL_CRYPTO_MAC"
-#define	DSL_CRYPTO_KEY_MASTER_BUF "DSL_CRYPTO_MASTER"
-#define	DSL_CRYPTO_KEY_HMAC_KEY_BUF "DSL_CRYPTO_HMAC_KEY"
+#define	DSL_CRYPTO_KEY_MASTER_KEY "DSL_CRYPTO_MASTER_KEY"
+#define	DSL_CRYPTO_KEY_HMAC_KEY "DSL_CRYPTO_HMAC_KEY"
 
 /* in memory representation of an unwrapped key that is loaded into memory */
 typedef struct zio_crypt_key {

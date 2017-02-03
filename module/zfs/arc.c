@@ -1391,12 +1391,23 @@ arc_buf_lsize(arc_buf_t *buf)
 	return (HDR_GET_LSIZE(buf->b_hdr));
 }
 
+/*
+ * This funciton will return B_TRUE if the buffer is encrypted in memory.
+ * The plaindata will not be readable until the key is loaded and it is
+ * decrypted by either calling arc_untransform() or by reading it again
+ * without ZIO_FLAG_RAW.
+ */
 boolean_t
 arc_is_encrypted(arc_buf_t *buf)
 {
 	return (ARC_BUF_ENCRYPTED(buf) != 0);
 }
 
+/*
+ * Indicates how this buffer is compressed in memory. If it is not compressed
+ * the value will be ZIO_COMPRESS_OFF. It can be made normally readable with
+ * arc_untransform() as long as it is also unencrypted.
+ */
 enum zio_compress
 arc_get_compression(arc_buf_t *buf)
 {
@@ -1405,8 +1416,9 @@ arc_get_compression(arc_buf_t *buf)
 }
 
 /*
- * Returns the compression that should be used for compressed buffers. If
- * ARC compression is disabled, returns ZIO_CRYPT_OFF.
+ * Return the compression algorithm used to store this data in the ARC. If ARC
+ * compression is enabled or this is an encrypted block, this will be the same
+ * as what's used to store it on-disk. Otherwise, this will be ZIO_COMPRESS_OFF.
  */
 static inline enum zio_compress
 arc_hdr_get_compress(arc_buf_hdr_t *hdr)

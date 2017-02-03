@@ -14,7 +14,7 @@
  */
 
 /*
- * Copyright (c) 2016, Datto, Inc. All rights reserved.
+ * Copyright (c) 2017, Datto, Inc. All rights reserved.
  */
 
 #include <sys/dsl_crypt.h>
@@ -640,16 +640,17 @@ dsl_crypto_key_open(objset_t *mos, dsl_wrapping_key_t *wkey,
 		return (SET_ERROR(ENOMEM));
 
 	/* fetch all of the values we need from the ZAP */
-	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_CRYPT, 8, 1, &crypt);
+	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_CRYPTO_SUITE, 8, 1,
+	    &crypt);
 	if (ret != 0)
 		goto error;
 
-	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_MASTER_BUF, 1,
+	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_MASTER_KEY, 1,
 	    MAX_MASTER_KEY_LEN, raw_keydata);
 	if (ret != 0)
 		goto error;
 
-	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_HMAC_KEY_BUF, 1,
+	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_HMAC_KEY, 1,
 	    HMAC_SHA256_KEYLEN, raw_hmac_keydata);
 	if (ret != 0)
 		goto error;
@@ -1173,7 +1174,7 @@ dsl_crypto_key_sync(dsl_crypto_key_t *dck, dmu_tx_t *tx)
 	    keydata, hmac_keydata));
 
 	/* update the ZAP with the obtained values */
-	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_CRYPT, 8, 1,
+	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_CRYPTO_SUITE, 8, 1,
 	    &key->zk_crypt, tx));
 
 	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_IV, 1, WRAPPING_IV_LEN,
@@ -1182,10 +1183,10 @@ dsl_crypto_key_sync(dsl_crypto_key_t *dck, dmu_tx_t *tx)
 	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_MAC, 1, WRAPPING_MAC_LEN,
 	    mac, tx));
 
-	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_MASTER_BUF, 1,
+	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_MASTER_KEY, 1,
 	    MAX_MASTER_KEY_LEN, keydata, tx));
 
-	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_HMAC_KEY_BUF, 1,
+	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_HMAC_KEY, 1,
 	    HMAC_SHA256_KEYLEN, hmac_keydata, tx));
 }
 

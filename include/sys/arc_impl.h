@@ -176,8 +176,8 @@ typedef struct l1arc_buf_hdr {
  * disk as they appear in the main pool. In order for this to work we
  * need to pass around the encryption parameters so they can be used
  * to write data to the L2ARC. This struct is only defined in the
- * arc_buf_hdr_t if the L1 header is defined and the has the
- * ARC_FLAG_ENCRYPT flag set.
+ * arc_buf_hdr_t if the L1 header is defined and has the ARC_FLAG_ENCRYPT
+ * flag set.
  */
 typedef struct arc_buf_hdr_crypt {
 	abd_t			*b_rabd;	/* raw encrypted data */
