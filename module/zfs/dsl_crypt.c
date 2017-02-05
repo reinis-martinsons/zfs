@@ -88,9 +88,6 @@ dsl_wrapping_key_rele(dsl_wrapping_key_t *wkey, void *tag)
 void
 dsl_wrapping_key_free(dsl_wrapping_key_t *wkey)
 {
-#ifdef _KERNEL
-	printk(KERN_DEBUG "wkey = %llu\n", wkey->wk_ddobj);
-#endif
 	ASSERT0(refcount_count(&wkey->wk_refcnt));
 
 	if (wkey->wk_key.ck_data) {

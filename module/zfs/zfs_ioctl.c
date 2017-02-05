@@ -6475,7 +6475,6 @@ zfsdev_ioctl(struct file *filp, unsigned cmd, unsigned long arg)
 		break;
 	}
 
-<<<<<<< HEAD
 
 	if (error == 0) {
 		cookie = spl_fstrans_mark();

@@ -179,7 +179,7 @@ out:
 }
 
 int
-lzc_create(const char *fsname, enum lzc_dataset_type type, nvlist_t *props)
+lzc_create(const char *fsname, enum lzc_dataset_type type, nvlist_t *props,
     nvlist_t *hidden_args)
 {
 	int error;
