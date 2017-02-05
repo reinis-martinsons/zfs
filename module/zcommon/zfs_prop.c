@@ -297,11 +297,6 @@ zfs_prop_init(void)
 	    ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME,
 	    "on | off | lzjb | gzip | gzip-[1-9] | zle | lz4", "COMPRESS",
 	    compress_table);
-	zprop_register_index(ZFS_PROP_ENCRYPTION, "encryption",
-	    ZIO_CRYPT_DEFAULT, PROP_ONETIME, ZFS_TYPE_DATASET,
-	    "on | off | aes-128-ccm | aes-192-ccm | aes-256-ccm | "
-	    "aes-128-gcm | aes-192-gcm | aes-256-gcm", "ENCRYPTION",
-	    crypto_table);
 	zprop_register_index(ZFS_PROP_SNAPDIR, "snapdir", ZFS_SNAPDIR_HIDDEN,
 	    PROP_INHERIT, ZFS_TYPE_FILESYSTEM,
 	    "hidden | visible", "SNAPDIR", snapdir_table);
@@ -394,6 +389,11 @@ zfs_prop_init(void)
 	zprop_register_index(ZFS_PROP_KEYFORMAT, "keyformat",
 	    ZFS_KEYFORMAT_NONE, PROP_ONETIME, ZFS_TYPE_DATASET,
 	    "none | raw | hex | passphrase", "KEYFORMAT", keyformat_table);
+	zprop_register_index(ZFS_PROP_ENCRYPTION, "encryption",
+	    ZIO_CRYPT_DEFAULT, PROP_ONETIME, ZFS_TYPE_DATASET,
+	    "on | off | aes-128-ccm | aes-192-ccm | aes-256-ccm | "
+	    "aes-128-gcm | aes-192-gcm | aes-256-gcm", "ENCRYPTION",
+	    crypto_table);
 
 	/* set once index (boolean) properties */
 	zprop_register_index(ZFS_PROP_UTF8ONLY, "utf8only", 0, PROP_ONETIME,
@@ -750,7 +750,7 @@ zfs_prop_encryption_key_param(zfs_prop_t prop)
 boolean_t
 zfs_prop_valid_keylocation(const char *str)
 {
-	if (strlen(str) == 6 && strncmp("prompt", str, 6) == 0)
+	if (strcmp("prompt", str) == 0)
 		return (B_TRUE);
 	else if (strlen(str) > 8 && strncmp("file:///", str, 8) == 0)
 		return (B_TRUE);

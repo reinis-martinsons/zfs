@@ -456,7 +456,8 @@ void dmu_write_policy(objset_t *os, struct dnode *dn, int level, int wp,
 void dmu_write_policy_override_compress(struct zio_prop *zp,
     enum zio_compress compress);
 void dmu_write_policy_override_encrypt(struct zio_prop *zp,
-    enum zio_compress compress, uint8_t *salt, uint8_t *iv, uint8_t *mac);
+    enum zio_compress compress, const uint8_t *salt, const uint8_t *iv,
+    const uint8_t *mac);
 /*
  * The bonus data is accessed more or less like a regular buffer.
  * You must dmu_bonus_hold() to get the buffer, which will give you a

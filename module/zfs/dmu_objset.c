@@ -199,7 +199,7 @@ encryption_changed_cb(void *arg, uint64_t newval)
 	 */
 	ASSERT(newval != ZIO_CRYPT_INHERIT && newval != ZIO_CRYPT_ON);
 
-	os->os_encrypted = (newval != ZIO_CRYPT_OFF ? B_TRUE : B_FALSE);
+	os->os_encrypted = (newval != ZIO_CRYPT_OFF);
 }
 
 static void
@@ -662,7 +662,7 @@ dmu_objset_own(const char *name, dmu_objset_type_t type,
 	if (dmu_objset_userobjspace_upgradable(*osp))
 		dmu_objset_userobjspace_upgrade(*osp);
 
-	return (err);
+	return (0);
 }
 
 int
@@ -999,9 +999,10 @@ dmu_objset_create_sync(void *arg, dmu_tx_t *tx)
 	/*
 	 * At this time, the objset is not owned and so it does not have its
 	 * key mapping in the keystore. This mapping might be needed to create
-	 * encrypted objects in the dataset. We create it here manually, but we
-	 * cannot destroy it until after syncing is complete. Therefore any
-	 * function that calls this must clean up the key mapping after syncing.
+	 * encrypted objects in the dataset in doca_userfunc(). We create it
+	 * here manually, but we cannot destroy it until after syncing is
+	 * complete. Therefore any function that calls this must clean up the
+	 * key mapping after syncing.
 	 */
 	if (os->os_encrypted) {
 		(void) spa_keystore_create_mapping(os->os_spa,
@@ -1097,12 +1098,15 @@ dmu_objset_clone_check(void *arg, dmu_tx_t *tx)
 	}
 
 	error = dsl_dataset_hold(dp, doca->doca_origin, FTAG, &origin);
-	if (error != 0)
+	if (error != 0) {
+		dsl_dir_rele(pdd, FTAG);
 		return (error);
+	}
 
 	/* You can only clone snapshots, not the head datasets. */
 	if (!origin->ds_is_snapshot) {
 		dsl_dataset_rele(origin, FTAG);
+		dsl_dir_rele(pdd, FTAG);
 		return (SET_ERROR(EINVAL));
 	}
 

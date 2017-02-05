@@ -1004,14 +1004,14 @@ dmu_send_obj(const char *pool, uint64_t tosnap, uint64_t fromsnap,
 	dsl_pool_t *dp;
 	dsl_dataset_t *ds;
 	dsl_dataset_t *fromds = NULL;
-	int flags = DS_HOLD_FLAG_DECRYPT;
+	int dsflags = DS_HOLD_FLAG_DECRYPT;
 	int err;
 
 	err = dsl_pool_hold(pool, FTAG, &dp);
 	if (err != 0)
 		return (err);
 
-	err = dsl_dataset_hold_obj_flags(dp, tosnap, flags, FTAG, &ds);
+	err = dsl_dataset_hold_obj_flags(dp, tosnap, dsflags, FTAG, &ds);
 	if (err != 0) {
 		dsl_pool_rele(dp, FTAG);
 		return (err);
@@ -1023,7 +1023,7 @@ dmu_send_obj(const char *pool, uint64_t tosnap, uint64_t fromsnap,
 
 		err = dsl_dataset_hold_obj(dp, fromsnap, FTAG, &fromds);
 		if (err != 0) {
-			dsl_dataset_rele_flags(ds, flags, FTAG);
+			dsl_dataset_rele_flags(ds, dsflags, FTAG);
 			dsl_pool_rele(dp, FTAG);
 			return (err);
 		}
@@ -1041,7 +1041,7 @@ dmu_send_obj(const char *pool, uint64_t tosnap, uint64_t fromsnap,
 		err = dmu_send_impl(FTAG, dp, ds, NULL, B_FALSE,
 		    embedok, large_block_ok, compressok, outfd, 0, 0, vp, off);
 	}
-	dsl_dataset_rele_flags(ds, flags, FTAG);
+	dsl_dataset_rele_flags(ds, dsflags, FTAG);
 	return (err);
 }
 
@@ -1054,7 +1054,7 @@ dmu_send(const char *tosnap, const char *fromsnap, boolean_t embedok,
 	dsl_pool_t *dp;
 	dsl_dataset_t *ds;
 	int err;
-	int flags = DS_HOLD_FLAG_DECRYPT;
+	int dsflags = DS_HOLD_FLAG_DECRYPT;
 	boolean_t owned = B_FALSE;
 
 	if (fromsnap != NULL && strpbrk(fromsnap, "@#") == NULL)
@@ -1069,10 +1069,10 @@ dmu_send(const char *tosnap, const char *fromsnap, boolean_t embedok,
 		 * We are sending a filesystem or volume.  Ensure
 		 * that it doesn't change by owning the dataset.
 		 */
-		err = dsl_dataset_own(dp, tosnap, flags, FTAG, &ds);
+		err = dsl_dataset_own(dp, tosnap, dsflags, FTAG, &ds);
 		owned = B_TRUE;
 	} else {
-		err = dsl_dataset_hold_flags(dp, tosnap, flags, FTAG, &ds);
+		err = dsl_dataset_hold_flags(dp, tosnap, dsflags, FTAG, &ds);
 	}
 	if (err != 0) {
 		dsl_pool_rele(dp, FTAG);
@@ -1113,9 +1113,9 @@ dmu_send(const char *tosnap, const char *fromsnap, boolean_t embedok,
 		}
 		if (err != 0) {
 			if (owned)
-				dsl_dataset_disown(ds, flags, FTAG);
+				dsl_dataset_disown(ds, dsflags, FTAG);
 			else
-				dsl_dataset_rele_flags(ds, flags, FTAG);
+				dsl_dataset_rele_flags(ds, dsflags, FTAG);
 
 			dsl_pool_rele(dp, FTAG);
 			return (err);
@@ -1129,9 +1129,9 @@ dmu_send(const char *tosnap, const char *fromsnap, boolean_t embedok,
 		    outfd, resumeobj, resumeoff, vp, off);
 	}
 	if (owned)
-		dsl_dataset_disown(ds, flags, FTAG);
+		dsl_dataset_disown(ds, dsflags, FTAG);
 	else
-		dsl_dataset_rele_flags(ds, flags, FTAG);
+		dsl_dataset_rele_flags(ds, dsflags, FTAG);
 
 	return (err);
 }
@@ -1537,14 +1537,14 @@ dmu_recv_begin_sync(void *arg, dmu_tx_t *tx)
 	const char *tofs = drba->drba_cookie->drc_tofs;
 	dsl_dataset_t *ds, *newds;
 	uint64_t dsobj;
-	int flags = DS_HOLD_FLAG_DECRYPT;
+	int dsflags = DS_HOLD_FLAG_DECRYPT;
 	int error;
 	uint64_t crflags = 0;
 
 	if (drrb->drr_flags & DRR_FLAG_CI_DATA)
 		crflags |= DS_FLAG_CI_DATASET;
 
-	error = dsl_dataset_hold_flags(dp, tofs, flags, FTAG, &ds);
+	error = dsl_dataset_hold_flags(dp, tofs, dsflags, FTAG, &ds);
 	if (error == 0) {
 		/* create temporary clone */
 		dsl_dataset_t *snap = NULL;
@@ -1556,7 +1556,7 @@ dmu_recv_begin_sync(void *arg, dmu_tx_t *tx)
 		    snap, crflags, drba->drba_cred, NULL, tx);
 		if (drba->drba_snapobj != 0)
 			dsl_dataset_rele(snap, FTAG);
-		dsl_dataset_rele_flags(ds, flags, FTAG);
+		dsl_dataset_rele_flags(ds, dsflags, FTAG);
 	} else {
 		dsl_dir_t *dd;
 		const char *tail;
@@ -1578,7 +1578,7 @@ dmu_recv_begin_sync(void *arg, dmu_tx_t *tx)
 		dsl_dir_rele(dd, FTAG);
 		drba->drba_cookie->drc_newfs = B_TRUE;
 	}
-	VERIFY0(dsl_dataset_own_obj(dp, dsobj, flags, dmu_recv_tag, &newds));
+	VERIFY0(dsl_dataset_own_obj(dp, dsobj, dsflags, dmu_recv_tag, &newds));
 
 	if (drba->drba_cookie->drc_resumable) {
 		uint64_t one = 1;
@@ -1642,7 +1642,7 @@ dmu_recv_resume_begin_check(void *arg, dmu_tx_t *tx)
 	dsl_pool_t *dp = dmu_tx_pool(tx);
 	struct drr_begin *drrb = drba->drba_cookie->drc_drrb;
 	int error;
-	int flags = DS_HOLD_FLAG_DECRYPT;
+	int dsflags = DS_HOLD_FLAG_DECRYPT;
 	uint64_t featureflags = DMU_GET_FEATUREFLAGS(drrb->drr_versioninfo);
 	dsl_dataset_t *ds;
 	const char *tofs = drba->drba_cookie->drc_tofs;
@@ -1681,28 +1681,28 @@ dmu_recv_resume_begin_check(void *arg, dmu_tx_t *tx)
 	(void) snprintf(recvname, sizeof (recvname), "%s/%s",
 	    tofs, recv_clone_name);
 
-	if (dsl_dataset_hold_flags(dp, recvname, flags, FTAG, &ds) != 0) {
+	if (dsl_dataset_hold_flags(dp, recvname, dsflags, FTAG, &ds) != 0) {
 		/* %recv does not exist; continue in tofs */
-		error = dsl_dataset_hold_flags(dp, tofs, flags, FTAG, &ds);
+		error = dsl_dataset_hold_flags(dp, tofs, dsflags, FTAG, &ds);
 		if (error != 0)
 			return (error);
 	}
 
 	/* check that ds is marked inconsistent */
 	if (!DS_IS_INCONSISTENT(ds)) {
-		dsl_dataset_rele_flags(ds, flags, FTAG);
+		dsl_dataset_rele_flags(ds, dsflags, FTAG);
 		return (SET_ERROR(EINVAL));
 	}
 
 	/* check that there is resuming data, and that the toguid matches */
 	if (!dsl_dataset_is_zapified(ds)) {
-		dsl_dataset_rele_flags(ds, flags, FTAG);
+		dsl_dataset_rele_flags(ds, dsflags, FTAG);
 		return (SET_ERROR(EINVAL));
 	}
 	error = zap_lookup(dp->dp_meta_objset, ds->ds_object,
 	    DS_FIELD_RESUME_TOGUID, sizeof (val), 1, &val);
 	if (error != 0 || drrb->drr_toguid != val) {
-		dsl_dataset_rele_flags(ds, flags, FTAG);
+		dsl_dataset_rele_flags(ds, dsflags, FTAG);
 		return (SET_ERROR(EINVAL));
 	}
 
@@ -1712,13 +1712,13 @@ dmu_recv_resume_begin_check(void *arg, dmu_tx_t *tx)
 	 * fails) because it will be marked inconsistent.
 	 */
 	if (dsl_dataset_has_owner(ds)) {
-		dsl_dataset_rele_flags(ds, flags, FTAG);
+		dsl_dataset_rele_flags(ds, dsflags, FTAG);
 		return (SET_ERROR(EBUSY));
 	}
 
 	/* There should not be any snapshots of this fs yet. */
 	if (ds->ds_prev != NULL && ds->ds_prev->ds_dir == ds->ds_dir) {
-		dsl_dataset_rele_flags(ds, flags, FTAG);
+		dsl_dataset_rele_flags(ds, dsflags, FTAG);
 		return (SET_ERROR(EINVAL));
 	}
 
@@ -1732,11 +1732,11 @@ dmu_recv_resume_begin_check(void *arg, dmu_tx_t *tx)
 	(void) zap_lookup(dp->dp_meta_objset, ds->ds_object,
 	    DS_FIELD_RESUME_FROMGUID, sizeof (val), 1, &val);
 	if (drrb->drr_fromguid != val) {
-		dsl_dataset_rele_flags(ds, flags, FTAG);
+		dsl_dataset_rele_flags(ds, dsflags, FTAG);
 		return (SET_ERROR(EINVAL));
 	}
 
-	dsl_dataset_rele_flags(ds, flags, FTAG);
+	dsl_dataset_rele_flags(ds, dsflags, FTAG);
 	return (0);
 }
 
@@ -2471,16 +2471,16 @@ receive_free(struct receive_writer_arg *rwa, struct drr_free *drrf)
 static void
 dmu_recv_cleanup_ds(dmu_recv_cookie_t *drc)
 {
-	int flags = DS_HOLD_FLAG_DECRYPT;
+	int dsflags = DS_HOLD_FLAG_DECRYPT;
 
 	if (drc->drc_resumable) {
 		/* wait for our resume state to be written to disk */
 		txg_wait_synced(drc->drc_ds->ds_dir->dd_pool, 0);
-		dsl_dataset_disown(drc->drc_ds, flags, dmu_recv_tag);
+		dsl_dataset_disown(drc->drc_ds, dsflags, dmu_recv_tag);
 	} else {
 		char name[ZFS_MAX_DATASET_NAME_LEN];
 		dsl_dataset_name(drc->drc_ds, name);
-		dsl_dataset_disown(drc->drc_ds, flags, dmu_recv_tag);
+		dsl_dataset_disown(drc->drc_ds, dsflags, dmu_recv_tag);
 		(void) dsl_destroy_head(name);
 	}
 }

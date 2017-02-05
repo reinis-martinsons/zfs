@@ -1027,7 +1027,8 @@ dbuf_read_impl(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags)
 		 */
 		int bonuslen = MIN(dn->dn_bonuslen, dn->dn_phys->dn_bonuslen);
 		int max_bonuslen = DN_SLOTS_TO_BONUSLEN(dn->dn_num_slots);
-		arc_buf_t *dn_buf = (dn->dn_dbuf) ? dn->dn_dbuf->db_buf : NULL;
+		arc_buf_t *dn_buf = (dn->dn_dbuf != NULL) ?
+		    dn->dn_dbuf->db_buf : NULL;
 
 		if (dn_buf != NULL && arc_is_encrypted(dn_buf) &&
 		    DMU_OT_IS_ENCRYPTED(dn->dn_bonustype) &&
