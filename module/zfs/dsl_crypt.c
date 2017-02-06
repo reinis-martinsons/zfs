@@ -1198,7 +1198,6 @@ spa_keystore_rewrap_check(void *arg, dmu_tx_t *tx)
 	int ret;
 	uint64_t keyformat = ZFS_KEYFORMAT_NONE;
 	dsl_dir_t *dd = NULL;
-	dsl_dir_t *inherit_dd = NULL;
 	dsl_pool_t *dp = dmu_tx_pool(tx);
 	spa_keystore_rewrap_args_t *skra = arg;
 	dsl_crypto_params_t *dcp = skra->skra_cp;
@@ -1216,16 +1215,6 @@ spa_keystore_rewrap_check(void *arg, dmu_tx_t *tx)
 
 	/* verify that the dataset is encrypted */
 	if (dd->dd_crypto_obj == 0) {
-		ret = SET_ERROR(EINVAL);
-		goto error;
-	}
-
-	/* check that dd is an encryption root */
-	ret = dsl_dir_hold_keylocation_source_dd(dd, FTAG, &inherit_dd);
-	if (ret != 0)
-		goto error;
-
-	if (dd->dd_object != inherit_dd->dd_object) {
 		ret = SET_ERROR(EINVAL);
 		goto error;
 	}
@@ -1249,10 +1238,7 @@ spa_keystore_rewrap_check(void *arg, dmu_tx_t *tx)
 		if (ret != 0)
 			goto error;
 
-		if (inherit_dd != NULL)
-			dsl_dir_rele(inherit_dd, FTAG);
-		if (dd != NULL)
-			dsl_dir_rele(dd, FTAG);
+		dsl_dir_rele(dd, FTAG);
 
 		return (0);
 	}
@@ -1292,16 +1278,11 @@ spa_keystore_rewrap_check(void *arg, dmu_tx_t *tx)
 	if (ret != 0)
 		goto error;
 
-	if (inherit_dd != NULL)
-		dsl_dir_rele(inherit_dd, FTAG);
-	if (dd != NULL)
-		dsl_dir_rele(dd, FTAG);
+	dsl_dir_rele(dd, FTAG);
 
 	return (0);
 
 error:
-	if (inherit_dd != NULL)
-		dsl_dir_rele(inherit_dd, FTAG);
 	if (dd != NULL)
 		dsl_dir_rele(dd, FTAG);
 

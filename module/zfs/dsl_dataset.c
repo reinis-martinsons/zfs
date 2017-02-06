@@ -851,7 +851,7 @@ dsl_dataset_deactivate_feature(uint64_t dsobj, spa_feature_t f, dmu_tx_t *tx)
 
 uint64_t
 dsl_dataset_create_sync_dd(dsl_dir_t *dd, dsl_dataset_t *origin,
-	dsl_crypto_params_t *dcp, uint64_t flags, dmu_tx_t *tx)
+    dsl_crypto_params_t *dcp, uint64_t flags, dmu_tx_t *tx)
 {
 	dsl_pool_t *dp = dd->dd_pool;
 	dmu_buf_t *dbuf;

@@ -825,11 +825,15 @@ zfs_crypto_create(libzfs_handle_t *hdl, char *parent_name, nvlist_t *props,
 		 * special case for root dataset where encryption feature
 		 * feature won't be on disk yet
 		 */
-		if (!nvlist_exists(pool_props, "feature@encryption") &&
-		    local_crypt) {
-			ret = EINVAL;
-			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			    "Encryption feature not enabled."));
+		if (!nvlist_exists(pool_props, "feature@encryption")) {
+			if (proplist_has_encryption_props(props)) {
+				ret = EINVAL;
+				zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+				    "Encryption feature not enabled."));
+				goto out;
+			}
+
+			ret = 0;
 			goto out;
 		}
 
@@ -849,8 +853,9 @@ zfs_crypto_create(libzfs_handle_t *hdl, char *parent_name, nvlist_t *props,
 		crypt = pcrypt;
 
 	/*
-	 * At this point crypt should be the actual encryption value.
-	 * Return 0 if encryption is off
+	 * At this point crypt should be the actual encryption value. If
+	 * encryption is off just verify that no encryption properties have
+	 * been specified and return.
 	 */
 	if (crypt == ZIO_CRYPT_OFF) {
 		if (proplist_has_encryption_props(props)) {
@@ -862,6 +867,20 @@ zfs_crypto_create(libzfs_handle_t *hdl, char *parent_name, nvlist_t *props,
 		}
 
 		ret = 0;
+		goto out;
+	}
+
+	/*
+	 * If we have a parent crypt it is valid to specify encryption alone.
+	 * This will result in a child that is encrypted with the chosen
+	 * encryption suite that will also inherit the parent's key. If
+	 * the parent is not encrypted we need an encryption suite provided.
+	 */
+	if (pcrypt == ZIO_CRYPT_OFF && keylocation == NULL &&
+	    keyformat == ZFS_KEYFORMAT_NONE) {
+		ret = EINVAL;
+		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+		    "Keyformat required for new encryption root."));
 		goto out;
 	}
 

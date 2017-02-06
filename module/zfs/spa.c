@@ -3754,6 +3754,34 @@ spa_l2cache_drop(spa_t *spa)
 }
 
 /*
+ * Verify encryption parameters for spa creation. If we have specified a crypt,
+ * we must have a fully speicified key, with the encryption feature enabled.
+ * Otherwise, we should not have any specified encryption parameters.
+ */
+static int
+spa_create_check_encryption_params(dsl_crypto_params_t *dcp,
+    boolean_t has_encryption) {
+	if (dcp->cp_crypt != ZIO_CRYPT_OFF &&
+	    dcp->cp_crypt != ZIO_CRYPT_INHERIT) {
+		if (!has_encryption || dcp->cp_wkey == NULL ||
+		    dcp->cp_keylocation == NULL ||
+		    dcp->cp_keyformat == ZFS_KEYFORMAT_NONE)
+			return (SET_ERROR(EINVAL));
+
+		if (dcp->cp_keyformat == ZFS_KEYFORMAT_PASSPHRASE &&
+		    (dcp->cp_salt == 0 || dcp->cp_iters == 0))
+			return (SET_ERROR(EINVAL));
+	} else {
+		if (dcp->cp_wkey != NULL || dcp->cp_keylocation != NULL ||
+		    dcp->cp_keyformat != ZFS_KEYFORMAT_NONE ||
+		    dcp->cp_salt != 0 || dcp->cp_iters != 0)
+			return (SET_ERROR(EINVAL));
+	}
+
+	return (0);
+}
+
+/*
  * Pool Creation
  */
 int
@@ -3829,12 +3857,15 @@ spa_create(const char *pool, nvlist_t *nvroot, nvlist_t *props,
 		}
 	}
 
-	if (!has_encryption && dcp && dcp->cp_crypt != ZIO_CRYPT_OFF &&
-	    dcp->cp_crypt != ZIO_CRYPT_INHERIT) {
-		spa_deactivate(spa);
-		spa_remove(spa);
-		mutex_exit(&spa_namespace_lock);
-		return (SET_ERROR(EINVAL));
+	/* verify encryption params, if they were provided */
+	if (dcp != NULL) {
+		error = spa_create_check_encryption_params(dcp, has_encryption);
+		if (error != 0) {
+			spa_deactivate(spa);
+			spa_remove(spa);
+			mutex_exit(&spa_namespace_lock);
+			return (error);
+		}
 	}
 
 	if (has_features || nvlist_lookup_uint64(props,

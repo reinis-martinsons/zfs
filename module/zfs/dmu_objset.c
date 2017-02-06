@@ -1024,7 +1024,7 @@ dmu_objset_create_sync(void *arg, dmu_tx_t *tx)
 int
 dmu_objset_create(const char *name, dmu_objset_type_t type, uint64_t flags,
     dsl_crypto_params_t *dcp, void (*func)(objset_t *os, void *arg,
-	cred_t *cr, dmu_tx_t *tx), void *arg)
+    cred_t *cr, dmu_tx_t *tx), void *arg)
 {
 	int ret;
 	objset_t *os;
@@ -1153,7 +1153,7 @@ dmu_objset_clone_sync(void *arg, dmu_tx_t *tx)
 
 int
 dmu_objset_clone(const char *clone, const char *origin,
-	dsl_crypto_params_t *dcp)
+    dsl_crypto_params_t *dcp)
 {
 	dmu_objset_clone_arg_t doca;
 
