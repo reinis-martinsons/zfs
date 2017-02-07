@@ -983,41 +983,45 @@ dmu_objset_create_sync(void *arg, dmu_tx_t *tx)
 	uint64_t obj;
 	blkptr_t *bp;
 	objset_t *os;
+	zio_t *rzio;
 
 	VERIFY0(dsl_dir_hold(dp, doca->doca_name, FTAG, &pdd, &tail));
 
 	obj = dsl_dataset_create_sync(pdd, tail, NULL, doca->doca_flags,
 	    doca->doca_cred, doca->doca_dcp, tx);
 
-	VERIFY0(dsl_dataset_hold_obj(pdd->dd_pool, obj, FTAG, &ds));
+	VERIFY0(dsl_dataset_hold_obj_flags(pdd->dd_pool, obj,
+	    DS_HOLD_FLAG_DECRYPT, FTAG, &ds));
 	rrw_enter(&ds->ds_bp_rwlock, RW_READER, FTAG);
 	bp = dsl_dataset_get_blkptr(ds);
 	os = dmu_objset_create_impl(pdd->dd_pool->dp_spa,
 	    ds, bp, doca->doca_type, tx);
 	rrw_exit(&ds->ds_bp_rwlock, FTAG);
 
-	/*
-	 * At this time, the objset is not owned and so it does not have its
-	 * key mapping in the keystore. This mapping might be needed to create
-	 * encrypted objects in the dataset in doca_userfunc(). We create it
-	 * here manually, but we cannot destroy it until after syncing is
-	 * complete. Therefore any function that calls this must clean up the
-	 * key mapping after syncing.
-	 */
-	if (os->os_encrypted) {
-		(void) spa_keystore_create_mapping(os->os_spa,
-		    os->os_dsl_dataset, doca);
-	}
-
 	if (doca->doca_userfunc != NULL) {
 		doca->doca_userfunc(os, doca->doca_userarg,
 		    doca->doca_cred, tx);
 	}
 
+	/*
+	 * doca_userfunc() may write out some data that needs to be encrypted
+	 * if the dataset is encrypted (specifically the root directory).
+	 * However, this data won't normally be written out by the zio layer
+	 * until after this sync function has returned so we cannot remove
+	 * the key mappings until then. In this case, we call dmu_objset_sync()
+	 * to ensure the encrypted data is written out before we release the
+	 * dataset.
+	 */
+	if (os->os_encrypted) {
+		rzio = zio_root(dp->dp_spa, NULL, NULL, ZIO_FLAG_MUSTSUCCEED);
+		dmu_objset_sync(os, rzio, tx);
+		VERIFY0(zio_wait(rzio));
+	}
+
 	spa_history_log_internal_ds(ds, "create", tx, "");
 	zvol_create_minors(dp->dp_spa, doca->doca_name, B_TRUE);
 
-	dsl_dataset_rele(ds, FTAG);
+	dsl_dataset_rele_flags(ds, DS_HOLD_FLAG_DECRYPT, FTAG);
 	dsl_dir_rele(pdd, FTAG);
 }
 
@@ -1026,8 +1030,6 @@ dmu_objset_create(const char *name, dmu_objset_type_t type, uint64_t flags,
     dsl_crypto_params_t *dcp, void (*func)(objset_t *os, void *arg,
     cred_t *cr, dmu_tx_t *tx), void *arg)
 {
-	int ret;
-	objset_t *os;
 	dmu_objset_create_arg_t doca;
 
 	doca.doca_name = name;
@@ -1038,24 +1040,9 @@ dmu_objset_create(const char *name, dmu_objset_type_t type, uint64_t flags,
 	doca.doca_type = type;
 	doca.doca_dcp = dcp;
 
-	ret = dsl_sync_task(name,
+	return (dsl_sync_task(name,
 	    dmu_objset_create_check, dmu_objset_create_sync, &doca,
-	    5, ZFS_SPACE_CHECK_NORMAL);
-	if (ret != 0)
-		return (ret);
-
-	ret = dmu_objset_hold(name, FTAG, &os);
-	if (ret != 0)
-		return (ret);
-
-	/* See comment in dmu_objset_create_sync() for details */
-	if (os->os_encrypted)
-		(void) spa_keystore_remove_mapping(os->os_spa,
-		    os->os_dsl_dataset, &doca);
-
-	dmu_objset_rele(os, FTAG);
-
-	return (0);
+	    5, ZFS_SPACE_CHECK_NORMAL));
 }
 
 typedef struct dmu_objset_clone_arg {
