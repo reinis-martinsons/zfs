@@ -1752,10 +1752,8 @@ spa_crypt_get_salt(spa_t *spa, uint64_t dsobj, uint8_t *salt)
 
 	/* look up the key from the spa's keystore */
 	ret = spa_keystore_lookup_key(spa, dsobj, NULL, &dck);
-	if (ret != 0) {
-		ret = SET_ERROR(EACCES);
+	if (ret != 0)
 		goto error;
-	}
 
 	ret = zio_crypt_key_get_salt(&dck->dck_key, salt);
 	if (ret != 0)
@@ -1789,10 +1787,8 @@ spa_do_crypt_abd(boolean_t encrypt, spa_t *spa, zbookmark_phys_t *zb,
 
 	/* look up the key from the spa's keystore */
 	ret = spa_keystore_lookup_key(spa, zb->zb_objset, NULL, &dck);
-	if (ret != 0) {
-		ret = SET_ERROR(EACCES);
+	if (ret != 0)
 		goto error;
-	}
 
 	if (encrypt) {
 		plainbuf = abd_borrow_buf_copy(pabd, datalen);

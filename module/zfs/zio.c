@@ -420,6 +420,8 @@ zio_decrypt(zio_t *zio, abd_t *data, uint64_t size)
 	if (ret == ZIO_NO_ENCRYPTION_NEEDED) {
 		ASSERT3U(BP_GET_TYPE(bp), ==, DMU_OT_INTENT_LOG);
 	} else if (ret != 0) {
+		/* assert that the key was found unless this was speculative */
+		ASSERT(ret != ENOENT || (zio->io_flags & ZIO_FLAG_SPECULATIVE));
 		zio->io_error = ret;
 	}
 }

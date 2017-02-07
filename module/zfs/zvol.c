@@ -1542,12 +1542,10 @@ zvol_create_minor_impl(const char *name)
 	 * When udev detects the addition of the device it will immediately
 	 * invoke blkid(8) to determine the type of content on the device.
 	 * Prefetching the blocks commonly scanned by blkid(8) will speed
-	 * up this process. We cannot do this optimization for encrypted blocks
-	 * because we are about to disown the objset, which will release the
-	 * dsl_key_mapping_t.
+	 * up this process.
 	 */
 	len = MIN(MAX(zvol_prefetch_bytes, 0), SPA_MAXBLOCKSIZE);
-	if (len > 0 && !os->os_encrypted) {
+	if (len > 0) {
 		dmu_prefetch(os, ZVOL_OBJ, 0, 0, len, ZIO_PRIORITY_SYNC_READ);
 		dmu_prefetch(os, ZVOL_OBJ, 0, volsize - len, len,
 		    ZIO_PRIORITY_SYNC_READ);
@@ -1631,14 +1629,7 @@ zvol_prefetch_minors_impl(void *arg)
 	job->error = dmu_objset_own(dsname, DMU_OST_ZVOL, B_TRUE, B_TRUE,
 	    FTAG, &os);
 	if (job->error == 0) {
-		/*
-		 * Encrypted volumes cannot be prefetched if ownership will
-		 * be dropped.
-		 */
-		if (!os->os_encrypted) {
-			dmu_prefetch(os, ZVOL_OBJ, 0, 0, 0,
-			    ZIO_PRIORITY_SYNC_READ);
-		}
+		dmu_prefetch(os, ZVOL_OBJ, 0, 0, 0, ZIO_PRIORITY_SYNC_READ);
 		dmu_objset_disown(os, B_TRUE, FTAG);
 	}
 }

@@ -1807,10 +1807,8 @@ arc_hdr_decrypt(arc_buf_hdr_t *hdr, kmutex_t *hash_lock, spa_t *spa,
 	 * won't be accessible via that dsobj anymore.
 	 */
 	ret = spa_keystore_lookup_key(spa, dsobj, FTAG, &dck);
-	if (ret != 0) {
-		ret = SET_ERROR(EACCES);
+	if (ret != 0)
 		goto error;
-	}
 
 	ret = zio_do_crypt_abd(B_FALSE, &dck->dck_key,
 	    hdr->b_crypt_hdr.b_salt, hdr->b_crypt_hdr.b_ot,
@@ -5372,6 +5370,14 @@ arc_read_done(zio_t *zio)
 		    zio->io_bookmark.zb_objset, acb->acb_private,
 		    acb->acb_encrypted, acb->acb_compressed, no_zio_error,
 		    &acb->acb_buf);
+
+		/*
+		 * assert non-speculative zios didn't fail because an
+		 * encryption key wasn't loaded
+		 */
+		ASSERT((zio->io_flags & ZIO_FLAG_SPECULATIVE) ||
+		    error == 0 || error != ENOENT);
+
 		if (no_zio_error) {
 			zio->io_error = error;
 		}
@@ -5577,6 +5583,9 @@ top:
 			rc = arc_buf_alloc_impl(hdr, spa, zb->zb_objset,
 			    private, encrypted_read, compressed_read, B_TRUE,
 			    &buf);
+
+			ASSERT((zio_flags & ZIO_FLAG_SPECULATIVE) ||
+			    rc == 0 || rc != ENOENT);
 		} else if (*arc_flags & ARC_FLAG_PREFETCH &&
 		    refcount_count(&hdr->b_l1hdr.b_refcnt) == 0) {
 			arc_hdr_set_flags(hdr, ARC_FLAG_PREFETCH);
@@ -7526,17 +7535,21 @@ l2arc_read_done(zio_t *zio)
 		 */
 		ASSERT3U(BP_GET_TYPE(bp), !=, DMU_OT_INTENT_LOG);
 
-		VERIFY0(spa_keystore_lookup_key(spa, cb->l2rcb_zb.zb_objset,
-		    FTAG, &dck));
+		tfm_error = spa_keystore_lookup_key(spa, cb->l2rcb_zb.zb_objset,
+		    FTAG, &dck);
+		if (tfm_error != 0) {
+			ASSERT(tfm_error != ENOENT ||
+			    (zio->io_flags & ZIO_FLAG_SPECULATIVE));
+		} else {
+			zio_crypt_decode_params_bp(bp, salt, iv);
+			zio_crypt_decode_mac_bp(bp, mac);
 
-		zio_crypt_decode_params_bp(bp, salt, iv);
-		zio_crypt_decode_mac_bp(bp, mac);
+			tfm_error = zio_do_crypt_abd(B_FALSE, &dck->dck_key,
+			    salt, BP_GET_TYPE(bp), iv, mac, HDR_GET_PSIZE(hdr),
+			    eabd, hdr->b_l1hdr.b_pabd);
 
-		tfm_error = zio_do_crypt_abd(B_FALSE, &dck->dck_key, salt,
-		    BP_GET_TYPE(bp), iv, mac, HDR_GET_PSIZE(hdr), eabd,
-		    hdr->b_l1hdr.b_pabd);
-
-		spa_keystore_dsl_key_rele(spa, dck, FTAG);
+			spa_keystore_dsl_key_rele(spa, dck, FTAG);
+		}
 
 		if (tfm_error == 0) {
 			arc_free_data_abd(hdr, hdr->b_l1hdr.b_pabd,

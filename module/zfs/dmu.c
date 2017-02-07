@@ -597,10 +597,7 @@ dmu_buf_rele_array(dmu_buf_t **dbp_fake, int numbufs, void *tag)
  * the data starting at offset, and continuing to offset + len.
  *
  * Note that if the indirect blocks above the blocks being prefetched are not
- * in cache, they will be asychronously read in. If the objset is encrypted,
- * callers must ensure that the relevant key is loaded into the keystore or
- * else the zio layer will report EACCES errors when attempting to decrypt the
- * prefetched data.
+ * in cache, they will be asychronously read in.
  */
 void
 dmu_prefetch(objset_t *os, uint64_t object, int64_t level, uint64_t offset,
