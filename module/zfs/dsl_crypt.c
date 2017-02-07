@@ -420,19 +420,16 @@ dsl_dataset_get_keystatus(dsl_dataset_t *ds)
 	return (ZFS_KEYSTATUS_AVAILABLE);
 }
 
-uint64_t
-dsl_dataset_get_crypt(dsl_dataset_t *ds)
+int
+dsl_dir_get_crypt(dsl_dir_t *dd, uint64_t *crypt)
 {
-	uint64_t crypt = ZIO_CRYPT_INHERIT;
-	dsl_dir_t *dd = ds->ds_dir;
+	if (dd->dd_crypto_obj == 0) {
+		*crypt = ZIO_CRYPT_OFF;
+		return (0);
+	}
 
-	if (dd->dd_crypto_obj == 0)
-		return (ZIO_CRYPT_OFF);
-
-	VERIFY0(zap_lookup(dd->dd_pool->dp_meta_objset, dd->dd_crypto_obj,
-	    DSL_CRYPTO_KEY_CRYPTO_SUITE, 8, 1, &crypt));
-
-	return (crypt);
+	return (zap_lookup(dd->dd_pool->dp_meta_objset, dd->dd_crypto_obj,
+	    DSL_CRYPTO_KEY_CRYPTO_SUITE, 8, 1, crypt));
 }
 
 static int
@@ -1490,8 +1487,7 @@ dmu_objset_create_crypt_check(dsl_dir_t *parentdd, dsl_dir_t *origindd,
 	uint64_t pcrypt, effective_crypt;
 
 	/* get the parent's crypt */
-	ret = dsl_prop_get_dd(parentdd, zfs_prop_to_name(ZFS_PROP_ENCRYPTION),
-	    8, 1, &pcrypt, NULL, B_FALSE);
+	ret = dsl_dir_get_crypt(parentdd, &pcrypt);
 	if (ret != 0)
 		return (ret);
 
@@ -1500,9 +1496,7 @@ dmu_objset_create_crypt_check(dsl_dir_t *parentdd, dsl_dir_t *origindd,
 	 * Clones must always use the same crypt as their origin.
 	 */
 	if (origindd != NULL) {
-		ret = dsl_prop_get_dd(origindd,
-		    zfs_prop_to_name(ZFS_PROP_ENCRYPTION),
-		    8, 1, &effective_crypt, NULL, B_FALSE);
+		ret = dsl_dir_get_crypt(origindd, &effective_crypt);
 		if (ret != 0)
 			return (ret);
 	} else if (dcp == NULL || dcp->cp_crypt == ZIO_CRYPT_INHERIT) {
@@ -1510,6 +1504,9 @@ dmu_objset_create_crypt_check(dsl_dir_t *parentdd, dsl_dir_t *origindd,
 	} else {
 		effective_crypt = dcp->cp_crypt;
 	}
+
+	ASSERT3U(pcrypt, !=, ZIO_CRYPT_INHERIT);
+	ASSERT3U(effective_crypt, !=, ZIO_CRYPT_INHERIT);
 
 	/*
 	 * can't create an unencrypted child of an encrypted parent
@@ -1607,6 +1604,65 @@ dmu_objset_create_crypt_check(dsl_dir_t *parentdd, dsl_dir_t *origindd,
 	}
 
 	return (0);
+}
+
+void
+dsl_dataset_create_crypt_sync(dsl_dir_t *dd, dsl_dataset_t *origin,
+    dsl_crypto_params_t *dcp, dmu_tx_t *tx)
+{
+	dsl_pool_t *dp = dd->dd_pool;
+	uint64_t crypt = (dcp != NULL) ? dcp->cp_crypt : ZIO_CRYPT_INHERIT;
+	dsl_wrapping_key_t *wkey = (dcp != NULL) ? dcp->cp_wkey : NULL;
+
+	/* figure out the effective crypt */
+	if (!dsl_dir_is_clone(dd)) {
+		if (crypt == ZIO_CRYPT_INHERIT && dd->dd_parent != NULL) {
+			VERIFY0(dsl_dir_get_crypt(dd->dd_parent, &crypt));
+		} else if (crypt == ZIO_CRYPT_INHERIT) {
+			crypt = ZIO_CRYPT_OFF;
+		}
+	} else if (origin->ds_dir->dd_crypto_obj != 0) {
+		VERIFY0(dsl_dir_get_crypt(origin->ds_dir, &crypt));
+	}
+
+	ASSERT3U(crypt, !=, ZIO_CRYPT_INHERIT);
+
+	/* if we aren't doing encryption just return */
+	if (crypt == ZIO_CRYPT_OFF)
+		return;
+
+	/* use the new key if given or inherit from the parent */
+	if (wkey == NULL) {
+		VERIFY0(spa_keystore_wkey_hold_ddobj(dp->dp_spa,
+		    dd->dd_parent->dd_object, FTAG, &wkey));
+	} else {
+		wkey->wk_ddobj = dd->dd_object;
+	}
+
+	/* create or clone the DSL crypto key */
+	if (!dsl_dir_is_clone(dd)) {
+		dd->dd_crypto_obj = dsl_crypto_key_create_sync(crypt, wkey, tx);
+	} else if (origin->ds_dir->dd_crypto_obj != 0) {
+		dd->dd_crypto_obj = dsl_crypto_key_clone_sync(origin->ds_dir,
+		    wkey, tx);
+	}
+
+	/* zapify the dd so that we can add the crypto key obj to it */
+	dsl_dir_zapify(dd, tx);
+	VERIFY0(zap_add(dp->dp_meta_objset, dd->dd_object,
+	    DD_FIELD_CRYPTO_KEY_OBJ, sizeof (uint64_t), 1, &dd->dd_crypto_obj,
+	    tx));
+
+	/*
+	 * If we inheritted the wrapping key we release our reference now.
+	 * Otherwise, this is a new key and we need to load it into the
+	 * keystore.
+	 */
+	if (dcp == NULL || dcp->cp_wkey == NULL) {
+		dsl_wrapping_key_rele(wkey, FTAG);
+	} else {
+		VERIFY0(spa_keystore_load_wkey_impl(dp->dp_spa, wkey));
+	}
 }
 
 uint64_t

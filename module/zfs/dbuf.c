@@ -990,7 +990,7 @@ dbuf_read_done(zio_t *zio, int err, arc_buf_t *buf, void *vdb)
 		db->db_freed_in_flight = FALSE;
 		dbuf_set_data(db, buf);
 		db->db_state = DB_CACHED;
-	} else if (err == 0 && (zio == NULL || zio->io_error == 0)) {
+	} else if (err == 0) {
 		dbuf_set_data(db, buf);
 		db->db_state = DB_CACHED;
 	} else {
@@ -2531,7 +2531,7 @@ dbuf_prefetch_indirect_done(zio_t *zio, int err, arc_buf_t *abuf, void *private)
 	    (dpa->dpa_epbs * (dpa->dpa_curlevel - dpa->dpa_zb.zb_level));
 	bp = ((blkptr_t *)abuf->b_data) +
 	    P2PHASE(nextblkid, 1ULL << dpa->dpa_epbs);
-	if (BP_IS_HOLE(bp) || err != 0 || (zio != NULL && zio->io_error != 0)) {
+	if (BP_IS_HOLE(bp) || err != 0) {
 		kmem_free(dpa, sizeof (*dpa));
 	} else if (dpa->dpa_curlevel == dpa->dpa_zb.zb_level) {
 		ASSERT3U(nextblkid, ==, dpa->dpa_zb.zb_blkid);

@@ -5230,7 +5230,7 @@ arc_access(arc_buf_hdr_t *hdr, kmutex_t *hash_lock)
 void
 arc_bcopy_func(zio_t *zio, int error, arc_buf_t *buf, void *arg)
 {
-	if (error == 0 && (zio == NULL || zio->io_error == 0))
+	if (error == 0)
 		bcopy(buf->b_data, arg, arc_buf_size(buf));
 	arc_buf_destroy(buf, arg);
 }
@@ -5240,7 +5240,7 @@ void
 arc_getbuf_func(zio_t *zio, int error, arc_buf_t *buf, void *arg)
 {
 	arc_buf_t **bufp = arg;
-	if (error == 0 && zio && zio->io_error) {
+	if (error != 0) {
 		arc_buf_destroy(buf, arg);
 		*bufp = NULL;
 	} else {
@@ -5419,8 +5419,10 @@ arc_read_done(zio_t *zio)
 
 	/* execute each callback and free its structure */
 	while ((acb = callback_list) != NULL) {
-		if (acb->acb_done)
-			acb->acb_done(zio, 0, acb->acb_buf, acb->acb_private);
+		if (acb->acb_done) {
+			acb->acb_done(zio, zio->io_error, acb->acb_buf,
+			    acb->acb_private);
+		}
 
 		if (acb->acb_zio_dummy != NULL) {
 			acb->acb_zio_dummy->io_error = zio->io_error;

@@ -140,7 +140,7 @@ int dsl_crypto_can_set_keylocation(const char *dsname);
 void spa_keystore_init(spa_keystore_t *sk);
 void spa_keystore_fini(spa_keystore_t *sk);
 zfs_keystatus_t dsl_dataset_get_keystatus(struct dsl_dataset *ds);
-uint64_t dsl_dataset_get_crypt(struct dsl_dataset *ds);
+int dsl_dir_get_crypt(struct dsl_dir *dd, uint64_t *crypt);
 
 int spa_keystore_wkey_hold_ddobj(spa_t *spa, uint64_t ddobj, void *tag,
     dsl_wrapping_key_t **wkey_out);
@@ -160,6 +160,8 @@ int spa_keystore_lookup_key(spa_t *spa, uint64_t dsobj, void *tag,
 int spa_keystore_rewrap(const char *dsname, dsl_crypto_params_t *dcp);
 int dmu_objset_create_crypt_check(dsl_dir_t *parentdd, dsl_dir_t *origindd,
     dsl_crypto_params_t *dcp);
+void dsl_dataset_create_crypt_sync(dsl_dir_t *dd, struct dsl_dataset *origin,
+    dsl_crypto_params_t *dcp, dmu_tx_t *tx);
 uint64_t dsl_crypto_key_create_sync(uint64_t crypt, dsl_wrapping_key_t *wkey,
     dmu_tx_t *tx);
 uint64_t dsl_crypto_key_clone_sync(dsl_dir_t *origindd,

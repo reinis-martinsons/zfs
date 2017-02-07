@@ -857,8 +857,6 @@ dsl_dataset_create_sync_dd(dsl_dir_t *dd, dsl_dataset_t *origin,
 	dmu_buf_t *dbuf;
 	dsl_dataset_phys_t *dsphys;
 	uint64_t dsobj;
-	uint64_t crypt = (dcp != NULL) ? dcp->cp_crypt : ZIO_CRYPT_INHERIT;
-	dsl_wrapping_key_t *wkey = (dcp != NULL) ? dcp->cp_wkey : NULL;
 	objset_t *mos = dp->dp_meta_objset;
 
 	if (origin == NULL)
@@ -954,71 +952,8 @@ dsl_dataset_create_sync_dd(dsl_dir_t *dd, dsl_dataset_t *origin,
 	}
 
 	/* handle encryption */
-	if (!dsl_dir_is_clone(dd)) {
-		/* figure out the effective crypt */
-		if (crypt == ZIO_CRYPT_INHERIT && dd->dd_parent != NULL) {
-			VERIFY0(dsl_prop_get_dd(dd->dd_parent,
-			    zfs_prop_to_name(ZFS_PROP_ENCRYPTION),
-			    8, 1, &crypt, NULL, B_FALSE));
-		} else if (crypt == ZIO_CRYPT_INHERIT) {
-			crypt = ZIO_CRYPT_OFF;
-		}
+	dsl_dataset_create_crypt_sync(dd, origin, dcp, tx);
 
-		if (crypt == ZIO_CRYPT_OFF)
-			goto no_crypto;
-
-		/* use the new key if given or inherit from the parent */
-		if (wkey == NULL) {
-			VERIFY0(spa_keystore_wkey_hold_ddobj(dp->dp_spa,
-			    dd->dd_parent->dd_object, FTAG, &wkey));
-		} else {
-			wkey->wk_ddobj = dd->dd_object;
-		}
-
-		dsl_dir_zapify(dd, tx);
-		dd->dd_crypto_obj = dsl_crypto_key_create_sync(crypt, wkey, tx);
-		VERIFY0(zap_add(mos, dd->dd_object, DD_FIELD_CRYPTO_KEY_OBJ,
-		    sizeof (uint64_t), 1, &dd->dd_crypto_obj, tx));
-
-		if (dcp == NULL || dcp->cp_wkey == NULL) {
-			dsl_wrapping_key_rele(wkey, FTAG);
-		} else {
-			VERIFY0(spa_keystore_load_wkey_impl(dp->dp_spa, wkey));
-		}
-	} else if (origin->ds_dir->dd_crypto_obj != 0) {
-		VERIFY0(dsl_prop_get_dd(origin->ds_dir,
-		    zfs_prop_to_name(ZFS_PROP_ENCRYPTION), 8, 1,
-		    &crypt, NULL, B_FALSE));
-
-		if (crypt == ZIO_CRYPT_OFF)
-			goto no_crypto;
-
-		if (wkey == NULL) {
-			VERIFY0(spa_keystore_wkey_hold_ddobj(dp->dp_spa,
-			    dd->dd_parent->dd_object, FTAG, &wkey));
-		} else {
-			wkey->wk_ddobj = dd->dd_object;
-		}
-
-		VERIFY0(zap_update(mos,
-		    dsl_dir_phys(dd)->dd_props_zapobj,
-		    zfs_prop_to_name(ZFS_PROP_ENCRYPTION),
-		    8, 1, &crypt, tx));
-
-		dsl_dir_zapify(dd, tx);
-		dd->dd_crypto_obj = dsl_crypto_key_clone_sync(origin->ds_dir,
-		    wkey, tx);
-		VERIFY0(zap_add(mos, dd->dd_object, DD_FIELD_CRYPTO_KEY_OBJ,
-		    sizeof (uint64_t), 1, &dd->dd_crypto_obj, tx));
-
-		if (dcp == NULL || dcp->cp_wkey == NULL) {
-			dsl_wrapping_key_rele(wkey, FTAG);
-		} else {
-			VERIFY0(spa_keystore_load_wkey_impl(dp->dp_spa, wkey));
-		}
-	}
-
-no_crypto:
 	if (spa_version(dp->dp_spa) >= SPA_VERSION_UNIQUE_ACCURATE)
 		dsphys->ds_flags |= DS_FLAG_UNIQUE_ACCURATE;
 
@@ -1935,8 +1870,9 @@ get_receive_resume_stats(dsl_dataset_t *ds, nvlist_t *nv)
 void
 dsl_dataset_stats(dsl_dataset_t *ds, nvlist_t *nv)
 {
+	int err;
 	dsl_pool_t *dp = ds->ds_dir->dd_pool;
-	uint64_t refd, avail, uobjs, aobjs, ratio;
+	uint64_t refd, avail, uobjs, aobjs, ratio, crypt;
 
 	ASSERT(dsl_pool_config_held(dp));
 
@@ -1987,14 +1923,15 @@ dsl_dataset_stats(dsl_dataset_t *ds, nvlist_t *nv)
 	    DS_IS_DEFER_DESTROY(ds) ? 1 : 0);
 	dsl_prop_nvlist_add_uint64(nv, ZFS_PROP_KEYSTATUS,
 	    dsl_dataset_get_keystatus(ds));
-	dsl_prop_nvlist_add_uint64(nv, ZFS_PROP_ENCRYPTION,
-	    dsl_dataset_get_crypt(ds));
+
+	err = dsl_dir_get_crypt(ds->ds_dir, &crypt);
+	if (err == 0)
+		dsl_prop_nvlist_add_uint64(nv, ZFS_PROP_ENCRYPTION, crypt);
 
 	if (dsl_dataset_phys(ds)->ds_prev_snap_obj != 0) {
 		uint64_t written, comp, uncomp;
 		dsl_pool_t *dp = ds->ds_dir->dd_pool;
 		dsl_dataset_t *prev;
-		int err;
 
 		err = dsl_dataset_hold_obj(dp,
 		    dsl_dataset_phys(ds)->ds_prev_snap_obj, FTAG, &prev);
