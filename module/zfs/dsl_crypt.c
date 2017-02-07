@@ -1607,8 +1607,8 @@ dmu_objset_create_crypt_check(dsl_dir_t *parentdd, dsl_dir_t *origindd,
 }
 
 void
-dsl_dataset_create_crypt_sync(dsl_dir_t *dd, dsl_dataset_t *origin,
-    dsl_crypto_params_t *dcp, dmu_tx_t *tx)
+dsl_dataset_create_crypt_sync(uint64_t dsobj, dsl_dir_t *dd,
+    dsl_dataset_t *origin, dsl_crypto_params_t *dcp, dmu_tx_t *tx)
 {
 	dsl_pool_t *dp = dd->dd_pool;
 	uint64_t crypt = (dcp != NULL) ? dcp->cp_crypt : ZIO_CRYPT_INHERIT;
@@ -1639,9 +1639,13 @@ dsl_dataset_create_crypt_sync(dsl_dir_t *dd, dsl_dataset_t *origin,
 		wkey->wk_ddobj = dd->dd_object;
 	}
 
-	/* create or clone the DSL crypto key */
+	/*
+	 * Create or clone the DSL crypto key. If we are creating activate
+	 * the feature on the dataset (cloning will do this automatically).
+	 */
 	if (!dsl_dir_is_clone(dd)) {
 		dd->dd_crypto_obj = dsl_crypto_key_create_sync(crypt, wkey, tx);
+		dsl_dataset_activate_feature(dsobj, SPA_FEATURE_ENCRYPTION, tx);
 	} else if (origin->ds_dir->dd_crypto_obj != 0) {
 		dd->dd_crypto_obj = dsl_crypto_key_clone_sync(origin->ds_dir,
 		    wkey, tx);
@@ -1688,9 +1692,6 @@ dsl_crypto_key_create_sync(uint64_t crypt, dsl_wrapping_key_t *wkey,
 	zio_crypt_key_destroy(&dck.dck_key);
 	bzero(&dck.dck_key, sizeof (zio_crypt_key_t));
 
-	/* increment the encryption feature count */
-	spa_feature_incr(tx->tx_pool->dp_spa, SPA_FEATURE_ENCRYPTION, tx);
-
 	return (dck.dck_obj);
 }
 
@@ -1731,9 +1732,6 @@ dsl_crypto_key_clone_sync(dsl_dir_t *orig_dd, dsl_wrapping_key_t *wkey,
 	dsl_crypto_key_sync(&dck, tx);
 	bzero(&dck.dck_key, sizeof (zio_crypt_key_t));
 
-	/* increment the encryption feature count */
-	spa_feature_incr(dp->dp_spa, SPA_FEATURE_ENCRYPTION, tx);
-
 	spa_keystore_dsl_key_rele(dp->dp_spa, orig_dck, FTAG);
 
 	return (dck.dck_obj);
@@ -1744,9 +1742,6 @@ dsl_crypto_key_destroy_sync(uint64_t dckobj, dmu_tx_t *tx)
 {
 	/* destroy the DSL Crypto Key object */
 	VERIFY0(zap_destroy(tx->tx_pool->dp_meta_objset, dckobj, tx));
-
-	/* decrement the feature count */
-	spa_feature_decr(tx->tx_pool->dp_spa, SPA_FEATURE_ENCRYPTION, tx);
 }
 
 int

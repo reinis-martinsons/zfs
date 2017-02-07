@@ -355,6 +355,8 @@ boolean_t dsl_dataset_is_zapified(dsl_dataset_t *ds);
 boolean_t dsl_dataset_has_resume_receive_state(dsl_dataset_t *ds);
 int dsl_dataset_rollback(const char *fsname, void *owner, nvlist_t *result);
 
+void dsl_dataset_activate_feature(uint64_t dsobj,
+    spa_feature_t f, dmu_tx_t *tx);
 void dsl_dataset_deactivate_feature(uint64_t dsobj,
     spa_feature_t f, dmu_tx_t *tx);
 
