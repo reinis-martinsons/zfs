@@ -1986,7 +1986,9 @@ dsl_dataset_stats(dsl_dataset_t *ds, nvlist_t *nv)
 	dsl_prop_nvlist_add_uint64(nv, ZFS_PROP_DEFER_DESTROY,
 	    DS_IS_DEFER_DESTROY(ds) ? 1 : 0);
 	dsl_prop_nvlist_add_uint64(nv, ZFS_PROP_KEYSTATUS,
-	    dsl_dataset_keystore_keystatus(ds));
+	    dsl_dataset_get_keystatus(ds));
+	dsl_prop_nvlist_add_uint64(nv, ZFS_PROP_ENCRYPTION,
+	    dsl_dataset_get_crypt(ds));
 
 	if (dsl_dataset_phys(ds)->ds_prev_snap_obj != 0) {
 		uint64_t written, comp, uncomp;

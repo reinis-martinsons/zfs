@@ -3760,7 +3760,8 @@ spa_l2cache_drop(spa_t *spa)
  */
 static int
 spa_create_check_encryption_params(dsl_crypto_params_t *dcp,
-    boolean_t has_encryption) {
+    boolean_t has_encryption)
+{
 	if (dcp->cp_crypt != ZIO_CRYPT_OFF &&
 	    dcp->cp_crypt != ZIO_CRYPT_INHERIT) {
 		if (!has_encryption || dcp->cp_wkey == NULL ||

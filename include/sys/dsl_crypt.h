@@ -139,7 +139,8 @@ int dsl_crypto_can_set_keylocation(const char *dsname);
 
 void spa_keystore_init(spa_keystore_t *sk);
 void spa_keystore_fini(spa_keystore_t *sk);
-zfs_keystatus_t dsl_dataset_keystore_keystatus(struct dsl_dataset *ds);
+zfs_keystatus_t dsl_dataset_get_keystatus(struct dsl_dataset *ds);
+uint64_t dsl_dataset_get_crypt(struct dsl_dataset *ds);
 
 int spa_keystore_wkey_hold_ddobj(spa_t *spa, uint64_t ddobj, void *tag,
     dsl_wrapping_key_t **wkey_out);

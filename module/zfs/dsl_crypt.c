@@ -209,7 +209,7 @@ dsl_crypto_params_create_nvlist(nvlist_t *props, nvlist_t *crypto_args,
 	}
 
 	/* check for valid keyformat */
-	if (keyformat >= ZIO_CRYPT_FUNCTIONS) {
+	if (keyformat >= ZFS_KEYFORMAT_FORMATS) {
 		ret = SET_ERROR(EINVAL);
 		goto error;
 	} else {
@@ -239,18 +239,8 @@ dsl_crypto_params_create_nvlist(nvlist_t *props, nvlist_t *crypto_args,
 	}
 
 	/* if the user asked for the deault crypt, determine that now */
-	if (dcp->cp_crypt == ZIO_CRYPT_ON) {
+	if (dcp->cp_crypt == ZIO_CRYPT_ON)
 		dcp->cp_crypt = ZIO_CRYPT_ON_VALUE;
-
-		ret = nvlist_remove_all(props,
-		    zfs_prop_to_name(ZFS_PROP_ENCRYPTION));
-		if (ret != 0)
-			goto error;
-		ret = nvlist_add_uint64(props,
-		    zfs_prop_to_name(ZFS_PROP_ENCRYPTION), dcp->cp_crypt);
-		if (ret != 0)
-			goto error;
-	}
 
 	/* create the wrapping key from the raw data */
 	if (wkeydata != NULL) {
@@ -261,6 +251,12 @@ dsl_crypto_params_create_nvlist(nvlist_t *props, nvlist_t *crypto_args,
 
 		dcp->cp_wkey = wkey;
 	}
+
+	/*
+	 * remove the encryption property from the nvlist since it is not
+	 * maintained through the DSL.
+	 */
+	(void) nvlist_remove_all(props, zfs_prop_to_name(ZFS_PROP_ENCRYPTION));
 
 	*dcp_out = dcp;
 
@@ -404,7 +400,7 @@ error:
 }
 
 zfs_keystatus_t
-dsl_dataset_keystore_keystatus(dsl_dataset_t *ds)
+dsl_dataset_get_keystatus(dsl_dataset_t *ds)
 {
 	int ret;
 	dsl_wrapping_key_t *wkey;
@@ -422,6 +418,21 @@ dsl_dataset_keystore_keystatus(dsl_dataset_t *ds)
 	dsl_wrapping_key_rele(wkey, FTAG);
 
 	return (ZFS_KEYSTATUS_AVAILABLE);
+}
+
+uint64_t
+dsl_dataset_get_crypt(dsl_dataset_t *ds)
+{
+	uint64_t crypt = ZIO_CRYPT_INHERIT;
+	dsl_dir_t *dd = ds->ds_dir;
+
+	if (dd->dd_crypto_obj == 0)
+		return (ZIO_CRYPT_OFF);
+
+	VERIFY0(zap_lookup(dd->dd_pool->dp_meta_objset, dd->dd_crypto_obj,
+	    DSL_CRYPTO_KEY_CRYPTO_SUITE, 8, 1, &crypt));
+
+	return (crypt);
 }
 
 static int

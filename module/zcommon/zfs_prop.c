@@ -437,7 +437,7 @@ zfs_prop_init(void)
 	    NULL, PROP_READONLY, ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME,
 	    "<string token>", "RESUMETOK");
 	zprop_register_string(ZFS_PROP_KEYLOCATION, "keylocation",
-	    "none", PROP_INHERIT, ZFS_TYPE_DATASET, "prompt | <file URI>",
+	    NULL, PROP_INHERIT, ZFS_TYPE_DATASET, "prompt | <file URI>",
 	    "KEYLOCATION");
 
 	/* readonly number properties */
