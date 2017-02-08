@@ -2402,6 +2402,7 @@ zfs_prop_set_special(const char *dsname, zprop_source_t source,
 	const char *propname = nvpair_name(pair);
 	zfs_prop_t prop = zfs_name_to_prop(propname);
 	uint64_t intval;
+	char *strval;
 	int err = -1;
 
 	if (prop == ZPROP_INVAL) {
@@ -2421,6 +2422,8 @@ zfs_prop_set_special(const char *dsname, zprop_source_t source,
 	if (zfs_prop_get_type(prop) == PROP_TYPE_STRING) {
 		if (prop != ZFS_PROP_KEYLOCATION)
 			return (-1);
+
+		VERIFY(0 == nvpair_value_string(pair, &strval));
 	} else {
 		VERIFY(0 == nvpair_value_uint64(pair, &intval));
 	}
@@ -2448,7 +2451,7 @@ zfs_prop_set_special(const char *dsname, zprop_source_t source,
 			err = -1;
 		break;
 	case ZFS_PROP_KEYLOCATION:
-		err = dsl_crypto_can_set_keylocation(dsname);
+		err = dsl_crypto_can_set_keylocation(dsname, strval);
 		if (err == 0)
 			err = -1;
 		break;

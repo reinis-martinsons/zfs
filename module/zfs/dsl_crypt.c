@@ -216,9 +216,9 @@ dsl_crypto_params_create_nvlist(nvlist_t *props, nvlist_t *crypto_args,
 		dcp->cp_keyformat = keyformat;
 	}
 
-	/* check for a valid keylocation and copy it in */
+	/* check for a valid keylocation (of any kind) and copy it in */
 	if (keylocation != NULL) {
-		if (!zfs_prop_valid_keylocation(keylocation)) {
+		if (!zfs_prop_valid_keylocation(keylocation, B_FALSE)) {
 			ret = SET_ERROR(EINVAL);
 			goto error;
 		}
@@ -534,7 +534,7 @@ error:
 }
 
 int
-dsl_crypto_can_set_keylocation(const char *dsname)
+dsl_crypto_can_set_keylocation(const char *dsname, const char *keylocation)
 {
 	int ret = 0;
 	dsl_dir_t *dd = NULL;
@@ -551,9 +551,20 @@ dsl_crypto_can_set_keylocation(const char *dsname)
 	if (ret != 0)
 		goto out;
 
-	/* check that the dd is encrypted */
+	/* if dd is not encrypted, the value may only be "none" */
 	if (dd->dd_crypto_obj == 0) {
-		ret = SET_ERROR(EACCES);
+		if (strcmp(keylocation, "none") != 0) {
+			ret = SET_ERROR(EACCES);
+			goto out;
+		}
+
+		ret = 0;
+		goto out;
+	}
+
+	/* check for a valid keylocation for encrypted datasets */
+	if (!zfs_prop_valid_keylocation(keylocation, B_TRUE)) {
+		ret = SET_ERROR(EINVAL);
 		goto out;
 	}
 
@@ -1267,6 +1278,13 @@ spa_keystore_rewrap_check(void *arg, dmu_tx_t *tx)
 		goto error;
 	}
 
+	/* check that the keylocation is valid or NULL */
+	if (dcp->cp_keylocation != NULL &&
+	    !zfs_prop_valid_keylocation(dcp->cp_keylocation, B_TRUE)) {
+		ret = SET_ERROR(EINVAL);
+		goto error;
+	}
+
 	/* crypt cannot be changed after creation */
 	if (dcp->cp_crypt != ZIO_CRYPT_INHERIT) {
 		ret = SET_ERROR(EINVAL);
@@ -1541,7 +1559,9 @@ dmu_objset_create_crypt_check(dsl_dir_t *parentdd, dsl_dir_t *origindd,
 		/* Must not specify encryption params */
 		if (dcp->cp_salt != 0 || dcp->cp_iters != 0 ||
 		    dcp->cp_keyformat != ZFS_KEYFORMAT_NONE ||
-		    dcp->cp_keylocation != NULL || dcp->cp_wkey != NULL)
+		    dcp->cp_wkey != NULL ||
+		    (dcp->cp_keylocation != NULL &&
+		    strcmp(dcp->cp_keylocation, "none") != 0))
 			return (SET_ERROR(EINVAL));
 
 		return (0);
@@ -1550,14 +1570,15 @@ dmu_objset_create_crypt_check(dsl_dir_t *parentdd, dsl_dir_t *origindd,
 	/* We will now definitely be encrypting. Check the feature flag */
 	if (!spa_feature_is_enabled(parentdd->dd_pool->dp_spa,
 	    SPA_FEATURE_ENCRYPTION)) {
-		return (SET_ERROR(EINVAL));
+		return (SET_ERROR(EOPNOTSUPP));
 	}
 
 	/* handle non-implicit inheritence */
 	if (dcp->cp_wkey == NULL) {
 		/* key must be fully unspecified */
 		if (dcp->cp_keyformat != ZFS_KEYFORMAT_NONE ||
-		    dcp->cp_keylocation != NULL)
+		    (dcp->cp_keylocation != NULL &&
+		    strcmp(dcp->cp_keylocation, "none") == 0))
 			return (SET_ERROR(EINVAL));
 
 		/* parent must have a key to inherit */
@@ -1580,7 +1601,8 @@ dmu_objset_create_crypt_check(dsl_dir_t *parentdd, dsl_dir_t *origindd,
 	}
 
 	/* At this point we should have a fully specified key. Check location */
-	if (dcp->cp_keylocation == NULL)
+	if (dcp->cp_keylocation == NULL ||
+	    !zfs_prop_valid_keylocation(dcp->cp_keylocation, B_TRUE))
 		return (SET_ERROR(EINVAL));
 
 	/* Must have fully specified keyformat */
@@ -1618,17 +1640,13 @@ dsl_dataset_create_crypt_sync(uint64_t dsobj, dsl_dir_t *dd,
 	if (!dsl_dir_is_clone(dd)) {
 		if (crypt == ZIO_CRYPT_INHERIT && dd->dd_parent != NULL) {
 			VERIFY0(dsl_dir_get_crypt(dd->dd_parent, &crypt));
-		} else if (crypt == ZIO_CRYPT_INHERIT) {
-			crypt = ZIO_CRYPT_OFF;
 		}
 	} else if (origin->ds_dir->dd_crypto_obj != 0) {
 		VERIFY0(dsl_dir_get_crypt(origin->ds_dir, &crypt));
 	}
 
-	ASSERT3U(crypt, !=, ZIO_CRYPT_INHERIT);
-
 	/* if we aren't doing encryption just return */
-	if (crypt == ZIO_CRYPT_OFF)
+	if (crypt == ZIO_CRYPT_OFF || crypt == ZIO_CRYPT_INHERIT)
 		return;
 
 	/* use the new key if given or inherit from the parent */

@@ -717,13 +717,13 @@ proplist_has_encryption_props(nvlist_t *props)
 	if (ret == 0 && intval != ZIO_CRYPT_OFF)
 		return (B_TRUE);
 
-	ret = nvlist_lookup_uint64(props,
-	    zfs_prop_to_name(ZFS_PROP_KEYFORMAT), &intval);
-	if (ret == 0)
-		return (B_TRUE);
-
 	ret = nvlist_lookup_string(props,
 	    zfs_prop_to_name(ZFS_PROP_KEYLOCATION), &strval);
+	if (ret == 0 && strcmp(strval, "none") != 0)
+		return (B_TRUE);
+
+	ret = nvlist_lookup_uint64(props,
+	    zfs_prop_to_name(ZFS_PROP_KEYFORMAT), &intval);
 	if (ret == 0)
 		return (B_TRUE);
 

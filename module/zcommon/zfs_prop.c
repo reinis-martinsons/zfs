@@ -437,7 +437,7 @@ zfs_prop_init(void)
 	    NULL, PROP_READONLY, ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME,
 	    "<string token>", "RESUMETOK");
 	zprop_register_string(ZFS_PROP_KEYLOCATION, "keylocation",
-	    NULL, PROP_INHERIT, ZFS_TYPE_DATASET, "prompt | <file URI>",
+	    "none", PROP_INHERIT, ZFS_TYPE_DATASET, "prompt | <file URI>",
 	    "KEYLOCATION");
 
 	/* readonly number properties */
@@ -745,12 +745,15 @@ zfs_prop_encryption_key_param(zfs_prop_t prop)
 
 /*
  * Helper function used by both kernelspace and userspace to check the
- * keylpcation property.
+ * keylocation property. If encrypted is set, the keylocation must be valid
+ * for an encrypted dataset.
  */
 boolean_t
-zfs_prop_valid_keylocation(const char *str)
+zfs_prop_valid_keylocation(const char *str, boolean_t encrypted)
 {
-	if (strcmp("prompt", str) == 0)
+	if (strcmp("none", str) == 0)
+		return (!encrypted);
+	else if (strcmp("prompt", str) == 0)
 		return (B_TRUE);
 	else if (strlen(str) > 8 && strncmp("file:///", str, 8) == 0)
 		return (B_TRUE);

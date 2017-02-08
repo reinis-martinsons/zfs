@@ -135,7 +135,7 @@ int dsl_wrapping_key_create(uint8_t *wkeydata, dsl_wrapping_key_t **wkey_out);
 int dsl_crypto_params_create_nvlist(nvlist_t *props, nvlist_t *crypto_args,
     dsl_crypto_params_t **dcp_out);
 void dsl_crypto_params_free(dsl_crypto_params_t *dcp, boolean_t unload);
-int dsl_crypto_can_set_keylocation(const char *dsname);
+int dsl_crypto_can_set_keylocation(const char *dsname, const char *keylocation);
 
 void spa_keystore_init(spa_keystore_t *sk);
 void spa_keystore_fini(spa_keystore_t *sk);

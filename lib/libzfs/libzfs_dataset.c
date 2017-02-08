@@ -1377,7 +1377,7 @@ badlabel:
 
 			break;
 		case ZFS_PROP_KEYLOCATION:
-			if (!zfs_prop_valid_keylocation(strval)) {
+			if (!zfs_prop_valid_keylocation(strval, B_FALSE)) {
 				zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
 				    "invalid keylocation"));
 				(void) zfs_error(hdl, EZFS_BADPROP, errbuf);

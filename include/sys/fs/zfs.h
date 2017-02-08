@@ -284,7 +284,7 @@ boolean_t zfs_prop_readonly(zfs_prop_t);
 boolean_t zfs_prop_inheritable(zfs_prop_t);
 boolean_t zfs_prop_setonce(zfs_prop_t);
 boolean_t zfs_prop_encryption_key_param(zfs_prop_t);
-boolean_t zfs_prop_valid_keylocation(const char *);
+boolean_t zfs_prop_valid_keylocation(const char *, boolean_t);
 const char *zfs_prop_to_name(zfs_prop_t);
 zfs_prop_t zfs_name_to_prop(const char *);
 boolean_t zfs_prop_user(const char *);
