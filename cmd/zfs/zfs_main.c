@@ -7108,11 +7108,12 @@ load_unload_keys(int argc, char **argv, boolean_t loadkey)
 	    ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME, NULL, NULL, 0,
 	    load_key_callback, &cb);
 
-	if (cb.cb_recursive && cb.cb_numattempted != 0) {
-		(void) printf(gettext("%llu / %llu keys successfully %s\n"),
+	if (cb.cb_noop || (cb.cb_recursive && cb.cb_numattempted != 0)) {
+		(void) printf(gettext("%llu / %llu key(s) successfully %s\n"),
 		    (u_longlong_t)(cb.cb_numattempted - cb.cb_numfailed),
 		    (u_longlong_t)cb.cb_numattempted,
-		    loadkey ? "loaded" : "unloaded");
+		    loadkey ? (cb.cb_noop ? "verified" : "loaded") :
+		    "unloaded");
 	}
 
 	if (cb.cb_numfailed != 0)

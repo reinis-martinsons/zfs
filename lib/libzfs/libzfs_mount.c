@@ -1261,6 +1261,14 @@ zpool_enable_datasets(zpool_handle_t *zhp, const char *mntopts, int flags)
 
 	ret = 0;
 	for (i = 0; i < cb.cb_used; i++) {
+		/*
+		 * don't attempt to mount encrypted datasets with
+		 * unloaded keys
+		 */
+		if (zfs_prop_get_int(cb.cb_handles[i], ZFS_PROP_KEYSTATUS) ==
+		    ZFS_KEYSTATUS_UNAVAILABLE)
+			continue;
+
 		if (zfs_mount(cb.cb_handles[i], mntopts, flags) != 0)
 			ret = -1;
 		else
