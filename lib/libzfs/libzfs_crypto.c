@@ -761,7 +761,7 @@ zfs_crypto_is_encryption_root(zfs_handle_t *zhp, boolean_t *enc_root)
 	/* check if the keylocation was inheritted */
 	if (keylocation_srctype == ZPROP_SRC_INHERITED) {
 		*enc_root = B_FALSE;
-		return (EINVAL);
+		return (0);
 	}
 
 	*enc_root = B_TRUE;
