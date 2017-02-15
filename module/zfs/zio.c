@@ -419,6 +419,7 @@ zio_decrypt(zio_t *zio, abd_t *data, uint64_t size)
 	    bp->blk_birth, size, data, zio->io_abd, iv, mac, salt);
 	if (ret == ZIO_NO_ENCRYPTION_NEEDED) {
 		ASSERT3U(BP_GET_TYPE(bp), ==, DMU_OT_INTENT_LOG);
+		abd_copy(data, zio->io_abd, size);
 	} else if (ret != 0) {
 		/* assert that the key was found unless this was speculative */
 		ASSERT(ret != ENOENT || (zio->io_flags & ZIO_FLAG_SPECULATIVE));
@@ -623,6 +624,8 @@ zio_create(zio_t *pio, spa_t *spa, uint64_t txg, const blkptr_t *bp,
 	ASSERT(vd || stage == ZIO_STAGE_OPEN);
 
 	IMPLY(lsize != psize, (flags & ZIO_FLAG_RAW_COMPRESS) != 0);
+	IMPLY((flags & ZIO_FLAG_RAW_ENCRYPT) != 0,
+	    (flags & ZIO_FLAG_RAW_COMPRESS) != 0);
 
 	zio = kmem_cache_alloc(zio_cache, KM_SLEEP);
 	bzero(zio, sizeof (zio_t));
