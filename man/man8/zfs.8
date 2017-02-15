@@ -1033,7 +1033,7 @@ default encryption suite will be selected, which is currently \fBaes-256-ccm\fR.
 In order to provide consistent data protection, encryption must be specified at
 dataset creation time and it cannot be changed afterwards.
 .sp
-For more details and caveats about encryption see \fBzpool-features\fR.
+For more details and caveats about encryption see the "Encryption" section.
 .RE
 
 .sp
@@ -1063,14 +1063,15 @@ be changed after dataset creation, the keyformat can be with
 .ad
 .sp .6
 .RS 4n
-Controls where the user's encryption key should be loaded from. This property
-is only set when the dataset is encrypted.
+Controls where the user's encryption key will be loaded from by default for
+commands such as \fBzfs load-key\fR and \fBzfs mount -l\fR. This property is
+only set when the dataset is encrypted.
 .sp
-If \fBkeylocation\fR is set
-locally, the dataset is an encryption root. Encryption roots share their keys
-with all datasets that inherit this property. This means that when a key is
-loaded for the encryption root, all children that inherit the \fBkeylocation\fR
-property are automatically loaded as well.
+If \fBkeylocation\fR is set locally, the dataset is an encryption root.
+Encryption roots share their keys with all datasets that inherit this property.
+This means that when a key is loaded for the encryption root, the keys for all
+children that inherit the \fBkeylocation\fR property are automatically loaded
+as well.
 .sp
 Even though the encryption suite cannot be changed after dataset creation, the
 keylocation can be with \fBzfs change-key\fR. If the dataset is an encryption 
@@ -1170,8 +1171,9 @@ forcing the attacker to run each passphrase through a computationally expensive
 hashing function many times before they arrive at the resulting key. A user who
 actually knows the passphrase will only have to pay this cost once. As CPUs
 become better at processing, this number should be raised to ensure that a
-brute force attack is still not possible. The current default is \fB100000\fR
-This property may be changed with \fBzfs change-key\fR.
+brute force attack is still not possible. The current default is \fB350000\fR
+and the minimum is \fB100000\fR This property may be changed with
+\fBzfs change-key\fR.
 .RE
 
 .sp
@@ -1753,13 +1755,13 @@ with the \fBzfs create\fR command set up and enable the swap area using the
 Enabling the \fBencryption\fR feature allows the user to create natively
 encrypted filesystems and volumes. \fBZFS\fR will encrypt all user data
 including file and zvol data, file attributes, ACLs, permission bits, directory
-listings, and FUID mappings. \fBZFS\fR will not encrypt metadata related to the
-pool structure, including dataset names, dataset hierarchy, file size, file
-holes, and dedup tables. Key rotation is managed internally by the \fBZFS\fR
-kernel module and changing the user's key does not require re-encrypting the
-entire dataset. Datasets can be scrubbed, resilvered, renamed, and deleted
-without the encryption keys being loaded (see the \fBkeylocation\fR property
-and \fBzfs load-key\fR subcommand for more info).
+listings, FUID mappings, and userused / groupused data. \fBZFS\fR will not
+encrypt metadata related to the pool structure, including dataset names, dataset
+hierarchy, file size, file holes, and dedup tables. Key rotation is managed
+internally by the \fBZFS\fR kernel module and changing the user's key does not
+require re-encrypting the entire dataset. Datasets can be scrubbed, resilvered,
+renamed, and deleted without the encryption keys being loaded (see the
+\fBkeylocation\fR property and \fBzfs load-key\fR subcommand for more info).
 .sp
 .LP
 Encryption changes the behavior of a few \fBZFS\fR operations. Encryption is
@@ -2739,8 +2741,8 @@ Report mount progress. This is intended for use with \fBzfs mount -a\fR on a sys
 .ad
 .sp .6
 .RS 4n
-Attempt to load keys for encrypted filesystems as they are being mounted. This
-is equivalent to executing \fbzfs load-key\fR on each encryption root before
+Load keys for encrypted filesystems as they are being mounted. This is
+equivalent to executing \fbzfs load-key\fR on each encryption root before
 mounting it. Note that if a filesystem has a \fBkeylocation\fR of \fBprompt\fR
 this will cause the terminal to interactively block after asking for the key.
 .RE
@@ -3581,8 +3583,8 @@ Display the path's inode change time as the first column of output.
 .ad
 .sp .6
 .RS 4n
-Loads a key into zfs so that the dataset and all of its children that inherit
-the \fBekeylocation\fR property may be accessed. The key will be expected in
+Load the key for \fIfilesystem\fR, allowing it and all children that inherit
+the \fBekeylocation\fR property to be accessed. The key will be expected in
 the format specified by the \fBkeyformat\fR and location specified by the
 \fBkeylocation\fR property. Note that if the \fBkeylocation\fR is set to
 \fBprompt\fR theterminal will interactively wait for the key to be entered.
