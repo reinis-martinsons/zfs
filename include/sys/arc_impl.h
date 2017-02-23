@@ -176,7 +176,7 @@ typedef struct l1arc_buf_hdr {
  * disk as they appear in the main pool. In order for this to work we
  * need to pass around the encryption parameters so they can be used
  * to write data to the L2ARC. This struct is only defined in the
- * arc_buf_hdr_t if the L1 header is defined and has the ARC_FLAG_ENCRYPT
+ * arc_buf_hdr_t if the L1 header is defined and has the ARC_FLAG_ENCRYPTED
  * flag set.
  */
 typedef struct arc_buf_hdr_crypt {
@@ -188,9 +188,17 @@ typedef struct arc_buf_hdr_crypt {
 	uint64_t		b_dsobj;
 
 	/* encryption parameters */
-	uint8_t			b_salt[DATA_SALT_LEN];
-	uint8_t			b_iv[DATA_IV_LEN];
-	uint8_t			b_mac[DATA_MAC_LEN];
+	uint8_t			b_salt[ZIO_DATA_SALT_LEN];
+	uint8_t			b_iv[ZIO_DATA_IV_LEN];
+
+	/*
+	 * Technically this could be removed since we will always be able to
+	 * get the mac from the bp when we need it. However, it is inconvenient
+	 * for callers of arc code to have to pass a bp in all the time. This
+	 * also allows us to assert that L2ARC data is properly encrypted to
+	 * match the data in the main storage pool.
+	 */
+	uint8_t			b_mac[ZIO_DATA_MAC_LEN];
 } arc_buf_hdr_crypt_t;
 
 typedef struct l2arc_dev {
@@ -262,7 +270,7 @@ struct arc_buf_hdr {
 	/* L1ARC fields. Undefined when in l2arc_only state */
 	l1arc_buf_hdr_t		b_l1hdr;
 	/*
-	 * Encryption parameters. Defined only when ARC_FLAG_ENCRYPT
+	 * Encryption parameters. Defined only when ARC_FLAG_ENCRYPTED
 	 * is set and the L1 header exists.
 	 */
 	arc_buf_hdr_crypt_t b_crypt_hdr;
