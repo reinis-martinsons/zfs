@@ -795,7 +795,7 @@ static int
 dmu_send_impl(void *tag, dsl_pool_t *dp, dsl_dataset_t *to_ds,
     zfs_bookmark_phys_t *ancestor_zb, boolean_t is_clone,
     boolean_t embedok, boolean_t large_block_ok, boolean_t compressok,
-    int outfd, uint64_t resumeobj, uint64_t resumeoff,
+    boolean_t rawok, int outfd, uint64_t resumeobj, uint64_t resumeoff,
     vnode_t *vp, offset_t *off)
 {
 	objset_t *os;
@@ -808,6 +808,8 @@ dmu_send_impl(void *tag, dsl_pool_t *dp, dsl_dataset_t *to_ds,
 	void *payload = NULL;
 	size_t payload_len = 0;
 	struct send_block_record *to_data;
+
+	ASSERT0(rawok && compressok);
 
 	err = dmu_objset_from_ds(to_ds, &os);
 	if (err != 0) {
@@ -999,7 +1001,7 @@ out:
 int
 dmu_send_obj(const char *pool, uint64_t tosnap, uint64_t fromsnap,
     boolean_t embedok, boolean_t large_block_ok, boolean_t compressok,
-    int outfd, vnode_t *vp, offset_t *off)
+    boolean_t rawok, int outfd, vnode_t *vp, offset_t *off)
 {
 	dsl_pool_t *dp;
 	dsl_dataset_t *ds;
@@ -1036,10 +1038,12 @@ dmu_send_obj(const char *pool, uint64_t tosnap, uint64_t fromsnap,
 		is_clone = (fromds->ds_dir != ds->ds_dir);
 		dsl_dataset_rele(fromds, FTAG);
 		err = dmu_send_impl(FTAG, dp, ds, &zb, is_clone,
-		    embedok, large_block_ok, compressok, outfd, 0, 0, vp, off);
+		    embedok, large_block_ok, compressok, rawok, outfd,
+		    0, 0, vp, off);
 	} else {
 		err = dmu_send_impl(FTAG, dp, ds, NULL, B_FALSE,
-		    embedok, large_block_ok, compressok, outfd, 0, 0, vp, off);
+		    embedok, large_block_ok, compressok, rawok, outfd,
+		    0, 0, vp, off);
 	}
 	dsl_dataset_rele_flags(ds, dsflags, FTAG);
 	return (err);
@@ -1047,9 +1051,9 @@ dmu_send_obj(const char *pool, uint64_t tosnap, uint64_t fromsnap,
 
 int
 dmu_send(const char *tosnap, const char *fromsnap, boolean_t embedok,
-    boolean_t large_block_ok, boolean_t compressok, int outfd,
-    uint64_t resumeobj, uint64_t resumeoff,
-    vnode_t *vp, offset_t *off)
+    boolean_t large_block_ok, boolean_t compressok, boolean_t rawok,
+    int outfd, uint64_t resumeobj, uint64_t resumeoff, vnode_t *vp,
+    offset_t *off)
 {
 	dsl_pool_t *dp;
 	dsl_dataset_t *ds;
@@ -1121,11 +1125,11 @@ dmu_send(const char *tosnap, const char *fromsnap, boolean_t embedok,
 			return (err);
 		}
 		err = dmu_send_impl(FTAG, dp, ds, &zb, is_clone,
-		    embedok, large_block_ok, compressok,
+		    embedok, large_block_ok, compressok, rawok,
 		    outfd, resumeobj, resumeoff, vp, off);
 	} else {
 		err = dmu_send_impl(FTAG, dp, ds, NULL, B_FALSE,
-		    embedok, large_block_ok, compressok,
+		    embedok, large_block_ok, compressok, rawok,
 		    outfd, resumeobj, resumeoff, vp, off);
 	}
 	if (owned)

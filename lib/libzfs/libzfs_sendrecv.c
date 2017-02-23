@@ -956,7 +956,7 @@ typedef struct send_dump_data {
 	uint64_t prevsnap_obj;
 	boolean_t seenfrom, seento, replicate, doall, fromorigin;
 	boolean_t verbose, dryrun, parsable, progress, embed_data, std_out;
-	boolean_t large_block, compress;
+	boolean_t large_block, compress, raw;
 	int outfd;
 	boolean_t err;
 	nvlist_t *fss;
@@ -1265,6 +1265,8 @@ dump_snapshot(zfs_handle_t *zhp, void *arg)
 		flags |= LZC_SEND_FLAG_EMBED_DATA;
 	if (sdd->compress)
 		flags |= LZC_SEND_FLAG_COMPRESS;
+	if (sdd->raw)
+		flags |= LZC_SEND_FLAG_RAW;
 
 	if (!sdd->doall && !isfromsnap && !istosnap) {
 		if (sdd->replicate) {
@@ -1917,6 +1919,7 @@ zfs_send(zfs_handle_t *zhp, const char *fromsnap, const char *tosnap,
 	sdd.large_block = flags->largeblock;
 	sdd.embed_data = flags->embed_data;
 	sdd.compress = flags->compress;
+	sdd.raw = flags->raw;
 	sdd.filter_cb = filter_func;
 	sdd.filter_cb_arg = cb_arg;
 	if (debugnvp)

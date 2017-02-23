@@ -4613,6 +4613,10 @@ zfs_ioc_send(zfs_cmd_t *zc)
 	boolean_t embedok = (zc->zc_flags & 0x1);
 	boolean_t large_block_ok = (zc->zc_flags & 0x2);
 	boolean_t compressok = (zc->zc_flags & 0x4);
+	boolean_t rawok = (zc->zc_flags & 0x8);
+
+	if (rawok && compressok)
+		return (SET_ERROR(EINVAL));
 
 	if (zc->zc_obj != 0) {
 		dsl_pool_t *dp;
@@ -4661,7 +4665,7 @@ zfs_ioc_send(zfs_cmd_t *zc)
 			}
 		}
 
-		error = dmu_send_estimate(tosnap, fromsnap, compressok,
+		error = dmu_send_estimate(tosnap, fromsnap, compressok || rawok,
 		    &zc->zc_objset_type);
 
 		if (fromsnap != NULL)
@@ -4675,7 +4679,7 @@ zfs_ioc_send(zfs_cmd_t *zc)
 
 		off = fp->f_offset;
 		error = dmu_send_obj(zc->zc_name, zc->zc_sendobj,
-		    zc->zc_fromobj, embedok, large_block_ok, compressok,
+		    zc->zc_fromobj, embedok, large_block_ok, compressok, rawok,
 		    zc->zc_cookie, fp->f_vnode, &off);
 
 		if (VOP_SEEK(fp->f_vnode, fp->f_offset, &off, NULL) == 0)
@@ -5616,6 +5620,8 @@ zfs_ioc_space_snaps(const char *lastsnap, nvlist_t *innvl, nvlist_t *outnvl)
  *         presence indicates DRR_WRITE_EMBEDDED records are permitted
  *     (optional) "compressok" -> (value ignored)
  *         presence indicates compressed DRR_WRITE records are permitted
+ *     (optional) "rawok" -> (value ignored)
+ *         presence indicates raw DRR_WRITE records should be used.
  *     (optional) "resume_object" and "resume_offset" -> (uint64)
  *         if present, resume send stream from specified object and offset.
  * }
@@ -5634,6 +5640,7 @@ zfs_ioc_send_new(const char *snapname, nvlist_t *innvl, nvlist_t *outnvl)
 	boolean_t largeblockok;
 	boolean_t embedok;
 	boolean_t compressok;
+	boolean_t rawok;
 	uint64_t resumeobj = 0;
 	uint64_t resumeoff = 0;
 
@@ -5646,6 +5653,10 @@ zfs_ioc_send_new(const char *snapname, nvlist_t *innvl, nvlist_t *outnvl)
 	largeblockok = nvlist_exists(innvl, "largeblockok");
 	embedok = nvlist_exists(innvl, "embedok");
 	compressok = nvlist_exists(innvl, "compressok");
+	rawok = nvlist_exists(innvl, "rawok");
+
+	if (rawok && compressok)
+		return (SET_ERROR(EINVAL));
 
 	(void) nvlist_lookup_uint64(innvl, "resume_object", &resumeobj);
 	(void) nvlist_lookup_uint64(innvl, "resume_offset", &resumeoff);
@@ -5655,7 +5666,7 @@ zfs_ioc_send_new(const char *snapname, nvlist_t *innvl, nvlist_t *outnvl)
 
 	off = fp->f_offset;
 	error = dmu_send(snapname, fromname, embedok, largeblockok, compressok,
-	    fd, resumeobj, resumeoff, fp->f_vnode, &off);
+	    rawok, fd, resumeobj, resumeoff, fp->f_vnode, &off);
 
 	if (VOP_SEEK(fp->f_vnode, fp->f_offset, &off, NULL) == 0)
 		fp->f_offset = off;
@@ -5695,6 +5706,7 @@ zfs_ioc_send_space(const char *snapname, nvlist_t *innvl, nvlist_t *outnvl)
 	/* LINTED E_FUNC_SET_NOT_USED */
 	boolean_t embedok;
 	boolean_t compressok;
+	boolean_t rawok;
 	uint64_t space;
 
 	error = dsl_pool_hold(snapname, FTAG, &dp);
@@ -5710,6 +5722,7 @@ zfs_ioc_send_space(const char *snapname, nvlist_t *innvl, nvlist_t *outnvl)
 	largeblockok = nvlist_exists(innvl, "largeblockok");
 	embedok = nvlist_exists(innvl, "embedok");
 	compressok = nvlist_exists(innvl, "compressok");
+	rawok = nvlist_exists(innvl, "rawok");
 
 	error = nvlist_lookup_string(innvl, "from", &fromname);
 	if (error == 0) {
@@ -5723,8 +5736,8 @@ zfs_ioc_send_space(const char *snapname, nvlist_t *innvl, nvlist_t *outnvl)
 			error = dsl_dataset_hold(dp, fromname, FTAG, &fromsnap);
 			if (error != 0)
 				goto out;
-			error = dmu_send_estimate(tosnap, fromsnap, compressok,
-			    &space);
+			error = dmu_send_estimate(tosnap, fromsnap,
+			    compressok || rawok, &space);
 			dsl_dataset_rele(fromsnap, FTAG);
 		} else if (strchr(fromname, '#') != NULL) {
 			/*
@@ -5739,7 +5752,8 @@ zfs_ioc_send_space(const char *snapname, nvlist_t *innvl, nvlist_t *outnvl)
 			if (error != 0)
 				goto out;
 			error = dmu_send_estimate_from_txg(tosnap,
-			    frombm.zbm_creation_txg, compressok, &space);
+			    frombm.zbm_creation_txg, compressok || rawok,
+			    &space);
 		} else {
 			/*
 			 * from is not properly formatted as a snapshot or
@@ -5750,7 +5764,8 @@ zfs_ioc_send_space(const char *snapname, nvlist_t *innvl, nvlist_t *outnvl)
 		}
 	} else {
 		// If estimating the size of a full send, use dmu_send_estimate
-		error = dmu_send_estimate(tosnap, NULL, compressok, &space);
+		error = dmu_send_estimate(tosnap, NULL, compressok || rawok,
+		    &space);
 	}
 
 	fnvlist_add_uint64(outnvl, "space", space);
