@@ -398,6 +398,7 @@ zio_decrypt(zio_t *zio, abd_t *data, uint64_t size)
 	uint8_t salt[ZIO_DATA_SALT_LEN];
 	uint8_t iv[ZIO_DATA_IV_LEN];
 	uint8_t mac[ZIO_DATA_MAC_LEN];
+	boolean_t no_crypt = B_FALSE;
 
 	ASSERT(BP_IS_ENCRYPTED(bp));
 	ASSERT3U(size, !=, 0);
@@ -416,15 +417,15 @@ zio_decrypt(zio_t *zio, abd_t *data, uint64_t size)
 	}
 
 	ret = spa_do_crypt_abd(B_FALSE, zio->io_spa, &zio->io_bookmark, bp,
-	    bp->blk_birth, size, data, zio->io_abd, iv, mac, salt);
-	if (ret == ZIO_NO_ENCRYPTION_NEEDED) {
-		ASSERT3U(BP_GET_TYPE(bp), ==, DMU_OT_INTENT_LOG);
-		abd_copy(data, zio->io_abd, size);
-	} else if (ret != 0) {
+	    bp->blk_birth, size, data, zio->io_abd, iv, mac, salt, &no_crypt);
+	if (ret != 0) {
 		/* assert that the key was found unless this was speculative */
 		ASSERT(ret != ENOENT || (zio->io_flags & ZIO_FLAG_SPECULATIVE));
 		zio->io_error = ret;
 	}
+
+	if (no_crypt)
+		abd_copy(data, zio->io_abd, size);
 }
 
 /*
@@ -3552,7 +3553,6 @@ zio_vdev_io_bypass(zio_t *zio)
 static int
 zio_encrypt(zio_t *zio)
 {
-	int ret;
 	zio_prop_t *zp = &zio->io_prop;
 	spa_t *spa = zio->io_spa;
 	blkptr_t *bp = zio->io_bp;
@@ -3563,6 +3563,7 @@ zio_encrypt(zio_t *zio)
 	uint8_t salt[ZIO_DATA_SALT_LEN];
 	uint8_t iv[ZIO_DATA_IV_LEN];
 	uint8_t mac[ZIO_DATA_MAC_LEN];
+	boolean_t no_crypt = B_FALSE;
 
 	/* the root zio already encrypted the data */
 	if (zio->io_child_type == ZIO_CHILD_GANG)
@@ -3578,6 +3579,7 @@ zio_encrypt(zio_t *zio)
 		ASSERT(zio->io_flags & ZIO_FLAG_RAW_COMPRESS);
 		ASSERT(zp->zp_encrypt);
 		BP_SET_ENCRYPTED(bp, B_TRUE);
+		BP_SET_BYTEORDER(bp, zp->zp_byteorder);
 		zio_crypt_encode_params_bp(bp, zp->zp_salt, zp->zp_iv);
 		zio_crypt_encode_mac_bp(bp, zp->zp_mac);
 		return (ZIO_PIPELINE_CONTINUE);
@@ -3617,36 +3619,28 @@ zio_encrypt(zio_t *zio)
 	}
 
 	/* Perform the encryption. This should not fail */
-	ret = spa_do_crypt_abd(B_TRUE, spa, &zio->io_bookmark, bp,
-	    zio->io_txg, psize, zio->io_abd, eabd, iv, mac, salt);
-	if (ret != 0) {
-		/*
-		 * Dnode blocks and ZIL blocks may not need encryption if there
-		 * is no private data in the blocks. We cannot disable
-		 * encryption on ZIL blocks since they have been preallocated,
-		 * but we can do so with dnode blocks. This means that we can
-		 * use a full checksum instead of leaving half blank for a
-		 * MAC we won't end up using.
-		 */
-		ASSERT3U(ret, ==, ZIO_NO_ENCRYPTION_NEEDED);
-		abd_free(eabd);
-
-		if (ot != DMU_OT_INTENT_LOG) {
-			ASSERT3U(ot, ==, DMU_OT_DNODE);
-			BP_SET_ENCRYPTED(bp, B_FALSE);
-		}
-		return (ZIO_PIPELINE_CONTINUE);
-	}
+	VERIFY0(spa_do_crypt_abd(B_TRUE, spa, &zio->io_bookmark, bp,
+	    zio->io_txg, psize, zio->io_abd, eabd, iv, mac, salt, &no_crypt));
 
 	/* encode encryption metadata into the bp */
 	if (ot == DMU_OT_INTENT_LOG) {
+		/*
+		 * ZIL blocks store the MAC in the embedde checksum, so the
+		 * transform must always be applied.
+		 */
 		zio_crypt_encode_mac_zil(enc_buf, mac);
+		zio_push_transform(zio, eabd, psize, psize, NULL);
 	} else {
-		zio_crypt_encode_params_bp(bp, salt, iv);
-		zio_crypt_encode_mac_bp(bp, mac);
+		if (no_crypt) {
+			ASSERT3U(ot, ==, DMU_OT_DNODE);
+			BP_SET_ENCRYPTED(bp, B_FALSE);
+			abd_free(eabd);
+		} else {
+			zio_crypt_encode_params_bp(bp, salt, iv);
+			zio_crypt_encode_mac_bp(bp, mac);
+			zio_push_transform(zio, eabd, psize, psize, NULL);
+		}
 	}
-
-	zio_push_transform(zio, eabd, psize, psize, NULL);
 
 	return (ZIO_PIPELINE_CONTINUE);
 }

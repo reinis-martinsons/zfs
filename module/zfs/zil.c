@@ -401,7 +401,8 @@ done:
 	zilog->zl_parse_lr_count = lr_count;
 
 	ASSERT(!claimed || !(zh->zh_flags & ZIL_CLAIM_LR_SEQ_VALID) ||
-	    (max_blk_seq == claim_blk_seq && max_lr_seq == claim_lr_seq));
+	    (max_blk_seq == claim_blk_seq && max_lr_seq == claim_lr_seq) ||
+	    (decrypt && error == EIO));
 
 	zil_bp_tree_fini(zilog);
 	zio_buf_free(lrbuf, SPA_OLD_MAXBLOCKSIZE);
@@ -1080,7 +1081,7 @@ zil_lwb_write_start(zilog_t *zilog, lwb_t *lwb)
 		wsz = lwb->lwb_sz;
 	}
 
-	zilc->zc_mac = 0;
+	zilc->zc_pad = 0;
 	zilc->zc_nused = lwb->lwb_nused;
 	zilc->zc_eck.zec_cksum = lwb->lwb_blk.blk_cksum;
 

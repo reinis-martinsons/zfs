@@ -40,8 +40,6 @@ struct zbookmark_phys;
 
 #define	L2ARC_DEFAULT_CRYPT ZIO_CRYPT_AES_256_CCM
 
-#define	ZIO_NO_ENCRYPTION_NEEDED -1
-
 /*
  * After encrypting many blocks with the same key we may start to run up
  * against the theoretical limits of how much data can securely be encrypted
@@ -92,13 +90,6 @@ typedef struct zio_crypt_info {
 } zio_crypt_info_t;
 
 extern zio_crypt_info_t zio_crypt_table[ZIO_CRYPT_FUNCTIONS];
-
-/* ZAP entry keys for DSL Encryption Keys stored on disk */
-#define	DSL_CRYPTO_KEY_CRYPTO_SUITE "DSL_CRYPTO_SUITE"
-#define	DSL_CRYPTO_KEY_IV "DSL_CRYPTO_IV"
-#define	DSL_CRYPTO_KEY_MAC "DSL_CRYPTO_MAC"
-#define	DSL_CRYPTO_KEY_MASTER_KEY "DSL_CRYPTO_MASTER_KEY"
-#define	DSL_CRYPTO_KEY_HMAC_KEY "DSL_CRYPTO_HMAC_KEY"
 
 /* in memory representation of an unwrapped key that is loaded into memory */
 typedef struct zio_crypt_key {
@@ -158,9 +149,9 @@ void zio_crypt_copy_dnode_bonus(abd_t *src_abd, uint8_t *dst, uint_t datalen);
 
 int zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key, uint8_t *salt,
     dmu_object_type_t ot, uint8_t *iv, uint8_t *mac, uint_t datalen,
-    uint8_t *plainbuf, uint8_t *cipherbuf);
+    uint8_t *plainbuf, uint8_t *cipherbuf, boolean_t *no_crypt);
 int zio_do_crypt_abd(boolean_t encrypt, zio_crypt_key_t *key, uint8_t *salt,
     dmu_object_type_t ot, uint8_t *iv, uint8_t *mac, uint_t datalen,
-    abd_t *pabd, abd_t *cabd);
+    abd_t *pabd, abd_t *cabd, boolean_t *no_crypt);
 
 #endif

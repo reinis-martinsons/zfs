@@ -373,7 +373,7 @@ dsl_dir_hold_keylocation_source_dd(dsl_dir_t *dd, void *tag,
 	/*
 	 * Lookup dd's keylocation property and find out where it was
 	 * inherited from. dsl_prop_get_dd() might not find anything and
-	 * return the default value. We detect this by check9ing if setpoint
+	 * return the default value. We detect this by checking if setpoint
 	 * is an empty string and return ENOENT.
 	 */
 	ret = dsl_prop_get_dd(dd, zfs_prop_to_name(ZFS_PROP_KEYLOCATION),
@@ -501,7 +501,8 @@ error:
 }
 
 int
-dsl_crypto_can_set_keylocation(const char *dsname, const char *keylocation)
+dsl_crypto_can_set_keylocation(const char *dsname, zprop_source_t source,
+    const char *keylocation)
 {
 	int ret = 0;
 	dsl_dir_t *dd = NULL;
@@ -532,6 +533,12 @@ dsl_crypto_can_set_keylocation(const char *dsname, const char *keylocation)
 	/* check for a valid keylocation for encrypted datasets */
 	if (!zfs_prop_valid_keylocation(keylocation, B_TRUE)) {
 		ret = SET_ERROR(EINVAL);
+		goto out;
+	}
+
+	/* If this is a received keylocation we don't need do anything else */
+	if ((source & ZPROP_SRC_RECEIVED) != 0) {
+		ret = 0;
 		goto out;
 	}
 
@@ -1136,11 +1143,26 @@ dmu_objset_check_wkey_loaded(dsl_dir_t *dd)
 }
 
 static void
+dsl_crypto_key_sync_impl(objset_t *mos, uint64_t dckobj, uint64_t crypt,
+    uint8_t *iv, uint8_t *mac, uint8_t *keydata, uint8_t *hmac_keydata,
+    dmu_tx_t *tx)
+{
+	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_CRYPTO_SUITE, 8, 1,
+	    &crypt, tx));
+	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_IV, 1, WRAPPING_IV_LEN,
+	    iv, tx));
+	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_MAC, 1, WRAPPING_MAC_LEN,
+	    mac, tx));
+	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_MASTER_KEY, 1,
+	    MAX_MASTER_KEY_LEN, keydata, tx));
+	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_HMAC_KEY, 1,
+	    HMAC_SHA256_KEYLEN, hmac_keydata, tx));
+}
+
+static void
 dsl_crypto_key_sync(dsl_crypto_key_t *dck, dmu_tx_t *tx)
 {
-	uint64_t dckobj = dck->dck_obj;
 	zio_crypt_key_t *key = &dck->dck_key;
-	objset_t *mos = tx->tx_pool->dp_meta_objset;
 	uint8_t keydata[MAX_MASTER_KEY_LEN];
 	uint8_t hmac_keydata[HMAC_SHA256_KEYLEN];
 	uint8_t iv[WRAPPING_IV_LEN];
@@ -1154,20 +1176,8 @@ dsl_crypto_key_sync(dsl_crypto_key_t *dck, dmu_tx_t *tx)
 	    keydata, hmac_keydata));
 
 	/* update the ZAP with the obtained values */
-	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_CRYPTO_SUITE, 8, 1,
-	    &key->zk_crypt, tx));
-
-	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_IV, 1, WRAPPING_IV_LEN,
-	    iv, tx));
-
-	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_MAC, 1, WRAPPING_MAC_LEN,
-	    mac, tx));
-
-	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_MASTER_KEY, 1,
-	    MAX_MASTER_KEY_LEN, keydata, tx));
-
-	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_HMAC_KEY, 1,
-	    HMAC_SHA256_KEYLEN, hmac_keydata, tx));
+	dsl_crypto_key_sync_impl(tx->tx_pool->dp_meta_objset, dck->dck_obj,
+	    key->zk_crypt, iv, mac, keydata, hmac_keydata, tx);
 }
 
 typedef struct spa_keystore_rewrap_args {
@@ -1180,15 +1190,10 @@ spa_keystore_rewrap_check(void *arg, dmu_tx_t *tx)
 {
 	int ret;
 	uint64_t keyformat = ZFS_KEYFORMAT_NONE;
-	dsl_dir_t *dd = NULL;
+	dsl_dir_t *dd = NULL, *inherit_dd = NULL;
 	dsl_pool_t *dp = dmu_tx_pool(tx);
 	spa_keystore_rewrap_args_t *skra = arg;
 	dsl_crypto_params_t *dcp = skra->skra_cp;
-
-	/* hold the dd */
-	ret = dsl_dir_hold(dp, skra->skra_dsname, FTAG, &dd, NULL);
-	if (ret != 0)
-		goto error;
 
 	/* check for the encryption feature */
 	if (!spa_feature_is_enabled(dp->dp_spa, SPA_FEATURE_ENCRYPTION)) {
@@ -1196,18 +1201,34 @@ spa_keystore_rewrap_check(void *arg, dmu_tx_t *tx)
 		goto error;
 	}
 
+	/* hold the dd */
+	ret = dsl_dir_hold(dp, skra->skra_dsname, FTAG, &dd, NULL);
+	if (ret != 0)
+		goto error;
+
 	/* verify that the dataset is encrypted */
 	if (dd->dd_crypto_obj == 0) {
 		ret = SET_ERROR(EINVAL);
 		goto error;
 	}
 
+	/* hold the dd where this dd is inheritting its key from */
+	ret = dsl_dir_hold_keylocation_source_dd(dd, FTAG, &inherit_dd);
+	if (ret != 0)
+		goto error;
+
 	/*
 	 * A NULL dcp implies that the user wants this dataset to inherit
 	 * the parent's wrapping key.
 	 */
 	if (dcp == NULL) {
-		/* Quickly check that the parent is encrypted */
+		/* check that this is an encryption root */
+		if (dd->dd_object != inherit_dd->dd_object) {
+			ret = SET_ERROR(EINVAL);
+			goto error;
+		}
+
+		/* check that the parent is encrypted */
 		if (dd->dd_parent->dd_crypto_obj == 0) {
 			ret = SET_ERROR(EINVAL);
 			goto error;
@@ -1222,8 +1243,20 @@ spa_keystore_rewrap_check(void *arg, dmu_tx_t *tx)
 			goto error;
 
 		dsl_dir_rele(dd, FTAG);
+		dsl_dir_rele(inherit_dd, FTAG);
 
 		return (0);
+	}
+
+	/*
+	 * If this dataset is not currently an encryption root we need a fully
+	 * specified key for this dataset to become a new encryption root.
+	 */
+	if (dd->dd_object != inherit_dd->dd_object &&
+	    (dcp->cp_keyformat == ZFS_KEYFORMAT_NONE ||
+	    dcp->cp_keylocation == NULL)) {
+		ret = SET_ERROR(EINVAL);
+		goto error;
 	}
 
 	/* figure out what the new format will be */
@@ -1236,6 +1269,12 @@ spa_keystore_rewrap_check(void *arg, dmu_tx_t *tx)
 		keyformat = dcp->cp_keyformat;
 	}
 
+	/* crypt cannot be changed after creation */
+	if (dcp->cp_crypt != ZIO_CRYPT_INHERIT) {
+		ret = SET_ERROR(EINVAL);
+		goto error;
+	}
+
 	/* we are not inheritting our parent's wkey so we need one ourselves */
 	if (dcp->cp_wkey == NULL) {
 		ret = SET_ERROR(EINVAL);
@@ -1245,12 +1284,6 @@ spa_keystore_rewrap_check(void *arg, dmu_tx_t *tx)
 	/* check that the keylocation is valid or NULL */
 	if (dcp->cp_keylocation != NULL &&
 	    !zfs_prop_valid_keylocation(dcp->cp_keylocation, B_TRUE)) {
-		ret = SET_ERROR(EINVAL);
-		goto error;
-	}
-
-	/* crypt cannot be changed after creation */
-	if (dcp->cp_crypt != ZIO_CRYPT_INHERIT) {
 		ret = SET_ERROR(EINVAL);
 		goto error;
 	}
@@ -1269,12 +1302,15 @@ spa_keystore_rewrap_check(void *arg, dmu_tx_t *tx)
 		goto error;
 
 	dsl_dir_rele(dd, FTAG);
+	dsl_dir_rele(inherit_dd, FTAG);
 
 	return (0);
 
 error:
 	if (dd != NULL)
 		dsl_dir_rele(dd, FTAG);
+	if (inherit_dd != NULL)
+		dsl_dir_rele(inherit_dd, FTAG);
 
 	return (ret);
 }
@@ -1569,6 +1605,9 @@ dmu_objset_create_crypt_check(dsl_dir_t *parentdd, dsl_dir_t *origindd,
 		return (0);
 	}
 
+	/* flags are only used for raw receives, which are not checked here */
+	ASSERT0(dcp->cp_flags);
+
 	/* check for valid dcp with no encryption (inherited or local) */
 	if (effective_crypt == ZIO_CRYPT_OFF) {
 		/* Must not specify encryption params */
@@ -1592,7 +1631,8 @@ dmu_objset_create_crypt_check(dsl_dir_t *parentdd, dsl_dir_t *origindd,
 	if (dcp->cp_wkey == NULL) {
 		/* key must be fully unspecified */
 		if (dcp->cp_keyformat != ZFS_KEYFORMAT_NONE ||
-		    dcp->cp_keylocation != NULL)
+		    dcp->cp_keylocation != NULL || dcp->cp_salt != 0 ||
+		    dcp->cp_iters != 0)
 			return (SET_ERROR(EINVAL));
 
 		/* parent must have a key to inherit */
@@ -1656,6 +1696,25 @@ dsl_dataset_create_crypt_sync(uint64_t dsobj, dsl_dir_t *dd,
 	uint64_t crypt = (dcp != NULL) ? dcp->cp_crypt : ZIO_CRYPT_INHERIT;
 	dsl_wrapping_key_t *wkey = (dcp != NULL) ? dcp->cp_wkey : NULL;
 
+	if (dcp != NULL) {
+		/* raw receives will handle their own key creation */
+		if (dcp->cp_flags & DCP_FLAG_RAW_RECV) {
+			ASSERT3U(dcp->cp_crypt, ==, ZIO_CRYPT_INHERIT);
+			ASSERT3U(dcp->cp_keyformat, ==, ZFS_KEYFORMAT_NONE);
+			ASSERT3P(dcp->cp_keylocation, ==, NULL);
+			ASSERT3P(dcp->cp_wkey, ==, NULL);
+			ASSERT0(dcp->cp_salt);
+			ASSERT0(dcp->cp_iters);
+			return;
+		}
+
+		crypt = dcp->cp_crypt;
+		wkey = dcp->cp_wkey;
+	} else {
+		crypt = ZIO_CRYPT_INHERIT;
+		wkey = NULL;
+	}
+
 	/* figure out the effective crypt */
 	if (!dsl_dir_is_clone(dd)) {
 		if (crypt == ZIO_CRYPT_INHERIT && dd->dd_parent != NULL) {
@@ -1668,6 +1727,10 @@ dsl_dataset_create_crypt_sync(uint64_t dsobj, dsl_dir_t *dd,
 	/* if we aren't doing encryption just return */
 	if (crypt == ZIO_CRYPT_OFF || crypt == ZIO_CRYPT_INHERIT)
 		return;
+
+	/* zapify the dd so that we can add the crypto key obj to it */
+	dmu_buf_will_dirty(dd->dd_dbuf, tx);
+	dsl_dir_zapify(dd, tx);
 
 	/* use the new key if given or inherit from the parent */
 	if (wkey == NULL) {
@@ -1689,14 +1752,13 @@ dsl_dataset_create_crypt_sync(uint64_t dsobj, dsl_dir_t *dd,
 		    wkey, tx);
 	}
 
-	/* zapify the dd so that we can add the crypto key obj to it */
-	dsl_dir_zapify(dd, tx);
+	/* add the crypto key obj to the dd on disk */
 	VERIFY0(zap_add(dp->dp_meta_objset, dd->dd_object,
 	    DD_FIELD_CRYPTO_KEY_OBJ, sizeof (uint64_t), 1, &dd->dd_crypto_obj,
 	    tx));
 
 	/*
-	 * If we inheritted the wrapping key we release our reference now.
+	 * If we inherited the wrapping key we release our reference now.
 	 * Otherwise, this is a new key and we need to load it into the
 	 * keystore.
 	 */
@@ -1705,6 +1767,277 @@ dsl_dataset_create_crypt_sync(uint64_t dsobj, dsl_dir_t *dd,
 	} else {
 		VERIFY0(spa_keystore_load_wkey_impl(dp->dp_spa, wkey));
 	}
+}
+
+typedef struct dsl_crypto_recv_key_arg {
+	uint64_t dcrka_dsobj;
+	nvlist_t *dcrka_nvl;
+} dsl_crypto_recv_key_arg_t;
+
+int
+dsl_crypto_recv_key_check(void *arg, dmu_tx_t *tx)
+{
+	int ret;
+	dsl_crypto_recv_key_arg_t *dcrka = arg;
+	nvlist_t *nvl = dcrka->dcrka_nvl;
+	dsl_dataset_t *ds = NULL;
+	uint8_t *buf = NULL;
+	uint_t len;
+	uint64_t intval;
+	boolean_t is_passphrase = B_FALSE;
+
+	/*
+	 * Check that the ds exists. Assert that it isn't already encrypted
+	 * and that it is inconsistent for sanity.
+	 */
+	ret = dsl_dataset_hold_obj(tx->tx_pool, dcrka->dcrka_dsobj, FTAG, &ds);
+	if (ret != 0)
+		goto error;
+
+	ASSERT0(ds->ds_dir->dd_crypto_obj);
+	ASSERT(dsl_dataset_phys(ds)->ds_flags & DS_FLAG_INCONSISTENT);
+
+	/*
+	 * Read and check all the encryption values from the nvlist. We need
+	 * all of the fields of a DSL Crypto Key, as well as a fully specified
+	 * wrapping key.
+	 */
+	ret = nvlist_lookup_uint64(nvl, DSL_CRYPTO_KEY_CRYPTO_SUITE, &intval);
+	if (ret != 0 || intval >= ZIO_CRYPT_FUNCTIONS ||
+	    intval <= ZIO_CRYPT_OFF) {
+		ret = SET_ERROR(EINVAL);
+		goto error;
+	}
+
+	ret = nvlist_lookup_uint8_array(nvl, DSL_CRYPTO_KEY_MASTER_KEY,
+	    &buf, &len);
+	if (ret != 0 || len != MAX_MASTER_KEY_LEN) {
+		ret = SET_ERROR(EINVAL);
+		goto error;
+	}
+
+	ret = nvlist_lookup_uint8_array(nvl, DSL_CRYPTO_KEY_HMAC_KEY,
+	    &buf, &len);
+	if (ret != 0 || len != HMAC_SHA256_KEYLEN) {
+		ret = SET_ERROR(EINVAL);
+		goto error;
+	}
+
+	ret = nvlist_lookup_uint8_array(nvl, DSL_CRYPTO_KEY_IV, &buf, &len);
+	if (ret != 0 || len != WRAPPING_IV_LEN) {
+		ret = SET_ERROR(EINVAL);
+		goto error;
+	}
+
+	ret = nvlist_lookup_uint8_array(nvl, DSL_CRYPTO_KEY_MAC, &buf, &len);
+	if (ret != 0 || len != WRAPPING_MAC_LEN) {
+		ret = SET_ERROR(EINVAL);
+		goto error;
+	}
+
+	ret = nvlist_lookup_uint64(nvl, zfs_prop_to_name(ZFS_PROP_KEYFORMAT),
+	    &intval);
+	if (ret != 0 || intval >= ZFS_KEYFORMAT_FORMATS ||
+	    intval <= ZFS_KEYFORMAT_NONE) {
+		ret = SET_ERROR(EINVAL);
+		goto error;
+	}
+
+	is_passphrase = (intval == ZFS_KEYFORMAT_PASSPHRASE);
+
+	/*
+	 * for raw receives we allow any number of pbkdf2iters since there
+	 * won't be a chance for the user to change it.
+	 */
+	ret = nvlist_lookup_uint64(nvl, zfs_prop_to_name(ZFS_PROP_PBKDF2_ITERS),
+	    &intval);
+	if (ret != 0 || (is_passphrase == (intval == 0))) {
+		ret = SET_ERROR(EINVAL);
+		goto error;
+	}
+
+	ret = nvlist_lookup_uint64(nvl, zfs_prop_to_name(ZFS_PROP_PBKDF2_SALT),
+	    &intval);
+	if (ret != 0 || (is_passphrase == (intval == 0))) {
+		ret = SET_ERROR(EINVAL);
+		goto error;
+	}
+
+	dsl_dataset_rele(ds, FTAG);
+	return (0);
+
+error:
+	if (ds != NULL)
+		dsl_dataset_rele(ds, FTAG);
+	return (ret);
+}
+
+static void
+dsl_crypto_recv_key_sync(void *arg, dmu_tx_t *tx)
+{
+	dsl_crypto_recv_key_arg_t *dcrka = arg;
+	uint64_t dsobj = dcrka->dcrka_dsobj;
+	nvlist_t *nvl = dcrka->dcrka_nvl;
+	dsl_pool_t *dp = tx->tx_pool;
+	objset_t *mos = dp->dp_meta_objset;
+	dsl_dataset_t *ds;
+	uint8_t *keydata, *hmac_keydata, *iv, *mac;
+	uint_t len;
+	uint64_t crypt, keyformat, iters, salt;
+
+	VERIFY0(dsl_dataset_hold_obj(dp, dsobj, FTAG, &ds));
+
+	/* lookup the values we need to create the DSL Crypto Key */
+	crypt = fnvlist_lookup_uint64(nvl, DSL_CRYPTO_KEY_CRYPTO_SUITE);
+	keyformat = fnvlist_lookup_uint64(nvl,
+	    zfs_prop_to_name(ZFS_PROP_KEYFORMAT));
+	iters = fnvlist_lookup_uint64(nvl,
+	    zfs_prop_to_name(ZFS_PROP_PBKDF2_ITERS));
+	salt = fnvlist_lookup_uint64(nvl,
+	    zfs_prop_to_name(ZFS_PROP_PBKDF2_SALT));
+	VERIFY0(nvlist_lookup_uint8_array(nvl, DSL_CRYPTO_KEY_MASTER_KEY,
+	    &keydata, &len));
+	VERIFY0(nvlist_lookup_uint8_array(nvl, DSL_CRYPTO_KEY_HMAC_KEY,
+	    &hmac_keydata, &len));
+	VERIFY0(nvlist_lookup_uint8_array(nvl, DSL_CRYPTO_KEY_IV, &iv, &len));
+	VERIFY0(nvlist_lookup_uint8_array(nvl, DSL_CRYPTO_KEY_MAC, &mac, &len));
+
+	/* zapify the dsl dir so we can add the key object to it */
+	dmu_buf_will_dirty(ds->ds_dir->dd_dbuf, tx);
+	dsl_dir_zapify(ds->ds_dir, tx);
+
+	/* create the DSL Crypto Key on disk and activate the feature */
+	ds->ds_dir->dd_crypto_obj = zap_create(mos,
+	    DMU_OTN_ZAP_METADATA, DMU_OT_NONE, 0, tx);
+	dsl_crypto_key_sync_impl(mos, ds->ds_dir->dd_crypto_obj, crypt, iv,
+	    mac, keydata, hmac_keydata, tx);
+	dsl_dataset_activate_feature(dsobj, SPA_FEATURE_ENCRYPTION, tx);
+	ds->ds_feature_inuse[SPA_FEATURE_ENCRYPTION] = B_TRUE;
+
+	/* save the dd_crypto_obj on disk */
+	VERIFY0(zap_add(mos, ds->ds_dir->dd_object, DD_FIELD_CRYPTO_KEY_OBJ,
+	    sizeof (uint64_t), 1, &ds->ds_dir->dd_crypto_obj, tx));
+
+	/* set the encryption properties from the nvlist */
+	dsl_prop_set_sync_impl(ds, zfs_prop_to_name(ZFS_PROP_KEYFORMAT),
+	    ZPROP_SRC_LOCAL, 8, 1, &keyformat, tx);
+	dsl_prop_set_sync_impl(ds, zfs_prop_to_name(ZFS_PROP_PBKDF2_ITERS),
+	    ZPROP_SRC_LOCAL, 8, 1, &iters, tx);
+	dsl_prop_set_sync_impl(ds, zfs_prop_to_name(ZFS_PROP_PBKDF2_SALT),
+	    ZPROP_SRC_LOCAL, 8, 1, &salt, tx);
+
+	dsl_dataset_rele(ds, FTAG);
+}
+
+/*
+ * This function is used to sync an nvlist representing a DSL Crypto Key and
+ * the associated encryption parameters. The key will be written exactly as is
+ * without wrapping it.
+ */
+int
+dsl_crypto_recv_key(const char *poolname, uint64_t dsobj, nvlist_t *nvl)
+{
+	dsl_crypto_recv_key_arg_t dcrka;
+
+	dcrka.dcrka_dsobj = dsobj;
+	dcrka.dcrka_nvl = nvl;
+
+	return (dsl_sync_task(poolname, dsl_crypto_recv_key_check,
+	    dsl_crypto_recv_key_sync, &dcrka, 5, ZFS_SPACE_CHECK_NORMAL));
+}
+
+int
+dsl_crypto_populate_key_nvlist(dsl_dataset_t *ds, nvlist_t **nvl_out)
+{
+	int ret;
+	nvlist_t *nvl = NULL;
+	uint64_t dckobj = ds->ds_dir->dd_crypto_obj;
+	objset_t *mos = ds->ds_dir->dd_pool->dp_meta_objset;
+	uint64_t crypt = 0, format = 0, iters = 0, salt = 0;
+	uint8_t raw_keydata[MAX_MASTER_KEY_LEN];
+	uint8_t raw_hmac_keydata[HMAC_SHA256_KEYLEN];
+	uint8_t iv[WRAPPING_IV_LEN];
+	uint8_t mac[WRAPPING_MAC_LEN];
+
+	ASSERT(dckobj != 0);
+
+	ret = nvlist_alloc(&nvl, NV_UNIQUE_NAME, KM_SLEEP);
+	if (ret != 0)
+		goto error;
+
+	/* lookup values from the DSL Crypto Key */
+	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_CRYPTO_SUITE, 8, 1,
+	    &crypt);
+	if (ret != 0)
+		goto error;
+
+	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_MASTER_KEY, 1,
+	    MAX_MASTER_KEY_LEN, raw_keydata);
+	if (ret != 0)
+		goto error;
+
+	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_HMAC_KEY, 1,
+	    HMAC_SHA256_KEYLEN, raw_hmac_keydata);
+	if (ret != 0)
+		goto error;
+
+	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_IV, 1, WRAPPING_IV_LEN,
+	    iv);
+	if (ret != 0)
+		goto error;
+
+	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_MAC, 1, WRAPPING_MAC_LEN,
+	    mac);
+	if (ret != 0)
+		goto error;
+
+	/* lookup values from the properties */
+	dsl_pool_config_enter(ds->ds_dir->dd_pool, FTAG);
+
+	ret = dsl_prop_get_dd(ds->ds_dir, zfs_prop_to_name(ZFS_PROP_KEYFORMAT),
+	    8, 1, &format, NULL, B_FALSE);
+	if (ret != 0)
+		goto error_unlock;
+
+	if (format == ZFS_KEYFORMAT_PASSPHRASE) {
+		ret = dsl_prop_get_dd(ds->ds_dir,
+		    zfs_prop_to_name(ZFS_PROP_PBKDF2_ITERS), 8, 1, &iters,
+		    NULL, B_FALSE);
+		if (ret != 0)
+			goto error_unlock;
+
+		ret = dsl_prop_get_dd(ds->ds_dir,
+		    zfs_prop_to_name(ZFS_PROP_PBKDF2_SALT), 8, 1, &salt,
+		    NULL, B_FALSE);
+		if (ret != 0)
+			goto error_unlock;
+	}
+
+	dsl_pool_config_exit(ds->ds_dir->dd_pool, FTAG);
+
+	fnvlist_add_uint64(nvl, DSL_CRYPTO_KEY_CRYPTO_SUITE, crypt);
+	VERIFY0(nvlist_add_uint8_array(nvl, DSL_CRYPTO_KEY_MASTER_KEY,
+	    raw_keydata, MAX_MASTER_KEY_LEN));
+	VERIFY0(nvlist_add_uint8_array(nvl, DSL_CRYPTO_KEY_HMAC_KEY,
+	    raw_hmac_keydata, HMAC_SHA256_KEYLEN));
+	VERIFY0(nvlist_add_uint8_array(nvl, DSL_CRYPTO_KEY_IV, iv,
+	    WRAPPING_IV_LEN));
+	VERIFY0(nvlist_add_uint8_array(nvl, DSL_CRYPTO_KEY_MAC, mac,
+	    WRAPPING_MAC_LEN));
+	fnvlist_add_uint64(nvl, zfs_prop_to_name(ZFS_PROP_KEYFORMAT), format);
+	fnvlist_add_uint64(nvl, zfs_prop_to_name(ZFS_PROP_PBKDF2_ITERS), iters);
+	fnvlist_add_uint64(nvl, zfs_prop_to_name(ZFS_PROP_PBKDF2_SALT), salt);
+
+	*nvl_out = nvl;
+	return (0);
+
+error_unlock:
+	dsl_pool_config_exit(ds->ds_dir->dd_pool, FTAG);
+error:
+	nvlist_free(nvl);
+
+	*nvl_out = NULL;
+	return (ret);
 }
 
 uint64_t
@@ -1847,8 +2180,8 @@ error:
  */
 int
 spa_do_crypt_abd(boolean_t encrypt, spa_t *spa, zbookmark_phys_t *zb,
-    blkptr_t *bp, uint64_t txgid, uint_t datalen, abd_t *pabd, abd_t *cabd,
-    uint8_t *iv, uint8_t *mac, uint8_t *salt)
+    const blkptr_t *bp, uint64_t txgid, uint_t datalen, abd_t *pabd,
+    abd_t *cabd, uint8_t *iv, uint8_t *mac, uint8_t *salt, boolean_t *no_crypt)
 {
 	int ret;
 	dmu_object_type_t ot = BP_GET_TYPE(bp);
@@ -1898,7 +2231,7 @@ spa_do_crypt_abd(boolean_t encrypt, spa_t *spa, zbookmark_phys_t *zb,
 
 	/* call lower level function to perform encryption / decryption */
 	ret = zio_do_crypt_data(encrypt, &dck->dck_key, salt, ot, iv, mac,
-	    datalen, plainbuf, cipherbuf);
+	    datalen, plainbuf, cipherbuf, no_crypt);
 	if (ret != 0)
 		goto error;
 
@@ -1915,16 +2248,17 @@ spa_do_crypt_abd(boolean_t encrypt, spa_t *spa, zbookmark_phys_t *zb,
 	return (0);
 
 error:
-	/* zero out any state we might have changed while encrypting */
 	if (encrypt) {
+		/* zero out any state we might have changed while encrypting */
 		bzero(salt, ZIO_DATA_SALT_LEN);
 		bzero(iv, ZIO_DATA_IV_LEN);
-		bzero(mac, (ot == DMU_OT_INTENT_LOG) ?
-		    ZIO_ZIL_MAC_LEN : ZIO_DATA_MAC_LEN);
+		bzero(mac, ZIO_DATA_MAC_LEN);
+		abd_return_buf(pabd, plainbuf, datalen);
+		abd_return_buf_copy(cabd, cipherbuf, datalen);
+	} else {
+		abd_return_buf_copy(pabd, plainbuf, datalen);
+		abd_return_buf(cabd, cipherbuf, datalen);
 	}
-
-	abd_return_buf(pabd, plainbuf, datalen);
-	abd_return_buf(cabd, cipherbuf, datalen);
 
 	if (dck != NULL)
 		spa_keystore_dsl_key_rele(spa, dck, FTAG);

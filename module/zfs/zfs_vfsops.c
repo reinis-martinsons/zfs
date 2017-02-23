@@ -1730,7 +1730,8 @@ zfs_umount(struct super_block *sb)
 	zfsvfs_t *zfsvfs = sb->s_fs_info;
 	objset_t *os;
 
-	arc_remove_prune_callback(zfsvfs->z_arc_prune);
+	if (zfsvfs->z_arc_prune != NULL)
+		arc_remove_prune_callback(zfsvfs->z_arc_prune);
 	VERIFY(zfsvfs_teardown(zfsvfs, B_TRUE) == 0);
 	os = zfsvfs->z_os;
 	bdi_destroy(sb->s_bdi);

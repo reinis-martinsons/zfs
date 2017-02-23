@@ -80,9 +80,9 @@ post =
 tests = ['zfs_001_neg', 'zfs_002_pos', 'zfs_003_neg']
 
 [tests/functional/cli_root/zfs_change-key]
-tests = ['zfs_change-key', 'zfs_change-key_load', 'zfs_change-key_inherit',
-    'zfs_change-key_location', 'zfs_change-key_format',
-    'zfs_change-key_pbkdf2iters']
+tests = ['zfs_change-key', 'zfs_change-key_child', 'zfs_change-key_load',
+    'zfs_change-key_inherit', 'zfs_change-key_location',
+    'zfs_change-key_format', 'zfs_change-key_pbkdf2iters']
 
 # DISABLED:
 # zfs_clone_005_pos - busy unmount
@@ -214,7 +214,7 @@ tests = ['zfs_snapshot_001_neg', 'zfs_snapshot_002_neg',
     'zfs_snapshot_009_pos']
 
 [tests/functional/cli_root/zfs_unload-key]
-tests = ['zfs_unload-key', 'zfs_unload-key_all', 'zfs_unload-key-recursive']
+tests = ['zfs_unload-key', 'zfs_unload-key_all', 'zfs_unload-key_recursive']
 
 # DISABLED:
 # zfs_unmount_005_pos - needs investigation
@@ -275,7 +275,7 @@ tests = [
     'zpool_create_018_pos', 'zpool_create_019_pos',
     'zpool_create_021_pos', 'zpool_create_022_pos', 'zpool_create_023_neg',
     'zpool_create_024_pos',
-    'zpool_create_encrypted', 'zpool_create_crypt_combos'
+    'zpool_create_encrypted', 'zpool_create_crypt_combos',
     'zpool_create_features_001_pos', 'zpool_create_features_002_pos',
     'zpool_create_features_003_pos', 'zpool_create_features_004_neg',
     'zpool_create_features_005_pos']

@@ -50,13 +50,6 @@
  * technically ok if the salt is known to the attacker).
  */
 
-typedef enum key_format {
-	KEY_FORMAT_NONE = 0,
-	KEY_FORMAT_RAW,
-	KEY_FORMAT_HEX,
-	KEY_FORMAT_PASSPHRASE
-} key_format_t;
-
 typedef enum key_locator {
 	KEY_LOCATOR_NONE,
 	KEY_LOCATOR_PROMPT,
@@ -115,7 +108,7 @@ catch_signal(int sig)
 }
 
 static char *
-get_format_prompt_string(key_format_t format)
+get_format_prompt_string(zfs_keyformat_t format)
 {
 	switch (format) {
 	case ZFS_KEYFORMAT_RAW:
@@ -557,7 +550,7 @@ error:
 }
 
 static int
-derive_key(libzfs_handle_t *hdl, key_format_t format, uint64_t iters,
+derive_key(libzfs_handle_t *hdl, zfs_keyformat_t format, uint64_t iters,
     uint8_t *key_material, size_t key_material_len, uint64_t salt,
     uint8_t **key_out)
 {
@@ -571,10 +564,10 @@ derive_key(libzfs_handle_t *hdl, key_format_t format, uint64_t iters,
 		return (ENOMEM);
 
 	switch (format) {
-	case KEY_FORMAT_RAW:
+	case ZFS_KEYFORMAT_RAW:
 		bcopy(key_material, key, WRAPPING_KEY_LEN);
 		break;
-	case KEY_FORMAT_HEX:
+	case ZFS_KEYFORMAT_HEX:
 		ret = hex_key_to_raw((char *)key_material,
 		    WRAPPING_KEY_LEN * 2, key);
 		if (ret != 0) {
@@ -583,7 +576,7 @@ derive_key(libzfs_handle_t *hdl, key_format_t format, uint64_t iters,
 			goto error;
 		}
 		break;
-	case KEY_FORMAT_PASSPHRASE:
+	case ZFS_KEYFORMAT_PASSPHRASE:
 		salt = LE_64(salt);
 		ret = pbkdf2(key_material, strlen((char *)key_material),
 		    ((uint8_t *)&salt), sizeof (uint64_t), iters,
@@ -776,7 +769,7 @@ zfs_crypto_is_encryption_root(zfs_handle_t *zhp, boolean_t *enc_root)
 		return (ret);
 	}
 
-	/* check if the keylocation was inheritted */
+	/* check if the keylocation was inherited */
 	if (keylocation_srctype == ZPROP_SRC_INHERITED) {
 		*enc_root = B_FALSE;
 		return (0);
@@ -1511,21 +1504,57 @@ zfs_crypto_rewrap(zfs_handle_t *zhp, nvlist_t *raw_props, boolean_t inheritkey)
 		(void) nvlist_lookup_string(props,
 		    zfs_prop_to_name(ZFS_PROP_KEYLOCATION), &keylocation);
 
-		if (keyformat == ZFS_KEYFORMAT_NONE)
-			keyformat = zfs_prop_get_int(zhp, ZFS_PROP_KEYFORMAT);
+		/* check whether zhp is an encryption root */
+		ret = zfs_crypto_is_encryption_root(zhp, &is_encroot);
+		if (ret != 0) {
+			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
+			    "Failed to find encryption root."));
+			ret = EINVAL;
+			goto error;
+		}
 
-		if (keylocation == NULL) {
-			ret = zfs_prop_get(zhp, ZFS_PROP_KEYLOCATION,
-			    prop_keylocation, sizeof (prop_keylocation),
-			    NULL, NULL, 0, B_TRUE);
-			if (ret != 0) {
+		if (is_encroot) {
+			/*
+			 * If this is already an ecryption root, just keep
+			 * any properties not set by the user
+			 */
+			if (keyformat == ZFS_KEYFORMAT_NONE)
+				keyformat = zfs_prop_get_int(zhp,
+				    ZFS_PROP_KEYFORMAT);
+
+			if (keylocation == NULL) {
+				ret = zfs_prop_get(zhp, ZFS_PROP_KEYLOCATION,
+				    prop_keylocation, sizeof (prop_keylocation),
+				    NULL, NULL, 0, B_TRUE);
+				if (ret != 0) {
+					zfs_error_aux(zhp->zfs_hdl,
+					    dgettext(TEXT_DOMAIN, "Failed to "
+					    "get existing keylocation "
+					    "property."));
+					goto error;
+				}
+
+				keylocation = prop_keylocation;
+			}
+		} else {
+			/* need a new key for non-encryption roots */
+			if (keyformat == ZFS_KEYFORMAT_NONE) {
+				ret = EINVAL;
 				zfs_error_aux(zhp->zfs_hdl,
-				    dgettext(TEXT_DOMAIN, "Failed to get "
-				    "existing keylocation property."));
+				    dgettext(TEXT_DOMAIN, "Keyformat required "
+				    "for new encryption root."));
 				goto error;
 			}
 
-			keylocation = prop_keylocation;
+			/* default to prompt if no keylocation is specified */
+			if (keylocation == NULL) {
+				keylocation = "prompt";
+				ret = nvlist_add_string(props,
+				    zfs_prop_to_name(ZFS_PROP_KEYLOCATION),
+				    keylocation);
+				if (ret != 0)
+					goto error;
+			}
 		}
 
 		/* fetch the new wrapping key and associated properties */

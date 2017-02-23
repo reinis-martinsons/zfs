@@ -26,8 +26,12 @@
 #include <sys/spa.h>
 #include <sys/dsl_dataset.h>
 
-/* forward declarations */
-struct dsl_dataset;
+/* ZAP entry keys for DSL Encryption Keys stored on disk */
+#define	DSL_CRYPTO_KEY_CRYPTO_SUITE "DSL_CRYPTO_SUITE"
+#define	DSL_CRYPTO_KEY_IV "DSL_CRYPTO_IV"
+#define	DSL_CRYPTO_KEY_MAC "DSL_CRYPTO_MAC"
+#define	DSL_CRYPTO_KEY_MASTER_KEY "DSL_CRYPTO_MASTER_KEY_1"
+#define	DSL_CRYPTO_KEY_HMAC_KEY "DSL_CRYPTO_HMAC_KEY_1"
 
 /* in memory representation of a wrapping key */
 typedef struct dsl_wrapping_key {
@@ -44,14 +48,21 @@ typedef struct dsl_wrapping_key {
 	uint64_t wk_ddobj;
 } dsl_wrapping_key_t;
 
+typedef enum dcp_flags {
+	DCP_FLAG_RAW_RECV = (1 << 0) /* dcp represents raw recv */
+} dcp_flags_t;
+
 /*
  * This struct is a simple wrapper around all the parameters that are usually
  * required to setup encryption. It exists so that all of the params can be
- * passed around the kernel together for convenience
+ * passed around the kernel together for convenience.
  */
 typedef struct dsl_crypto_params {
 	/* the encryption algorithm */
 	enum zio_encrypt cp_crypt;
+
+	/* flags for extra info */
+	dcp_flags_t cp_flags;
 
 	/* keyformat property enum */
 	zfs_keyformat_t cp_keyformat;
@@ -135,7 +146,8 @@ int dsl_wrapping_key_create(uint8_t *wkeydata, dsl_wrapping_key_t **wkey_out);
 int dsl_crypto_params_create_nvlist(nvlist_t *props, nvlist_t *crypto_args,
     dsl_crypto_params_t **dcp_out);
 void dsl_crypto_params_free(dsl_crypto_params_t *dcp, boolean_t unload);
-int dsl_crypto_can_set_keylocation(const char *dsname, const char *keylocation);
+int dsl_crypto_can_set_keylocation(const char *dsname, zprop_source_t source,
+    const char *keylocation);
 
 void spa_keystore_init(spa_keystore_t *sk);
 void spa_keystore_fini(spa_keystore_t *sk);
@@ -156,6 +168,9 @@ int spa_keystore_remove_mapping(spa_t *spa, uint64_t dsobj, void *tag);
 int spa_keystore_lookup_key(spa_t *spa, uint64_t dsobj, void *tag,
     dsl_crypto_key_t **dck_out);
 
+int dsl_crypto_populate_key_nvlist(struct dsl_dataset *ds, nvlist_t **nvl_out);
+int dsl_crypto_recv_key(const char *poolname, uint64_t dsobj, nvlist_t *nvl);
+
 int spa_keystore_rewrap(const char *dsname, dsl_crypto_params_t *dcp);
 int dsl_dir_rename_crypt_check(dsl_dir_t *dd, dsl_dir_t *newparent);
 int dmu_objset_create_crypt_check(dsl_dir_t *parentdd, dsl_dir_t *origindd,
@@ -170,7 +185,7 @@ void dsl_crypto_key_destroy_sync(uint64_t dckobj, dmu_tx_t *tx);
 
 int spa_crypt_get_salt(spa_t *spa, uint64_t dsobj, uint8_t *salt);
 int spa_do_crypt_abd(boolean_t encrypt, spa_t *spa, zbookmark_phys_t *zb,
-    blkptr_t *bp, uint64_t txgid, uint_t datalen, abd_t *pabd, abd_t *cabd,
-    uint8_t *iv, uint8_t *mac, uint8_t *salt);
+    const blkptr_t *bp, uint64_t txgid, uint_t datalen, abd_t *pabd,
+    abd_t *cabd, uint8_t *iv, uint8_t *mac, uint8_t *salt, boolean_t *no_crypt);
 
 #endif

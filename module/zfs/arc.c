@@ -1396,6 +1396,21 @@ arc_is_encrypted(arc_buf_t *buf)
 	return (ARC_BUF_ENCRYPTED(buf) != 0);
 }
 
+void
+arc_get_raw_params(arc_buf_t *buf, boolean_t *byteorder, uint8_t *salt,
+    uint8_t *iv, uint8_t *mac)
+{
+	arc_buf_hdr_t *hdr = buf->b_hdr;
+
+	ASSERT(HDR_ENCRYPTED(hdr));
+
+	bcopy(hdr->b_crypt_hdr.b_salt, salt, ZIO_DATA_SALT_LEN);
+	bcopy(hdr->b_crypt_hdr.b_iv, iv, ZIO_DATA_IV_LEN);
+	bcopy(hdr->b_crypt_hdr.b_mac, mac, ZIO_DATA_MAC_LEN);
+	*byteorder = (hdr->b_l1hdr.b_byteswap == DMU_BSWAP_NUMFUNCS) ?
+	    ZFS_HOST_BYTEORDER : !ZFS_HOST_BYTEORDER;
+}
+
 /*
  * Indicates how this buffer is compressed in memory. If it is not compressed
  * the value will be ZIO_COMPRESS_OFF. It can be made normally readable with
@@ -1781,6 +1796,7 @@ arc_hdr_decrypt(arc_buf_hdr_t *hdr, kmutex_t *hash_lock, spa_t *spa,
 	dsl_crypto_key_t *dck = NULL;
 	abd_t *cabd = NULL;
 	void *tmp = NULL;
+	boolean_t no_crypt = B_FALSE;
 
 	if (hash_lock != NULL)
 		mutex_enter(hash_lock);
@@ -1806,19 +1822,22 @@ arc_hdr_decrypt(arc_buf_hdr_t *hdr, kmutex_t *hash_lock, spa_t *spa,
 	 * won't be accessible via that dsobj anymore.
 	 */
 	ret = spa_keystore_lookup_key(spa, dsobj, FTAG, &dck);
-	if (ret != 0)
+	if (ret != 0) {
+		ret = SET_ERROR(EACCES);
 		goto error;
+	}
 
 	ret = zio_do_crypt_abd(B_FALSE, &dck->dck_key,
 	    hdr->b_crypt_hdr.b_salt, hdr->b_crypt_hdr.b_ot,
 	    hdr->b_crypt_hdr.b_iv, hdr->b_crypt_hdr.b_mac,
 	    HDR_GET_PSIZE(hdr), hdr->b_l1hdr.b_pabd,
-	    hdr->b_crypt_hdr.b_rabd);
-	if (ret == ZIO_NO_ENCRYPTION_NEEDED) {
+	    hdr->b_crypt_hdr.b_rabd, &no_crypt);
+	if (ret != 0)
+		goto error;
+
+	if (no_crypt) {
 		abd_copy(hdr->b_l1hdr.b_pabd, hdr->b_crypt_hdr.b_rabd,
 		    HDR_GET_PSIZE(hdr));
-	} else if (ret != 0) {
-		goto error;
 	}
 
 	/*
@@ -1876,10 +1895,13 @@ error:
  * The dbuf code itself doesn't have any locking for decrypting a shared dnode
  * block, so we use the hash lock here to protect against concurrent writes.
  */
-static void
+static int
 arc_buf_untransform_in_place(arc_buf_t *buf, kmutex_t *hash_lock)
 {
 	arc_buf_hdr_t *hdr = buf->b_hdr;
+
+	if (hdr->b_l1hdr.b_pabd == NULL)
+		return (SET_ERROR(EIO));
 
 	if (hash_lock != NULL)
 		mutex_enter(hash_lock);
@@ -1902,6 +1924,8 @@ arc_buf_untransform_in_place(arc_buf_t *buf, kmutex_t *hash_lock)
 out_unlock:
 	if (hash_lock != NULL)
 		mutex_exit(hash_lock);
+
+	return (0);
 }
 
 /*
@@ -1920,7 +1944,7 @@ out_unlock:
 static int
 arc_buf_fill(arc_buf_t *buf, spa_t *spa, uint64_t dsobj, arc_fill_flags_t flags)
 {
-	int error;
+	int error = 0;
 	arc_buf_hdr_t *hdr = buf->b_hdr;
 	boolean_t hdr_compressed =
 	    (arc_hdr_get_compress(hdr) != ZIO_COMPRESS_OFF);
@@ -1971,12 +1995,12 @@ arc_buf_fill(arc_buf_t *buf, spa_t *spa, uint64_t dsobj, arc_fill_flags_t flags)
 
 		if (HDR_ENCRYPTED(hdr) && ARC_BUF_ENCRYPTED(buf)) {
 			ASSERT3U(hdr->b_crypt_hdr.b_ot, ==, DMU_OT_DNODE);
-			arc_buf_untransform_in_place(buf, hash_lock);
+			error = arc_buf_untransform_in_place(buf, hash_lock);
 		}
 
 		/* Compute the hdr's checksum if necessary */
 		arc_cksum_compute(buf);
-		return (0);
+		return (error);
 	}
 
 	if (hdr_compressed == compressed) {
@@ -2729,6 +2753,19 @@ arc_loan_compressed_buf(spa_t *spa, uint64_t psize, uint64_t lsize,
 	return (buf);
 }
 
+arc_buf_t *
+arc_loan_raw_buf(spa_t *spa, uint64_t dsobj, boolean_t byteorder,
+    const uint8_t *salt, const uint8_t *iv, const uint8_t *mac,
+    dmu_object_type_t ot, uint64_t psize, uint64_t lsize,
+    enum zio_compress compression_type)
+{
+	arc_buf_t *buf = arc_alloc_raw_buf(spa, arc_onloan_tag, dsobj,
+	    byteorder, salt, iv, mac, ot, psize, lsize, compression_type);
+
+	atomic_add_64(&arc_loaned_bytes, psize);
+	return (buf);
+}
+
 
 /*
  * Return a loaned arc buffer to the arc.
@@ -3304,6 +3341,49 @@ arc_hdr_realloc_crypt(arc_buf_hdr_t *hdr, boolean_t encrypt)
 }
 
 /*
+ * This function is used by the send / receive code to convert a newly
+ * allocated arc_buf_t to one that is suitable for a raw encrypted write.
+ * Currently we only need support for L0 dnode buffers since other object
+ * types can simply allocated a raw buffer to begin with. Encrypted dnode
+ * blocks will always be uncompressed so we do not have to worry about
+ * compression type or psize.
+ */
+void
+arc_convert_to_raw(arc_buf_t *buf, uint64_t dsobj, boolean_t byteorder,
+    dmu_object_type_t ot, const uint8_t *salt, const uint8_t *iv,
+    const uint8_t *mac)
+{
+	arc_buf_hdr_t *hdr = buf->b_hdr;
+
+	ASSERT3U(ot, ==, DMU_OT_DNODE);
+	ASSERT(HDR_HAS_L1HDR(hdr));
+	ASSERT0(HDR_ENCRYPTED(hdr));
+	ASSERT3P(hdr->b_l1hdr.b_state, ==, arc_anon);
+	ASSERT0(ARC_BUF_COMPRESSED(buf));
+	ASSERT0(ARC_BUF_ENCRYPTED(buf));
+
+	buf->b_flags |= (ARC_BUF_FLAG_COMPRESSED | ARC_BUF_FLAG_ENCRYPTED);
+	hdr = arc_hdr_realloc_crypt(hdr, B_TRUE);
+	hdr->b_crypt_hdr.b_dsobj = dsobj;
+	hdr->b_crypt_hdr.b_ot = ot;
+	hdr->b_l1hdr.b_byteswap = (byteorder == ZFS_HOST_BYTEORDER) ?
+	    DMU_BSWAP_NUMFUNCS : DMU_OT_BYTESWAP(ot);
+	bcopy(salt, hdr->b_crypt_hdr.b_salt, ZIO_DATA_SALT_LEN);
+	bcopy(iv, hdr->b_crypt_hdr.b_iv, ZIO_DATA_IV_LEN);
+	bcopy(mac, hdr->b_crypt_hdr.b_mac, ZIO_DATA_MAC_LEN);
+
+	/* free the non-raw header data */
+	if (hdr->b_l1hdr.b_pabd != NULL) {
+		if (arc_buf_is_shared(buf)) {
+			arc_unshare_buf(hdr, buf);
+		} else {
+			arc_hdr_free_abd(hdr, B_FALSE);
+		}
+		VERIFY3P(buf->b_data, !=, NULL);
+	}
+}
+
+/*
  * Allocate a new arc_buf_hdr_t and arc_buf_t and return the buf to the caller.
  * The buf is returned thawed since we expect the consumer to modify it.
  */
@@ -3335,8 +3415,8 @@ arc_alloc_compressed_buf(spa_t *spa, void *tag, uint64_t psize, uint64_t lsize,
 	arc_buf_t *buf;
 	ASSERT3U(lsize, >, 0);
 	ASSERT3U(lsize, >=, psize);
-	ASSERT(compression_type > ZIO_COMPRESS_OFF);
-	ASSERT(compression_type < ZIO_COMPRESS_FUNCTIONS);
+	ASSERT3U(compression_type, >, ZIO_COMPRESS_OFF);
+	ASSERT3U(compression_type, <, ZIO_COMPRESS_FUNCTIONS);
 
 	hdr = arc_hdr_alloc(spa_load_guid(spa), psize, lsize, B_FALSE,
 	    compression_type, ARC_BUFC_DATA, B_FALSE);
@@ -3359,6 +3439,43 @@ arc_alloc_compressed_buf(spa_t *spa, void *tag, uint64_t psize, uint64_t lsize,
 		arc_hdr_free_abd(hdr, B_FALSE);
 		arc_share_buf(hdr, buf);
 	}
+
+	return (buf);
+}
+
+arc_buf_t *
+arc_alloc_raw_buf(spa_t *spa, void *tag, uint64_t dsobj, boolean_t byteorder,
+    const uint8_t *salt, const uint8_t *iv, const uint8_t *mac,
+    dmu_object_type_t ot, uint64_t psize, uint64_t lsize,
+    enum zio_compress compression_type)
+{
+	arc_buf_hdr_t *hdr;
+	arc_buf_t *buf;
+	arc_buf_contents_t type = DMU_OT_IS_METADATA(ot) ?
+	    ARC_BUFC_METADATA : ARC_BUFC_DATA;
+
+	ASSERT3U(lsize, >, 0);
+	ASSERT3U(lsize, >=, psize);
+	ASSERT3U(compression_type, >=, ZIO_COMPRESS_OFF);
+	ASSERT3U(compression_type, <, ZIO_COMPRESS_FUNCTIONS);
+
+	hdr = arc_hdr_alloc(spa_load_guid(spa), psize, lsize, B_TRUE,
+	    compression_type, type, B_TRUE);
+	ASSERT(!MUTEX_HELD(HDR_LOCK(hdr)));
+
+	hdr->b_crypt_hdr.b_dsobj = dsobj;
+	hdr->b_crypt_hdr.b_ot = ot;
+	hdr->b_l1hdr.b_byteswap = (byteorder == ZFS_HOST_BYTEORDER) ?
+	    DMU_BSWAP_NUMFUNCS : DMU_OT_BYTESWAP(ot);
+	bcopy(salt, hdr->b_crypt_hdr.b_salt, ZIO_DATA_SALT_LEN);
+	bcopy(iv, hdr->b_crypt_hdr.b_iv, ZIO_DATA_IV_LEN);
+	bcopy(mac, hdr->b_crypt_hdr.b_mac, ZIO_DATA_MAC_LEN);
+
+	buf = NULL;
+	VERIFY0(arc_buf_alloc_impl(hdr, spa, dsobj, tag, B_TRUE, B_TRUE,
+	    B_FALSE, &buf));
+	arc_buf_thaw(buf);
+	ASSERT3P(hdr->b_l1hdr.b_freeze_cksum, ==, NULL);
 
 	return (buf);
 }
@@ -6171,8 +6288,6 @@ arc_release(arc_buf_t *buf, void *tag)
 		/*
 		 * Allocate a new hdr. The new hdr will contain a b_pabd
 		 * buffer which will be freed in arc_write().
-		 * Allocate a new hdr. The new hdr will contain a b_pabd
-		 * or b_rabd buffer which will be freed in arc_write().
 		 */
 		nhdr = arc_hdr_alloc(spa, psize, lsize, encrypted,
 		    compress, type, HDR_HAS_RABD(hdr));
@@ -7575,10 +7690,11 @@ l2arc_read_done(zio_t *zio)
 		uint8_t iv[ZIO_DATA_IV_LEN];
 		uint8_t mac[ZIO_DATA_MAC_LEN];
 		abd_t *eabd = arc_get_data_abd(hdr, arc_hdr_size(hdr), hdr);
+		boolean_t no_crypt = B_FALSE;
 
 		/*
 		 * ZIL data is never be written to the L2ARC, so we don't need
-		 * special handling for its unique mac storage.
+		 * special handling for its unique MAC storage.
 		 */
 		ASSERT3U(BP_GET_TYPE(bp), !=, DMU_OT_INTENT_LOG);
 
@@ -7593,12 +7709,12 @@ l2arc_read_done(zio_t *zio)
 
 			tfm_error = zio_do_crypt_abd(B_FALSE, &dck->dck_key,
 			    salt, BP_GET_TYPE(bp), iv, mac, HDR_GET_PSIZE(hdr),
-			    eabd, hdr->b_l1hdr.b_pabd);
+			    eabd, hdr->b_l1hdr.b_pabd, &no_crypt);
 
 			spa_keystore_dsl_key_rele(spa, dck, FTAG);
 		}
 
-		if (tfm_error == 0) {
+		if (tfm_error == 0 && !no_crypt) {
 			arc_free_data_abd(hdr, hdr->b_l1hdr.b_pabd,
 			    arc_hdr_size(hdr), hdr);
 			hdr->b_l1hdr.b_pabd = eabd;
@@ -7848,6 +7964,7 @@ l2arc_apply_transforms(spa_t *spa, arc_buf_hdr_t *hdr, abd_t **abd_out,
 	boolean_t ismd = HDR_ISTYPE_METADATA(hdr);
 	dsl_crypto_key_t *dck = NULL;
 	uint8_t mac[ZIO_DATA_MAC_LEN] = { 0 };
+	boolean_t no_crypt;
 
 	ASSERT((HDR_GET_COMPRESS(hdr) != ZIO_COMPRESS_OFF &&
 	    !HDR_COMPRESSION_ENABLED(hdr)) ||
@@ -7898,9 +8015,16 @@ l2arc_apply_transforms(spa_t *spa, arc_buf_hdr_t *hdr, abd_t **abd_out,
 
 		ret = zio_do_crypt_abd(B_TRUE, &dck->dck_key,
 		    hdr->b_crypt_hdr.b_salt, hdr->b_crypt_hdr.b_ot,
-		    hdr->b_crypt_hdr.b_iv, mac, csize, to_write, eabd);
+		    hdr->b_crypt_hdr.b_iv, mac, csize, to_write,
+		    eabd, &no_crypt);
 		if (ret != 0)
 			goto error;
+
+		if (no_crypt) {
+			spa_keystore_dsl_key_rele(spa, dck, FTAG);
+			abd_free(eabd);
+			goto out;
+		}
 
 		/* assert that the MAC we got here matches the one we saved */
 		ASSERT0(bcmp(mac, hdr->b_crypt_hdr.b_mac, ZIO_DATA_MAC_LEN));

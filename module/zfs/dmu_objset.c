@@ -935,7 +935,11 @@ dmu_objset_create_impl(spa_t *spa, dsl_dataset_t *ds, blkptr_t *bp,
 	ASSERT(type != DMU_OST_ANY);
 	ASSERT(type < DMU_OST_NUMTYPES);
 	os->os_phys->os_type = type;
-	if (dmu_objset_userused_enabled(os)) {
+
+	/* enable user accounting if it is enabled and this is not a raw recv */
+	if (dmu_objset_userused_enabled(os) && (!os->os_encrypted ||
+	    spa_keystore_lookup_key(os->os_spa, dmu_objset_id(os),
+	    NULL, NULL) == 0)) {
 		os->os_phys->os_flags |= OBJSET_FLAG_USERACCOUNTING_COMPLETE;
 		if (dmu_objset_userobjused_enabled(os)) {
 			ds->ds_feature_activation_needed[
@@ -1032,28 +1036,28 @@ dmu_objset_create_sync(void *arg, dmu_tx_t *tx)
 	}
 
 	/*
-	 * doca_userfunc() may write out some data that needs to be encrypted
-	 * if the dataset is encrypted (specifically the root directory).
-	 * We need to write this data out before the encryption key mapping is
-	 * removed by dsl_dataset_rele_flags(). However, this data won't
-	 * normally be written out by the zio layer until after this sync
-	 * function has returned. In this case, we must call dmu_objset_sync()
-	 * to ensure the encrypted data is written out before we release the
-	 * dataset. Doing that requires that we call
-	 * dmu_objset_do_userquota_updates() to clean up open references,
-	 * which will in turn write out more encrypted data, so we must call
-	 * dmu_objset_sync() again.
+	 * The doca_userfunc() will write out some data that needs to be
+	 * encrypted if the dataset is encrypted (specifically the root
+	 * directory).  This data must be written out before the encryption
+	 * key mapping is removed by dsl_dataset_rele_flags().  Force the
+	 * I/O to occur immediately by invoking the relevant sections of
+	 * dsl_pool_sync().
 	 */
 	if (os->os_encrypted) {
 		rzio = zio_root(dp->dp_spa, NULL, NULL, ZIO_FLAG_MUSTSUCCEED);
-		dmu_objset_sync(os, rzio, tx);
+		dsl_dataset_sync(ds, rzio, tx);
 		VERIFY0(zio_wait(rzio));
 
 		dmu_objset_do_userquota_updates(os, tx);
+		taskq_wait(dp->dp_sync_taskq);
 
 		rzio = zio_root(dp->dp_spa, NULL, NULL, ZIO_FLAG_MUSTSUCCEED);
-		dmu_objset_sync(os, rzio, tx);
+		dsl_dataset_sync(ds, rzio, tx);
 		VERIFY0(zio_wait(rzio));
+
+		/* dsl_dataset_sync_done will drop this reference. */
+		dmu_buf_add_ref(ds->ds_dbuf, ds);
+		dsl_dataset_sync_done(ds, tx);
 	}
 
 	spa_history_log_internal_ds(ds, "create", tx, "");
@@ -1260,9 +1264,11 @@ dmu_objset_upgrade_stop(objset_t *os)
 }
 
 static void
-dmu_objset_sync_dnodes(multilist_sublist_t *list, dmu_tx_t *tx)
+dmu_objset_sync_dnodes(objset_t *os, multilist_sublist_t *list, dmu_tx_t *tx)
 {
 	dnode_t *dn;
+	boolean_t raw = (os->os_encrypted && spa_keystore_lookup_key(os->os_spa,
+	    dmu_objset_id(os), NULL, NULL) != 0);
 
 	while ((dn = multilist_sublist_head(list)) != NULL) {
 		ASSERT(dn->dn_object != DMU_META_DNODE_OBJECT);
@@ -1278,7 +1284,7 @@ dmu_objset_sync_dnodes(multilist_sublist_t *list, dmu_tx_t *tx)
 		multilist_sublist_remove(list, dn);
 
 		multilist_t *newlist = dn->dn_objset->os_synced_dnodes;
-		if (newlist != NULL) {
+		if (newlist != NULL && !raw) {
 			(void) dnode_add_ref(dn, newlist);
 			multilist_insert(newlist, dn);
 		}
@@ -1342,6 +1348,7 @@ dmu_objset_write_done(zio_t *zio, arc_buf_t *abuf, void *arg)
 }
 
 typedef struct sync_dnodes_arg {
+	objset_t *sda_os;
 	multilist_t *sda_list;
 	int sda_sublist_idx;
 	multilist_t *sda_newlist;
@@ -1356,7 +1363,7 @@ sync_dnodes_task(void *arg)
 	multilist_sublist_t *ms =
 	    multilist_sublist_lock(sda->sda_list, sda->sda_sublist_idx);
 
-	dmu_objset_sync_dnodes(ms, sda->sda_tx);
+	dmu_objset_sync_dnodes(sda->sda_os, ms, sda->sda_tx);
 
 	multilist_sublist_unlock(ms);
 
@@ -1445,6 +1452,7 @@ dmu_objset_sync(objset_t *os, zio_t *pio, dmu_tx_t *tx)
 	for (int i = 0;
 	    i < multilist_get_num_sublists(os->os_dirty_dnodes[txgoff]); i++) {
 		sync_dnodes_arg_t *sda = kmem_alloc(sizeof (*sda), KM_SLEEP);
+		sda->sda_os = os;
 		sda->sda_list = os->os_dirty_dnodes[txgoff];
 		sda->sda_sublist_idx = i;
 		sda->sda_tx = tx;
@@ -1705,6 +1713,10 @@ dmu_objset_do_userquota_updates(objset_t *os, dmu_tx_t *tx)
 	if (!dmu_objset_userused_enabled(os))
 		return;
 
+	if (os->os_encrypted && spa_keystore_lookup_key(os->os_spa,
+	    dmu_objset_id(os), NULL, NULL) != 0)
+		return;
+
 	/* Allocate the user/groupused objects if necessary. */
 	if (DMU_USERUSED_DNODE(os)->dn_type == DMU_OT_NONE) {
 		VERIFY0(zap_create_claim(os,
@@ -1782,6 +1794,18 @@ dmu_objset_userquota_get_ids(dnode_t *dn, boolean_t before, dmu_tx_t *tx)
 	boolean_t have_spill = B_FALSE;
 
 	if (!dmu_objset_userused_enabled(dn->dn_objset))
+		return;
+
+	/*
+	 * If we are doing a raw receive we will be writing out raw data
+	 * and will not have access to the decrypted bonus / spill data that
+	 * we would normally need to do all of the user space accounting.
+	 * However, in this case the we will receive the user accounting data
+	 * as part of the send anyway so we can simply rely on that without
+	 * redoing the work.
+	 */
+	if (os->os_encrypted && spa_keystore_lookup_key(os->os_spa,
+	    dmu_objset_id(os), NULL, NULL) != 0)
 		return;
 
 	if (before && (flags & (DN_ID_CHKED_BONUS|DN_ID_OLD_EXIST|

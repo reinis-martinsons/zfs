@@ -1862,6 +1862,10 @@ get_receive_resume_stats(dsl_dataset_t *ds, nvlist_t *nv)
 		    DS_FIELD_RESUME_COMPRESSOK) == 0) {
 			fnvlist_add_boolean(token_nv, "compressok");
 		}
+		if (zap_contains(dp->dp_meta_objset, ds->ds_object,
+		    DS_FIELD_RESUME_RAWOK) == 0) {
+			fnvlist_add_boolean(token_nv, "rawok");
+		}
 		packed = fnvlist_pack(token_nv, &packed_size);
 		fnvlist_free(token_nv);
 		compressed = kmem_alloc(packed_size, KM_SLEEP);
