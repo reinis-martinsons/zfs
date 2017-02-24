@@ -379,7 +379,7 @@ cksummer(void *arg)
 
 			if (ZIO_CHECKSUM_EQUAL(drrw->drr_key.ddk_cksum,
 			    zero_cksum) ||
-			    !DRR_IS_DEDUP_CAPABLE(drrw->drr_checksumflags)) {
+			    !DRR_IS_DEDUP_CAPABLE(drrw->drr_flags)) {
 				SHA2_CTX ctx;
 				zio_cksum_t tmpsha256;
 
@@ -396,7 +396,7 @@ cksummer(void *arg)
 				drrw->drr_key.ddk_cksum.zc_word[3] =
 				    BE_64(tmpsha256.zc_word[3]);
 				drrw->drr_checksumtype = ZIO_CHECKSUM_SHA256;
-				drrw->drr_checksumflags = DRR_CHECKSUM_DEDUP;
+				drrw->drr_flags = DRR_CHECKSUM_DEDUP;
 			}
 
 			dataref.ref_guid = drrw->drr_toguid;
@@ -425,8 +425,7 @@ cksummer(void *arg)
 
 				wbr_drrr->drr_checksumtype =
 				    drrw->drr_checksumtype;
-				wbr_drrr->drr_checksumflags =
-				    drrw->drr_checksumtype;
+				wbr_drrr->drr_flags = drrw->drr_flags;
 				wbr_drrr->drr_key.ddk_cksum =
 				    drrw->drr_key.ddk_cksum;
 				wbr_drrr->drr_key.ddk_prop =

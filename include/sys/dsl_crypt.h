@@ -156,6 +156,8 @@ int spa_keystore_remove_mapping(spa_t *spa, uint64_t dsobj, void *tag);
 int spa_keystore_lookup_key(spa_t *spa, uint64_t dsobj, void *tag,
     dsl_crypto_key_t **dck_out);
 
+int dsl_crypto_populate_key_nvlist(struct dsl_dataset *ds, nvlist_t **nvl_out);
+
 int spa_keystore_rewrap(const char *dsname, dsl_crypto_params_t *dcp);
 int dsl_dir_rename_crypt_check(dsl_dir_t *dd, dsl_dir_t *newparent);
 int dmu_objset_create_crypt_check(dsl_dir_t *parentdd, dsl_dir_t *origindd,

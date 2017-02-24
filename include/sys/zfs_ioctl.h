@@ -102,6 +102,7 @@ typedef enum drr_headertype {
 #define	DMU_BACKUP_FEATURE_RESUMING		(1 << 20)
 #define	DMU_BACKUP_FEATURE_LARGE_DNODE		(1 << 21)
 #define	DMU_BACKUP_FEATURE_COMPRESSED		(1 << 22)
+#define	DMU_BACKUP_FEATURE_RAW			(1 << 23)
 
 /*
  * Mask of all supported backup features
@@ -156,12 +157,16 @@ typedef enum dmu_send_resume_token_version {
 #define	DRR_FLAG_FREERECORDS	(1<<2)
 
 /*
- * flags in the drr_checksumflags field in the DRR_WRITE and
+ * flags in the drr_flags field in the DRR_WRITE and
  * DRR_WRITE_BYREF blocks
  */
 #define	DRR_CHECKSUM_DEDUP	(1<<0)
+#define	DRR_RAW_ENCRYPTED	(1<<1)
+#define	DRR_RAW_BYTESWAP	(1<<2)
 
 #define	DRR_IS_DEDUP_CAPABLE(flags)	((flags) & DRR_CHECKSUM_DEDUP)
+#define	DRR_IS_RAW_ENCRYPTED(flags)	((flags) & DRR_RAW_ENCRYPTED)
+#define	DRR_IS_RAW_BYTESWAPPED(flags)	((flags) & DRR_RAW_BYTESWAP)
 
 /* deal with compressed drr_write replay records */
 #define	DRR_WRITE_COMPRESSED(drrw)	((drrw)->drr_compressiontype != 0)
@@ -220,13 +225,17 @@ typedef struct dmu_replay_record {
 			uint64_t drr_logical_size;
 			uint64_t drr_toguid;
 			uint8_t drr_checksumtype;
-			uint8_t drr_checksumflags;
+			uint8_t drr_flags;
 			uint8_t drr_compressiontype;
 			uint8_t drr_pad2[5];
 			/* deduplication key */
 			ddt_key_t drr_key;
 			/* only nonzero if drr_compressiontype is not 0 */
 			uint64_t drr_compressed_size;
+			/* only nonzero if DRR_RAW_ENCRYPTED flag is set */
+			uint8_t drr_salt[ZIO_DATA_SALT_LEN];
+			uint8_t drr_iv[ZIO_DATA_IV_LEN];
+			uint8_t drr_mac[ZIO_DATA_MAC_LEN];
 			/* content follows */
 		} drr_write;
 		struct drr_free {
@@ -247,7 +256,7 @@ typedef struct dmu_replay_record {
 			uint64_t drr_refoffset;
 			/* properties of the data */
 			uint8_t drr_checksumtype;
-			uint8_t drr_checksumflags;
+			uint8_t drr_flags;
 			uint8_t drr_pad2[6];
 			ddt_key_t drr_key; /* deduplication key */
 		} drr_write_byref;

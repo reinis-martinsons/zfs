@@ -605,6 +605,70 @@ dsl_crypto_key_rele(dsl_crypto_key_t *dck, void *tag)
 		dsl_crypto_key_free(dck);
 }
 
+int
+dsl_crypto_populate_key_nvlist(dsl_dataset_t *ds, nvlist_t **nvl_out)
+{
+	int ret;
+	nvlist_t *nvl = NULL;
+	uint64_t dckobj = ds->ds_dir->dd_crypto_obj;
+	objset_t *mos = ds->ds_dir->dd_pool->dp_meta_objset;
+	uint64_t crypt = 0;
+	uint8_t raw_keydata[MAX_MASTER_KEY_LEN];
+	uint8_t raw_hmac_keydata[HMAC_SHA256_KEYLEN];
+	uint8_t iv[WRAPPING_IV_LEN];
+	uint8_t mac[WRAPPING_MAC_LEN];
+
+	ASSERT(dckobj != 0);
+
+	ret = nvlist_alloc(&nvl, NV_UNIQUE_NAME, KM_SLEEP);
+	if (ret != 0)
+		goto error;
+
+	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_CRYPTO_SUITE, 8, 1,
+	    &crypt);
+	if (ret != 0)
+		goto error;
+
+	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_MASTER_KEY, 1,
+	    MAX_MASTER_KEY_LEN, raw_keydata);
+	if (ret != 0)
+		goto error;
+
+	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_HMAC_KEY, 1,
+	    HMAC_SHA256_KEYLEN, raw_hmac_keydata);
+	if (ret != 0)
+		goto error;
+
+	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_IV, 1, WRAPPING_IV_LEN,
+	    iv);
+	if (ret != 0)
+		goto error;
+
+	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_MAC, 1, WRAPPING_MAC_LEN,
+	    mac);
+	if (ret != 0)
+		goto error;
+
+	VERIFY0(nvlist_add_uint64(nvl, DSL_CRYPTO_KEY_CRYPTO_SUITE, crypt));
+	VERIFY0(nvlist_add_uint8_array(nvl, DSL_CRYPTO_KEY_MASTER_KEY,
+	    raw_keydata, MAX_MASTER_KEY_LEN));
+	VERIFY0(nvlist_add_uint8_array(nvl, DSL_CRYPTO_KEY_HMAC_KEY,
+	    raw_hmac_keydata, HMAC_SHA256_KEYLEN));
+	VERIFY0(nvlist_add_uint8_array(nvl, DSL_CRYPTO_KEY_IV,
+	    iv, WRAPPING_IV_LEN));
+	VERIFY0(nvlist_add_uint8_array(nvl, DSL_CRYPTO_KEY_MAC,
+	    mac, WRAPPING_MAC_LEN));
+
+	*nvl_out = nvl;
+	return (0);
+
+error:
+	nvlist_free(nvl);
+
+	*nvl_out = NULL;
+	return (ret);
+}
+
 static int
 dsl_crypto_key_open(objset_t *mos, dsl_wrapping_key_t *wkey,
     uint64_t dckobj, void *tag, dsl_crypto_key_t **dck_out)

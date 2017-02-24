@@ -478,7 +478,8 @@ main(int argc, char *argv[])
 			if (verbose) {
 				(void) printf("WRITE object = %llu type = %u "
 				    "checksum type = %u compression type = %u\n"
-				    "    offset = %llu logical_size = %llu "
+				    "    flags = %u offset = %llu "
+				    "logical_size = %llu "
 				    "compressed_size = %llu "
 				    "payload_size = %llu "
 				    "props = %llx\n",
@@ -486,6 +487,7 @@ main(int argc, char *argv[])
 				    drrw->drr_type,
 				    drrw->drr_checksumtype,
 				    drrw->drr_compressiontype,
+				    drrw->drr_flags,
 				    (u_longlong_t)drrw->drr_offset,
 				    (u_longlong_t)drrw->drr_logical_size,
 				    (u_longlong_t)drrw->drr_compressed_size,
