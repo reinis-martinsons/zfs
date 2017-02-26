@@ -107,6 +107,7 @@ struct dsl_crypto_params;
 #define	DS_FIELD_RESUME_LARGEBLOCK "com.delphix:resume_largeblockok"
 #define	DS_FIELD_RESUME_EMBEDOK "com.delphix:resume_embedok"
 #define	DS_FIELD_RESUME_COMPRESSOK "com.delphix:resume_compressok"
+#define	DS_FIELD_RESUME_RAWOK "com.datto:resume_rawok"
 
 /*
  * DS_FLAG_CI_DATASET is set if the dataset contains a file system whose

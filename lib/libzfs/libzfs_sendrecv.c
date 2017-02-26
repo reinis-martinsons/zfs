@@ -1649,6 +1649,8 @@ zfs_send_resume(libzfs_handle_t *hdl, sendflags_t *flags, int outfd,
 		lzc_flags |= LZC_SEND_FLAG_EMBED_DATA;
 	if (flags->compress || nvlist_exists(resume_nvl, "compressok"))
 		lzc_flags |= LZC_SEND_FLAG_COMPRESS;
+	if (flags->raw || nvlist_exists(resume_nvl, "rawok"))
+		lzc_flags |= LZC_SEND_FLAG_RAW;
 
 	if (guid_to_name(hdl, toname, toguid, B_FALSE, name) != 0) {
 		if (zfs_dataset_exists(hdl, toname, ZFS_TYPE_DATASET)) {

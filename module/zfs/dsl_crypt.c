@@ -606,6 +606,77 @@ dsl_crypto_key_rele(dsl_crypto_key_t *dck, void *tag)
 }
 
 int
+dsl_crypto_create_key_from_nvlist(dsl_dataset_t *ds, nvlist_t *nvl)
+{
+	int ret;
+	uint64_t dckobj;
+	objset_t *mos = ds->ds_dir->dd_pool->dp_meta_objset;
+	uint_t len;
+	uint64_t crypt = 0;
+	uint8_t *keydata = NULL;
+	uint8_t *hmac_keydata = NULL;
+	uint8_t *iv = NULL;
+	uint8_t *mac = NULL;
+
+	/* read and check all the encryption values from the nvlist */
+	ret = nvlist_lookup_uint64(nvl, DSL_CRYPTO_KEY_CRYPTO_SUITE, &crypt);
+	if (ret != 0 || crypt >= ZIO_CRYPT_FUNCTIONS ||
+	    crypt <= ZIO_CRYPT_OFF) {
+		ret = SET_ERROR(EINVAL);
+		goto error;
+	}
+
+	ret = nvlist_lookup_uint8_array(nvl, DSL_CRYPTO_KEY_MASTER_KEY,
+	    &keydata, &len);
+	if (ret != 0 || len != MAX_MASTER_KEY_LEN) {
+		ret = SET_ERROR(EINVAL);
+		goto error;
+	}
+
+	ret = nvlist_lookup_uint8_array(nvl, DSL_CRYPTO_KEY_HMAC_KEY,
+	    &hmac_keydata, &len);
+	if (ret != 0 || len != HMAC_SHA256_KEYLEN) {
+		ret = SET_ERROR(EINVAL);
+		goto error;
+	}
+
+	ret = nvlist_lookup_uint8_array(nvl, DSL_CRYPTO_KEY_IV, &iv, &len);
+	if (ret != 0 || len != WRAPPING_IV_LEN) {
+		ret = SET_ERROR(EINVAL);
+		goto error;
+	}
+
+	ret = nvlist_lookup_uint8_array(nvl, DSL_CRYPTO_KEY_MAC, &mac, &len);
+	if (ret != 0 || len != WRAPPING_MAC_LEN) {
+		ret = SET_ERROR(EINVAL);
+		goto error;
+	}
+
+	/*
+	 * TODO:
+	 * create a tx
+	 * hold the dd, new dckobj
+	 * assign the tx
+	 * zapify the dd
+	 * create the dck zap
+	 * assign ds->dsl_dir->dd_crypto_obj
+	 */
+
+
+	/*
+	 * Sync out the dsl crypto key. The provided keys are already wrapped
+	 * so we don't do that again.
+	 */
+	dsl_crypto_key_sync_impl(mos, dckobj, key->zk_crypt, iv, mac, keydata,
+	    hmac_keydata, tx);
+
+	return (0);
+
+error:
+	return (ret);
+}
+
+int
 dsl_crypto_populate_key_nvlist(dsl_dataset_t *ds, nvlist_t **nvl_out)
 {
 	int ret;
@@ -1200,11 +1271,26 @@ dmu_objset_check_wkey_loaded(dsl_dir_t *dd)
 }
 
 static void
+dsl_crypto_key_sync_impl(objset_t *mos, uint64_t dckobj, uint64_t crypt,
+    uint8_t *iv, uint8_t *mac, uint8_t *keydata, uint8_t *hmac_keydata,
+    dmu_tx_t *tx)
+{
+	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_CRYPTO_SUITE, 8, 1,
+	    &crypt, tx));
+	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_IV, 1, WRAPPING_IV_LEN,
+	    iv, tx));
+	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_MAC, 1, WRAPPING_MAC_LEN,
+	    mac, tx));
+	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_MASTER_KEY, 1,
+	    MAX_MASTER_KEY_LEN, keydata, tx));
+	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_HMAC_KEY, 1,
+	    HMAC_SHA256_KEYLEN, hmac_keydata, tx));
+}
+
+static void
 dsl_crypto_key_sync(dsl_crypto_key_t *dck, dmu_tx_t *tx)
 {
-	uint64_t dckobj = dck->dck_obj;
 	zio_crypt_key_t *key = &dck->dck_key;
-	objset_t *mos = tx->tx_pool->dp_meta_objset;
 	uint8_t keydata[MAX_MASTER_KEY_LEN];
 	uint8_t hmac_keydata[HMAC_SHA256_KEYLEN];
 	uint8_t iv[WRAPPING_IV_LEN];
@@ -1218,20 +1304,8 @@ dsl_crypto_key_sync(dsl_crypto_key_t *dck, dmu_tx_t *tx)
 	    keydata, hmac_keydata));
 
 	/* update the ZAP with the obtained values */
-	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_CRYPTO_SUITE, 8, 1,
-	    &key->zk_crypt, tx));
-
-	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_IV, 1, WRAPPING_IV_LEN,
-	    iv, tx));
-
-	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_MAC, 1, WRAPPING_MAC_LEN,
-	    mac, tx));
-
-	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_MASTER_KEY, 1,
-	    MAX_MASTER_KEY_LEN, keydata, tx));
-
-	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_HMAC_KEY, 1,
-	    HMAC_SHA256_KEYLEN, hmac_keydata, tx));
+	dsl_crypto_key_sync_impl(tx->tx_pool->dp_meta_objset, dck->dck_obj,
+	    key->zk_crypt, iv, mac, keydata, hmac_keydata, tx)
 }
 
 typedef struct spa_keystore_rewrap_args {
@@ -1733,6 +1807,10 @@ dsl_dataset_create_crypt_sync(uint64_t dsobj, dsl_dir_t *dd,
 	if (crypt == ZIO_CRYPT_OFF || crypt == ZIO_CRYPT_INHERIT)
 		return;
 
+	/* zapify the dd so that we can add the crypto key obj to it */
+	dmu_buf_will_dirty(dd->dd_dbuf, tx);
+	dsl_dir_zapify(dd, tx);
+
 	/* use the new key if given or inherit from the parent */
 	if (wkey == NULL) {
 		VERIFY0(spa_keystore_wkey_hold_ddobj(dp->dp_spa,
@@ -1753,8 +1831,7 @@ dsl_dataset_create_crypt_sync(uint64_t dsobj, dsl_dir_t *dd,
 		    wkey, tx);
 	}
 
-	/* zapify the dd so that we can add the crypto key obj to it */
-	dsl_dir_zapify(dd, tx);
+	/* add the crypto key obj to the dd */
 	VERIFY0(zap_add(dp->dp_meta_objset, dd->dd_object,
 	    DD_FIELD_CRYPTO_KEY_OBJ, sizeof (uint64_t), 1, &dd->dd_crypto_obj,
 	    tx));

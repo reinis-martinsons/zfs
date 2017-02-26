@@ -1471,6 +1471,11 @@ dmu_recv_begin_check(void *arg, dmu_tx_t *tx)
 	    ((flags & DRR_FLAG_CLONE) && drba->drba_origin == NULL))
 		return (SET_ERROR(EINVAL));
 
+	/* Raw streams are mutually exclusive with compressed streams */
+	if ((featureflags & DMU_BACKUP_FEATURE_COMPRESSED) &&
+	    (featureflags & DMU_BACKUP_FEATURE_RAW))
+		return (SET_ERROR(EINVAL));
+
 	/* Verify pool version supports SA if SA_SPILL feature set */
 	if ((featureflags & DMU_BACKUP_FEATURE_SA_SPILL) &&
 	    spa_version(dp->dp_spa) < SPA_VERSION_SA)
@@ -1509,6 +1514,11 @@ dmu_recv_begin_check(void *arg, dmu_tx_t *tx)
 	 */
 	if ((featureflags & DMU_BACKUP_FEATURE_LARGE_DNODE) &&
 	    !spa_feature_is_enabled(dp->dp_spa, SPA_FEATURE_LARGE_DNODE))
+		return (SET_ERROR(ENOTSUP));
+
+	/* raw receives require the encryption feature */
+	if ((featureflags & DMU_BACKUP_FEATURE_RAW) &&
+	    !spa_feature_is_enabled(dp->dp_spa, SPA_FEATURE_ENCRYPTION))
 		return (SET_ERROR(ENOTSUP));
 
 	error = dsl_dataset_hold_flags(dp, tofs, dsflags, FTAG, &ds);
@@ -1684,6 +1694,21 @@ dmu_recv_begin_sync(void *arg, dmu_tx_t *tx)
 			VERIFY0(zap_add(mos, dsobj, DS_FIELD_RESUME_COMPRESSOK,
 			    8, 1, &one, tx));
 		}
+		if (DMU_GET_FEATUREFLAGS(drrb->drr_versioninfo) &
+		    DMU_BACKUP_FEATURE_RAW) {
+			VERIFY0(zap_add(mos, dsobj, DS_FIELD_RESUME_RAWOK,
+			    8, 1, &one, tx));
+		}
+	}
+
+	/*
+	 * If we are receiving encrypted data zapify the dd now in syncing
+	 * context in preperation for storing the DSL crypto key.
+	 */
+	if ((DMU_GET_FEATUREFLAGS(drrb->drr_versioninfo) &
+	    DMU_BACKUP_FEATURE_RAW) && !dsl_dir_is_zapified(newds->ds_dir)) {
+		dmu_buf_will_dirty(newds->ds_dir->dd_dbuf, tx);
+		dsl_dir_zapify(newds->ds_dir, tx);
 	}
 
 	dmu_buf_will_dirty(newds->ds_dbuf, tx);
@@ -1728,6 +1753,11 @@ dmu_recv_resume_begin_check(void *arg, dmu_tx_t *tx)
 	if (DMU_GET_STREAM_HDRTYPE(drrb->drr_versioninfo) ==
 	    DMU_COMPOUNDSTREAM ||
 	    drrb->drr_type >= DMU_OST_NUMTYPES)
+		return (SET_ERROR(EINVAL));
+
+	/* Raw streams are mutually exclusive with compressed streams */
+	if ((featureflags & DMU_BACKUP_FEATURE_COMPRESSED) &&
+	    (featureflags & DMU_BACKUP_FEATURE_RAW))
 		return (SET_ERROR(EINVAL));
 
 	/* Verify pool version supports SA if SA_SPILL feature set */
@@ -3097,6 +3127,11 @@ dmu_recv_stream(dmu_recv_cookie_t *drc, vnode_t *vp, offset_t *voffp,
 		kmem_free(payload, payloadlen);
 		if (err != 0)
 			goto out;
+	}
+
+	/* handle DSL encryption key payload */
+	if (featureflags & DMU_BACKUP_FEATURE_RAW) {
+		// TODO: implement handling
 	}
 
 	if (featureflags & DMU_BACKUP_FEATURE_RESUMING) {
