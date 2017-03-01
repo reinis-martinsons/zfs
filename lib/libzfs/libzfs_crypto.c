@@ -50,13 +50,6 @@
  * technically ok if the salt is known to the attacker).
  */
 
-typedef enum key_format {
-	KEY_FORMAT_NONE = 0,
-	KEY_FORMAT_RAW,
-	KEY_FORMAT_HEX,
-	KEY_FORMAT_PASSPHRASE
-} key_format_t;
-
 typedef enum key_locator {
 	KEY_LOCATOR_NONE,
 	KEY_LOCATOR_PROMPT,
@@ -115,7 +108,7 @@ catch_signal(int sig)
 }
 
 static char *
-get_format_prompt_string(key_format_t format)
+get_format_prompt_string(zfs_keyformat_t format)
 {
 	switch (format) {
 	case ZFS_KEYFORMAT_RAW:
@@ -557,7 +550,7 @@ error:
 }
 
 static int
-derive_key(libzfs_handle_t *hdl, key_format_t format, uint64_t iters,
+derive_key(libzfs_handle_t *hdl, zfs_keyformat_t format, uint64_t iters,
     uint8_t *key_material, size_t key_material_len, uint64_t salt,
     uint8_t **key_out)
 {
@@ -571,10 +564,10 @@ derive_key(libzfs_handle_t *hdl, key_format_t format, uint64_t iters,
 		return (ENOMEM);
 
 	switch (format) {
-	case KEY_FORMAT_RAW:
+	case ZFS_KEYFORMAT_RAW:
 		bcopy(key_material, key, WRAPPING_KEY_LEN);
 		break;
-	case KEY_FORMAT_HEX:
+	case ZFS_KEYFORMAT_HEX:
 		ret = hex_key_to_raw((char *)key_material,
 		    WRAPPING_KEY_LEN * 2, key);
 		if (ret != 0) {
@@ -583,7 +576,7 @@ derive_key(libzfs_handle_t *hdl, key_format_t format, uint64_t iters,
 			goto error;
 		}
 		break;
-	case KEY_FORMAT_PASSPHRASE:
+	case ZFS_KEYFORMAT_PASSPHRASE:
 		salt = LE_64(salt);
 		ret = pbkdf2(key_material, strlen((char *)key_material),
 		    ((uint8_t *)&salt), sizeof (uint64_t), iters,

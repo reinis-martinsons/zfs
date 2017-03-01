@@ -832,7 +832,7 @@ zio_crypt_decode_mac_zil(const void *data, uint8_t *mac)
 {
 	/*
 	 * The ZIL MAC is embedded in the block it protects, which will
-	 * not have been byteswapped by the time this function hsa been called.
+	 * not have been byteswapped by the time this function has been called.
 	 * As a result, we don't need to worry about byteswapping the MAC.
 	 */
 	const zil_chain_t *zc = data;

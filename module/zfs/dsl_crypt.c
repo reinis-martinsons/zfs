@@ -373,7 +373,7 @@ dsl_dir_hold_keylocation_source_dd(dsl_dir_t *dd, void *tag,
 	/*
 	 * Lookup dd's keylocation property and find out where it was
 	 * inherited from. dsl_prop_get_dd() might not find anything and
-	 * return the default value. We detect this by check9ing if setpoint
+	 * return the default value. We detect this by checking if setpoint
 	 * is an empty string and return ENOENT.
 	 */
 	ret = dsl_prop_get_dd(dd, zfs_prop_to_name(ZFS_PROP_KEYLOCATION),
@@ -1727,7 +1727,8 @@ dsl_crypto_recv_key_check(void *arg, dmu_tx_t *tx)
 	dsl_dataset_t *ds = NULL;
 	uint8_t *buf = NULL;
 	uint_t len;
-	uint64_t crypt;
+	uint64_t intval;
+	boolean_t is_passphrase = B_FALSE;
 
 	/*
 	 * Check that the ds exists. Assert that it isn't already encrypted
@@ -1745,9 +1746,9 @@ dsl_crypto_recv_key_check(void *arg, dmu_tx_t *tx)
 	 * all of the fields of a DSL Crypto Key, as well as a fully specified
 	 * wrapping key.
 	 */
-	ret = nvlist_lookup_uint64(nvl, DSL_CRYPTO_KEY_CRYPTO_SUITE, &crypt);
-	if (ret != 0 || crypt >= ZIO_CRYPT_FUNCTIONS ||
-	    crypt <= ZIO_CRYPT_OFF) {
+	ret = nvlist_lookup_uint64(nvl, DSL_CRYPTO_KEY_CRYPTO_SUITE, &intval);
+	if (ret != 0 || intval >= ZIO_CRYPT_FUNCTIONS ||
+	    intval <= ZIO_CRYPT_OFF) {
 		ret = SET_ERROR(EINVAL);
 		goto error;
 	}
@@ -1778,6 +1779,34 @@ dsl_crypto_recv_key_check(void *arg, dmu_tx_t *tx)
 		goto error;
 	}
 
+	ret = nvlist_lookup_uint64(nvl, zfs_prop_to_name(ZFS_PROP_KEYFORMAT),
+	    &intval);
+	if (ret != 0 || intval >= ZFS_KEYFORMAT_FORMATS ||
+	    intval <= ZFS_KEYFORMAT_NONE) {
+		ret = SET_ERROR(EINVAL);
+		goto error;
+	}
+
+	is_passphrase = (intval == ZFS_KEYFORMAT_PASSPHRASE);
+
+	/*
+	 * for raw receives we allow any number of pbkdf2iters since there
+	 * won't be a chance for the user to change it.
+	 */
+	ret = nvlist_lookup_uint64(nvl, zfs_prop_to_name(ZFS_PROP_PBKDF2_ITERS),
+	    &intval);
+	if (ret != 0 || (!is_passphrase && intval != 0)) {
+		ret = SET_ERROR(EINVAL);
+		goto error;
+	}
+
+	ret = nvlist_lookup_uint64(nvl, zfs_prop_to_name(ZFS_PROP_PBKDF2_ITERS),
+	    &intval);
+	if (ret != 0 || (!is_passphrase && intval != 0)) {
+		ret = SET_ERROR(EINVAL);
+		goto error;
+	}
+
 	dsl_dataset_rele(ds, FTAG);
 	return (0);
 
@@ -1798,12 +1827,18 @@ dsl_crypto_recv_key_sync(void *arg, dmu_tx_t *tx)
 	dsl_dataset_t *ds;
 	uint8_t *keydata, *hmac_keydata, *iv, *mac;
 	uint_t len;
-	uint64_t crypt;
+	uint64_t crypt, keyformat, iters, salt;
 
 	VERIFY0(dsl_dataset_hold_obj(dp, dsobj, FTAG, &ds));
 
 	/* lookup the values we need to create the DSL Crypto Key */
 	crypt = fnvlist_lookup_uint64(nvl, DSL_CRYPTO_KEY_CRYPTO_SUITE);
+	keyformat = fnvlist_lookup_uint64(nvl,
+	    zfs_prop_to_name(ZFS_PROP_KEYFORMAT));
+	iters = fnvlist_lookup_uint64(nvl,
+	    zfs_prop_to_name(ZFS_PROP_PBKDF2_ITERS));
+	salt = fnvlist_lookup_uint64(nvl,
+	    zfs_prop_to_name(ZFS_PROP_PBKDF2_SALT));
 	VERIFY0(nvlist_lookup_uint8_array(nvl, DSL_CRYPTO_KEY_MASTER_KEY,
 	    &keydata, &len));
 	VERIFY0(nvlist_lookup_uint8_array(nvl, DSL_CRYPTO_KEY_HMAC_KEY,
@@ -1825,6 +1860,14 @@ dsl_crypto_recv_key_sync(void *arg, dmu_tx_t *tx)
 	/* save the dd_crypto_obj on disk */
 	VERIFY0(zap_add(mos, ds->ds_dir->dd_object, DD_FIELD_CRYPTO_KEY_OBJ,
 	    sizeof (uint64_t), 1, &ds->ds_dir->dd_crypto_obj, tx));
+
+	/* set the encryption properties from the nvlist */
+	dsl_prop_set_sync_impl(ds, zfs_prop_to_name(ZFS_PROP_KEYFORMAT),
+	    ZPROP_SRC_LOCAL, 8, 1, &keyformat, tx);
+	dsl_prop_set_sync_impl(ds, zfs_prop_to_name(ZFS_PROP_PBKDF2_ITERS),
+	    ZPROP_SRC_LOCAL, 8, 1, &iters, tx);
+	dsl_prop_set_sync_impl(ds, zfs_prop_to_name(ZFS_PROP_PBKDF2_SALT),
+	    ZPROP_SRC_LOCAL, 8, 1, &salt, tx);
 
 	dsl_dataset_rele(ds, FTAG);
 }
@@ -1853,7 +1896,7 @@ dsl_crypto_populate_key_nvlist(dsl_dataset_t *ds, nvlist_t **nvl_out)
 	nvlist_t *nvl = NULL;
 	uint64_t dckobj = ds->ds_dir->dd_crypto_obj;
 	objset_t *mos = ds->ds_dir->dd_pool->dp_meta_objset;
-	uint64_t crypt = 0;
+	uint64_t crypt = 0, format = 0, iters = 0, salt = 0;
 	uint8_t raw_keydata[MAX_MASTER_KEY_LEN];
 	uint8_t raw_hmac_keydata[HMAC_SHA256_KEYLEN];
 	uint8_t iv[WRAPPING_IV_LEN];
@@ -1865,6 +1908,7 @@ dsl_crypto_populate_key_nvlist(dsl_dataset_t *ds, nvlist_t **nvl_out)
 	if (ret != 0)
 		goto error;
 
+	/* lookup values from the DSL Crypto Key */
 	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_CRYPTO_SUITE, 8, 1,
 	    &crypt);
 	if (ret != 0)
@@ -1890,19 +1934,45 @@ dsl_crypto_populate_key_nvlist(dsl_dataset_t *ds, nvlist_t **nvl_out)
 	if (ret != 0)
 		goto error;
 
-	VERIFY0(nvlist_add_uint64(nvl, DSL_CRYPTO_KEY_CRYPTO_SUITE, crypt));
+	/* lookup values from the properties */
+	dsl_pool_config_enter(ds->ds_dir->dd_pool, FTAG);
+
+	ret = dsl_prop_get_dd(ds->ds_dir, zfs_prop_to_name(ZFS_PROP_KEYFORMAT),
+	    8, 1, &format, NULL, B_FALSE);
+	if (ret != 0)
+		goto error_unlock;
+
+	ret = dsl_prop_get_dd(ds->ds_dir,
+	    zfs_prop_to_name(ZFS_PROP_PBKDF2_ITERS), 8, 1, &iters, NULL,
+	    B_FALSE);
+	if (ret != 0)
+		goto error_unlock;
+
+	ret = dsl_prop_get_dd(ds->ds_dir,
+	    zfs_prop_to_name(ZFS_PROP_PBKDF2_SALT), 8, 1, &salt, NULL, B_FALSE);
+	if (ret != 0)
+		goto error_unlock;
+
+	dsl_pool_config_exit(ds->ds_dir->dd_pool, FTAG);
+
+	fnvlist_add_uint64(nvl, DSL_CRYPTO_KEY_CRYPTO_SUITE, crypt);
 	VERIFY0(nvlist_add_uint8_array(nvl, DSL_CRYPTO_KEY_MASTER_KEY,
 	    raw_keydata, MAX_MASTER_KEY_LEN));
 	VERIFY0(nvlist_add_uint8_array(nvl, DSL_CRYPTO_KEY_HMAC_KEY,
 	    raw_hmac_keydata, HMAC_SHA256_KEYLEN));
-	VERIFY0(nvlist_add_uint8_array(nvl, DSL_CRYPTO_KEY_IV,
-	    iv, WRAPPING_IV_LEN));
-	VERIFY0(nvlist_add_uint8_array(nvl, DSL_CRYPTO_KEY_MAC,
-	    mac, WRAPPING_MAC_LEN));
+	VERIFY0(nvlist_add_uint8_array(nvl, DSL_CRYPTO_KEY_IV, iv,
+	    WRAPPING_IV_LEN));
+	VERIFY0(nvlist_add_uint8_array(nvl, DSL_CRYPTO_KEY_MAC, mac,
+	    WRAPPING_MAC_LEN));
+	fnvlist_add_uint64(nvl, zfs_prop_to_name(ZFS_PROP_KEYFORMAT), format);
+	fnvlist_add_uint64(nvl, zfs_prop_to_name(ZFS_PROP_PBKDF2_ITERS), iters);
+	fnvlist_add_uint64(nvl, zfs_prop_to_name(ZFS_PROP_PBKDF2_SALT), salt);
 
 	*nvl_out = nvl;
 	return (0);
 
+error_unlock:
+	dsl_pool_config_exit(ds->ds_dir->dd_pool, FTAG);
 error:
 	nvlist_free(nvl);
 
