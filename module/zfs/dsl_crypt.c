@@ -605,141 +605,6 @@ dsl_crypto_key_rele(dsl_crypto_key_t *dck, void *tag)
 		dsl_crypto_key_free(dck);
 }
 
-int
-dsl_crypto_create_key_from_nvlist(dsl_dataset_t *ds, nvlist_t *nvl)
-{
-	int ret;
-	uint64_t dckobj;
-	objset_t *mos = ds->ds_dir->dd_pool->dp_meta_objset;
-	uint_t len;
-	uint64_t crypt = 0;
-	uint8_t *keydata = NULL;
-	uint8_t *hmac_keydata = NULL;
-	uint8_t *iv = NULL;
-	uint8_t *mac = NULL;
-
-	/* read and check all the encryption values from the nvlist */
-	ret = nvlist_lookup_uint64(nvl, DSL_CRYPTO_KEY_CRYPTO_SUITE, &crypt);
-	if (ret != 0 || crypt >= ZIO_CRYPT_FUNCTIONS ||
-	    crypt <= ZIO_CRYPT_OFF) {
-		ret = SET_ERROR(EINVAL);
-		goto error;
-	}
-
-	ret = nvlist_lookup_uint8_array(nvl, DSL_CRYPTO_KEY_MASTER_KEY,
-	    &keydata, &len);
-	if (ret != 0 || len != MAX_MASTER_KEY_LEN) {
-		ret = SET_ERROR(EINVAL);
-		goto error;
-	}
-
-	ret = nvlist_lookup_uint8_array(nvl, DSL_CRYPTO_KEY_HMAC_KEY,
-	    &hmac_keydata, &len);
-	if (ret != 0 || len != HMAC_SHA256_KEYLEN) {
-		ret = SET_ERROR(EINVAL);
-		goto error;
-	}
-
-	ret = nvlist_lookup_uint8_array(nvl, DSL_CRYPTO_KEY_IV, &iv, &len);
-	if (ret != 0 || len != WRAPPING_IV_LEN) {
-		ret = SET_ERROR(EINVAL);
-		goto error;
-	}
-
-	ret = nvlist_lookup_uint8_array(nvl, DSL_CRYPTO_KEY_MAC, &mac, &len);
-	if (ret != 0 || len != WRAPPING_MAC_LEN) {
-		ret = SET_ERROR(EINVAL);
-		goto error;
-	}
-
-	/*
-	 * TODO:
-	 * create a tx
-	 * hold the dd, new dckobj
-	 * assign the tx
-	 * zapify the dd
-	 * create the dck zap
-	 * assign ds->dsl_dir->dd_crypto_obj
-	 */
-
-
-	/*
-	 * Sync out the dsl crypto key. The provided keys are already wrapped
-	 * so we don't do that again.
-	 */
-	dsl_crypto_key_sync_impl(mos, dckobj, key->zk_crypt, iv, mac, keydata,
-	    hmac_keydata, tx);
-
-	return (0);
-
-error:
-	return (ret);
-}
-
-int
-dsl_crypto_populate_key_nvlist(dsl_dataset_t *ds, nvlist_t **nvl_out)
-{
-	int ret;
-	nvlist_t *nvl = NULL;
-	uint64_t dckobj = ds->ds_dir->dd_crypto_obj;
-	objset_t *mos = ds->ds_dir->dd_pool->dp_meta_objset;
-	uint64_t crypt = 0;
-	uint8_t raw_keydata[MAX_MASTER_KEY_LEN];
-	uint8_t raw_hmac_keydata[HMAC_SHA256_KEYLEN];
-	uint8_t iv[WRAPPING_IV_LEN];
-	uint8_t mac[WRAPPING_MAC_LEN];
-
-	ASSERT(dckobj != 0);
-
-	ret = nvlist_alloc(&nvl, NV_UNIQUE_NAME, KM_SLEEP);
-	if (ret != 0)
-		goto error;
-
-	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_CRYPTO_SUITE, 8, 1,
-	    &crypt);
-	if (ret != 0)
-		goto error;
-
-	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_MASTER_KEY, 1,
-	    MAX_MASTER_KEY_LEN, raw_keydata);
-	if (ret != 0)
-		goto error;
-
-	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_HMAC_KEY, 1,
-	    HMAC_SHA256_KEYLEN, raw_hmac_keydata);
-	if (ret != 0)
-		goto error;
-
-	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_IV, 1, WRAPPING_IV_LEN,
-	    iv);
-	if (ret != 0)
-		goto error;
-
-	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_MAC, 1, WRAPPING_MAC_LEN,
-	    mac);
-	if (ret != 0)
-		goto error;
-
-	VERIFY0(nvlist_add_uint64(nvl, DSL_CRYPTO_KEY_CRYPTO_SUITE, crypt));
-	VERIFY0(nvlist_add_uint8_array(nvl, DSL_CRYPTO_KEY_MASTER_KEY,
-	    raw_keydata, MAX_MASTER_KEY_LEN));
-	VERIFY0(nvlist_add_uint8_array(nvl, DSL_CRYPTO_KEY_HMAC_KEY,
-	    raw_hmac_keydata, HMAC_SHA256_KEYLEN));
-	VERIFY0(nvlist_add_uint8_array(nvl, DSL_CRYPTO_KEY_IV,
-	    iv, WRAPPING_IV_LEN));
-	VERIFY0(nvlist_add_uint8_array(nvl, DSL_CRYPTO_KEY_MAC,
-	    mac, WRAPPING_MAC_LEN));
-
-	*nvl_out = nvl;
-	return (0);
-
-error:
-	nvlist_free(nvl);
-
-	*nvl_out = NULL;
-	return (ret);
-}
-
 static int
 dsl_crypto_key_open(objset_t *mos, dsl_wrapping_key_t *wkey,
     uint64_t dckobj, void *tag, dsl_crypto_key_t **dck_out)
@@ -1305,7 +1170,7 @@ dsl_crypto_key_sync(dsl_crypto_key_t *dck, dmu_tx_t *tx)
 
 	/* update the ZAP with the obtained values */
 	dsl_crypto_key_sync_impl(tx->tx_pool->dp_meta_objset, dck->dck_obj,
-	    key->zk_crypt, iv, mac, keydata, hmac_keydata, tx)
+	    key->zk_crypt, iv, mac, keydata, hmac_keydata, tx);
 }
 
 typedef struct spa_keystore_rewrap_args {
@@ -1831,7 +1696,7 @@ dsl_dataset_create_crypt_sync(uint64_t dsobj, dsl_dir_t *dd,
 		    wkey, tx);
 	}
 
-	/* add the crypto key obj to the dd */
+	/* add the crypto key obj to the dd on disk */
 	VERIFY0(zap_add(dp->dp_meta_objset, dd->dd_object,
 	    DD_FIELD_CRYPTO_KEY_OBJ, sizeof (uint64_t), 1, &dd->dd_crypto_obj,
 	    tx));
@@ -1846,6 +1711,203 @@ dsl_dataset_create_crypt_sync(uint64_t dsobj, dsl_dir_t *dd,
 	} else {
 		VERIFY0(spa_keystore_load_wkey_impl(dp->dp_spa, wkey));
 	}
+}
+
+typedef struct dsl_crypto_recv_key_arg {
+	uint64_t dcrka_dsobj;
+	nvlist_t *dcrka_nvl;
+} dsl_crypto_recv_key_arg_t;
+
+int
+dsl_crypto_recv_key_check(void *arg, dmu_tx_t *tx)
+{
+	int ret;
+	dsl_crypto_recv_key_arg_t *dcrka = arg;
+	nvlist_t *nvl = dcrka->dcrka_nvl;
+	dsl_dataset_t *ds = NULL;
+	uint8_t *buf = NULL;
+	uint_t len;
+	uint64_t crypt;
+
+	/*
+	 * Check that the ds exists. Assert that it isn't already encrypted
+	 * and that it is inconsistent for sanity.
+	 */
+	ret = dsl_dataset_hold_obj(tx->tx_pool, dcrka->dcrka_dsobj, FTAG, &ds);
+	if (ret != 0)
+		goto error;
+
+	ASSERT0(ds->ds_dir->dd_crypto_obj);
+	ASSERT(dsl_dataset_phys(ds)->ds_flags & DS_FLAG_INCONSISTENT);
+
+	/*
+	 * Read and check all the encryption values from the nvlist. We need
+	 * all of the fields of a DSL Crypto Key, as well as a fully specified
+	 * wrapping key.
+	 */
+	ret = nvlist_lookup_uint64(nvl, DSL_CRYPTO_KEY_CRYPTO_SUITE, &crypt);
+	if (ret != 0 || crypt >= ZIO_CRYPT_FUNCTIONS ||
+	    crypt <= ZIO_CRYPT_OFF) {
+		ret = SET_ERROR(EINVAL);
+		goto error;
+	}
+
+	ret = nvlist_lookup_uint8_array(nvl, DSL_CRYPTO_KEY_MASTER_KEY,
+	    &buf, &len);
+	if (ret != 0 || len != MAX_MASTER_KEY_LEN) {
+		ret = SET_ERROR(EINVAL);
+		goto error;
+	}
+
+	ret = nvlist_lookup_uint8_array(nvl, DSL_CRYPTO_KEY_HMAC_KEY,
+	    &buf, &len);
+	if (ret != 0 || len != HMAC_SHA256_KEYLEN) {
+		ret = SET_ERROR(EINVAL);
+		goto error;
+	}
+
+	ret = nvlist_lookup_uint8_array(nvl, DSL_CRYPTO_KEY_IV, &buf, &len);
+	if (ret != 0 || len != WRAPPING_IV_LEN) {
+		ret = SET_ERROR(EINVAL);
+		goto error;
+	}
+
+	ret = nvlist_lookup_uint8_array(nvl, DSL_CRYPTO_KEY_MAC, &buf, &len);
+	if (ret != 0 || len != WRAPPING_MAC_LEN) {
+		ret = SET_ERROR(EINVAL);
+		goto error;
+	}
+
+	dsl_dataset_rele(ds, FTAG);
+	return (0);
+
+error:
+	if (ds != NULL)
+		dsl_dataset_rele(ds, FTAG);
+	return (ret);
+}
+
+static void
+dsl_crypto_recv_key_sync(void *arg, dmu_tx_t *tx)
+{
+	dsl_crypto_recv_key_arg_t *dcrka = arg;
+	uint64_t dsobj = dcrka->dcrka_dsobj;
+	nvlist_t *nvl = dcrka->dcrka_nvl;
+	dsl_pool_t *dp = tx->tx_pool;
+	objset_t *mos = dp->dp_meta_objset;
+	dsl_dataset_t *ds;
+	uint8_t *keydata, *hmac_keydata, *iv, *mac;
+	uint_t len;
+	uint64_t crypt;
+
+	VERIFY0(dsl_dataset_hold_obj(dp, dsobj, FTAG, &ds));
+
+	/* lookup the values we need to create the DSL Crypto Key */
+	crypt = fnvlist_lookup_uint64(nvl, DSL_CRYPTO_KEY_CRYPTO_SUITE);
+	VERIFY0(nvlist_lookup_uint8_array(nvl, DSL_CRYPTO_KEY_MASTER_KEY,
+	    &keydata, &len));
+	VERIFY0(nvlist_lookup_uint8_array(nvl, DSL_CRYPTO_KEY_HMAC_KEY,
+	    &hmac_keydata, &len));
+	VERIFY0(nvlist_lookup_uint8_array(nvl, DSL_CRYPTO_KEY_IV, &iv, &len));
+	VERIFY0(nvlist_lookup_uint8_array(nvl, DSL_CRYPTO_KEY_MAC, &mac, &len));
+
+	/* zapify the dsl dir so we can add the key object to it */
+	dmu_buf_will_dirty(ds->ds_dir->dd_dbuf, tx);
+	dsl_dir_zapify(ds->ds_dir, tx);
+
+	/* create the DSL Crypto Key on disk and activate the feature */
+	ds->ds_dir->dd_crypto_obj = zap_create(mos,
+	    DMU_OTN_ZAP_METADATA, DMU_OT_NONE, 0, tx);
+	dsl_crypto_key_sync_impl(mos, ds->ds_dir->dd_crypto_obj, crypt, iv,
+	    mac, keydata, hmac_keydata, tx);
+	dsl_dataset_activate_feature(dsobj, SPA_FEATURE_ENCRYPTION, tx);
+
+	/* save the dd_crypto_obj on disk */
+	VERIFY0(zap_add(mos, ds->ds_dir->dd_object, DD_FIELD_CRYPTO_KEY_OBJ,
+	    sizeof (uint64_t), 1, &ds->ds_dir->dd_crypto_obj, tx));
+
+	dsl_dataset_rele(ds, FTAG);
+}
+
+/*
+ * This function is used to sync an nvlist representing a DSL Crypto Key and
+ * the associated encryption parameters. The key will be written exactly as is
+ * without wrapping it.
+ */
+int
+dsl_crypto_recv_key(const char *poolname, uint64_t dsobj, nvlist_t *nvl)
+{
+	dsl_crypto_recv_key_arg_t dcrka;
+
+	dcrka.dcrka_dsobj = dsobj;
+	dcrka.dcrka_nvl = nvl;
+
+	return (dsl_sync_task(poolname, dsl_crypto_recv_key_check,
+	    dsl_crypto_recv_key_sync, &dcrka, 5, ZFS_SPACE_CHECK_NORMAL));
+}
+
+int
+dsl_crypto_populate_key_nvlist(dsl_dataset_t *ds, nvlist_t **nvl_out)
+{
+	int ret;
+	nvlist_t *nvl = NULL;
+	uint64_t dckobj = ds->ds_dir->dd_crypto_obj;
+	objset_t *mos = ds->ds_dir->dd_pool->dp_meta_objset;
+	uint64_t crypt = 0;
+	uint8_t raw_keydata[MAX_MASTER_KEY_LEN];
+	uint8_t raw_hmac_keydata[HMAC_SHA256_KEYLEN];
+	uint8_t iv[WRAPPING_IV_LEN];
+	uint8_t mac[WRAPPING_MAC_LEN];
+
+	ASSERT(dckobj != 0);
+
+	ret = nvlist_alloc(&nvl, NV_UNIQUE_NAME, KM_SLEEP);
+	if (ret != 0)
+		goto error;
+
+	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_CRYPTO_SUITE, 8, 1,
+	    &crypt);
+	if (ret != 0)
+		goto error;
+
+	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_MASTER_KEY, 1,
+	    MAX_MASTER_KEY_LEN, raw_keydata);
+	if (ret != 0)
+		goto error;
+
+	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_HMAC_KEY, 1,
+	    HMAC_SHA256_KEYLEN, raw_hmac_keydata);
+	if (ret != 0)
+		goto error;
+
+	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_IV, 1, WRAPPING_IV_LEN,
+	    iv);
+	if (ret != 0)
+		goto error;
+
+	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_MAC, 1, WRAPPING_MAC_LEN,
+	    mac);
+	if (ret != 0)
+		goto error;
+
+	VERIFY0(nvlist_add_uint64(nvl, DSL_CRYPTO_KEY_CRYPTO_SUITE, crypt));
+	VERIFY0(nvlist_add_uint8_array(nvl, DSL_CRYPTO_KEY_MASTER_KEY,
+	    raw_keydata, MAX_MASTER_KEY_LEN));
+	VERIFY0(nvlist_add_uint8_array(nvl, DSL_CRYPTO_KEY_HMAC_KEY,
+	    raw_hmac_keydata, HMAC_SHA256_KEYLEN));
+	VERIFY0(nvlist_add_uint8_array(nvl, DSL_CRYPTO_KEY_IV,
+	    iv, WRAPPING_IV_LEN));
+	VERIFY0(nvlist_add_uint8_array(nvl, DSL_CRYPTO_KEY_MAC,
+	    mac, WRAPPING_MAC_LEN));
+
+	*nvl_out = nvl;
+	return (0);
+
+error:
+	nvlist_free(nvl);
+
+	*nvl_out = NULL;
+	return (ret);
 }
 
 uint64_t

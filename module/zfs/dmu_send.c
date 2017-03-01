@@ -330,14 +330,14 @@ dump_write(dmu_sendarg_t *dsp, dmu_object_type_t type,
 			 * This is a raw encrypted block so we set the encrypted
 			 * flag. We need to pass along everything the receiving
 			 * side will need to interpret this block, including the
-			 * byteswap, salt, IV, and MAC.
+			 * byteswap, salt, and IV. The MAC will be sent in
+			 * the drr_key.ddk_cksum.
 			 */
 			drrw->drr_flags |= DRR_RAW_ENCRYPTED;
 			if (BP_SHOULD_BYTESWAP(bp))
 				drrw->drr_flags |= DRR_RAW_BYTESWAP;
 			zio_crypt_decode_params_bp(bp, drrw->drr_salt,
 			    drrw->drr_iv);
-			zio_crypt_decode_mac_bp(bp, drrw->drr_mac);
 		} else {
 			/* this is a compressed block */
 			ASSERT(dsp->dsa_featureflags &
@@ -416,9 +416,10 @@ dump_write_embedded(dmu_sendarg_t *dsp, uint64_t object, uint64_t offset,
 }
 
 static int
-dump_spill(dmu_sendarg_t *dsp, uint64_t object, int blksz, void *data)
+dump_spill(dmu_sendarg_t *dsp, const blkptr_t *bp, uint64_t object, void *data)
 {
 	struct drr_spill *drrs = &(dsp->dsa_drr->drr_u.drr_spill);
+	uint64_t blksz = BP_GET_LSIZE(bp);
 
 	if (dsp->dsa_pending_op != PENDING_NONE) {
 		if (dump_record(dsp, NULL, 0) != 0)
@@ -432,6 +433,18 @@ dump_spill(dmu_sendarg_t *dsp, uint64_t object, int blksz, void *data)
 	drrs->drr_object = object;
 	drrs->drr_length = blksz;
 	drrs->drr_toguid = dsp->dsa_toguid;
+
+	/* handle raw send fields */
+	if ((dsp->dsa_featureflags & DMU_BACKUP_FEATURE_RAW) != 0 &&
+	    BP_IS_ENCRYPTED(bp)) {
+		drrs->drr_flags |= DRR_RAW_ENCRYPTED;
+		if (BP_SHOULD_BYTESWAP(bp))
+			drrs->drr_flags |= DRR_RAW_BYTESWAP;
+		drrs->drr_compressiontype = BP_GET_COMPRESS(bp);
+		drrs->drr_compressed_size = BP_GET_PSIZE(bp);
+		zio_crypt_decode_params_bp(bp, drrs->drr_salt, drrs->drr_iv);
+		zio_crypt_decode_mac_bp(bp, drrs->drr_mac);
+	}
 
 	if (dump_record(dsp, data, blksz) != 0)
 		return (SET_ERROR(EINTR));
@@ -699,14 +712,17 @@ do_dump(dmu_sendarg_t *dsa, struct send_block_record *data)
 	} else if (type == DMU_OT_SA) {
 		arc_flags_t aflags = ARC_FLAG_WAIT;
 		arc_buf_t *abuf;
-		int blksz = BP_GET_LSIZE(bp);
+		enum zio_flag zioflags = ZIO_FLAG_CANFAIL;
+
+		if ((dsa->dsa_featureflags & DMU_BACKUP_FEATURE_RAW) &&
+		    BP_IS_ENCRYPTED(bp))
+			zioflags |= ZIO_FLAG_RAW;
 
 		if (arc_read(NULL, spa, bp, arc_getbuf_func, &abuf,
-		    ZIO_PRIORITY_ASYNC_READ, ZIO_FLAG_CANFAIL,
-		    &aflags, zb) != 0)
+		    ZIO_PRIORITY_ASYNC_READ, zioflags, &aflags, zb) != 0)
 			return (SET_ERROR(EIO));
 
-		err = dump_spill(dsa, zb->zb_object, blksz, abuf->b_data);
+		err = dump_spill(dsa, bp, zb->zb_object, abuf->b_data);
 		arc_buf_destroy(abuf, &abuf);
 	} else if (backup_do_embed(dsa, bp)) {
 		/* it's an embedded level-0 block of a regular object */
@@ -1994,6 +2010,7 @@ struct receive_arg  {
 	zio_cksum_t prev_cksum;
 	int err;
 	boolean_t byteswap;
+	uint64_t featureflags;
 	/* Sorted list of objects not to issue prefetches for. */
 	struct objlist ignore_objlist;
 };
@@ -2038,7 +2055,8 @@ receive_read(struct receive_arg *ra, int len, void *buf)
 	 * The code doesn't rely on this (lengths being multiples of 8).  See
 	 * comment in dump_bytes.
 	 */
-	ASSERT0(len % 8);
+	ASSERT(len % 8 == 0 ||
+	    (ra->featureflags & DMU_BACKUP_FEATURE_RAW) != 0);
 
 	while (done < len) {
 		ssize_t resid;
@@ -2630,6 +2648,7 @@ receive_read_payload_and_next_header(struct receive_arg *ra, int len, void *buf)
 	err = receive_read(ra, sizeof (ra->next_rrd->header),
 	    &ra->next_rrd->header);
 	ra->next_rrd->bytes_read = ra->bytes_read;
+
 	if (err != 0) {
 		kmem_free(ra->next_rrd, sizeof (*ra->next_rrd));
 		ra->next_rrd = NULL;
@@ -3075,6 +3094,7 @@ dmu_recv_stream(dmu_recv_cookie_t *drc, vnode_t *vp, offset_t *voffp,
 	ASSERT(dsl_dataset_phys(drc->drc_ds)->ds_flags & DS_FLAG_INCONSISTENT);
 
 	featureflags = DMU_GET_FEATUREFLAGS(drc->drc_drrb->drr_versioninfo);
+	ra->featureflags = featureflags;
 
 	/* if this stream is dedup'ed, set up the avl tree for guid mapping */
 	if (featureflags & DMU_BACKUP_FEATURE_DEDUP) {
@@ -3131,7 +3151,16 @@ dmu_recv_stream(dmu_recv_cookie_t *drc, vnode_t *vp, offset_t *voffp,
 
 	/* handle DSL encryption key payload */
 	if (featureflags & DMU_BACKUP_FEATURE_RAW) {
-		// TODO: implement handling
+		nvlist_t *keynvl = NULL;
+
+		err = nvlist_lookup_nvlist(begin_nvl, "crypt_keydata", &keynvl);
+		if (err != 0)
+			goto out;
+
+		err = dsl_crypto_recv_key(spa_name(ra->os->os_spa),
+		    drc->drc_ds->ds_object, keynvl);
+		if (err != 0)
+			goto out;
 	}
 
 	if (featureflags & DMU_BACKUP_FEATURE_RESUMING) {

@@ -855,6 +855,19 @@ send_iterate_fs(zfs_handle_t *zhp, void *arg)
 		goto out;
 	}
 
+	/*
+	 * Encrypted datasets cannot be sent recursively because the receive
+	 * side is not be able to preserve the wrapping key heirarchy.
+	 */
+	if (zfs_prop_get_int(zhp, ZFS_PROP_ENCRYPTION) != ZIO_CRYPT_OFF &&
+	    sd->recursive) {
+		(void) fprintf(stderr, dgettext(TEXT_DOMAIN,
+		    "cannot send %s@%s: encrypted datasets may not be "
+		    "sent recursively\n"), sd->fsname, sd->tosnap);
+		rv = -1;
+		goto out;
+	}
+
 	VERIFY(0 == nvlist_alloc(&nvfs, NV_UNIQUE_NAME, 0));
 	VERIFY(0 == nvlist_add_string(nvfs, "name", zhp->zfs_name));
 	VERIFY(0 == nvlist_add_uint64(nvfs, "parentfromsnap",
@@ -3459,8 +3472,8 @@ zfs_receive_one(libzfs_handle_t *hdl, int infd, const char *tosnap,
 	}
 
 	err = ioctl_err = lzc_receive_one(destsnap, props, origin,
-	    flags->force, flags->resumable, infd, drr_noswap, cleanup_fd,
-	    &read_bytes, &errflags, action_handlep, &prop_errors);
+	    flags->force, flags->resumable, flags->raw, infd, drr_noswap,
+	    cleanup_fd, &read_bytes, &errflags, action_handlep, &prop_errors);
 	ioctl_errno = ioctl_err;
 	prop_errflags = errflags;
 
@@ -3765,6 +3778,9 @@ zfs_receive_impl(libzfs_handle_t *hdl, const char *tosnap,
 		    featureflags);
 		return (zfs_error(hdl, EZFS_BADSTREAM, errbuf));
 	}
+
+	if (featureflags & DMU_BACKUP_FEATURE_RAW)
+		flags->raw = B_TRUE;
 
 	if (strchr(drrb->drr_toname, '@') == NULL) {
 		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN, "invalid "

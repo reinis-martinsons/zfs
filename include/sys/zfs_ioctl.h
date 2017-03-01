@@ -111,7 +111,8 @@ typedef enum drr_headertype {
     DMU_BACKUP_FEATURE_DEDUPPROPS | DMU_BACKUP_FEATURE_SA_SPILL | \
     DMU_BACKUP_FEATURE_EMBED_DATA | DMU_BACKUP_FEATURE_LZ4 | \
     DMU_BACKUP_FEATURE_RESUMING | DMU_BACKUP_FEATURE_LARGE_BLOCKS | \
-    DMU_BACKUP_FEATURE_COMPRESSED | DMU_BACKUP_FEATURE_LARGE_DNODE)
+    DMU_BACKUP_FEATURE_COMPRESSED | DMU_BACKUP_FEATURE_LARGE_DNODE | \
+    DMU_BACKUP_FEATURE_RAW)
 
 /* Are all features in the given flag word currently supported? */
 #define	DMU_STREAM_SUPPORTED(x)	(!((x) & ~DMU_BACKUP_FEATURE_MASK))
@@ -157,10 +158,10 @@ typedef enum dmu_send_resume_token_version {
 #define	DRR_FLAG_FREERECORDS	(1<<2)
 
 /*
- * flags in the drr_flags field in the DRR_WRITE and
+ * flags in the drr_flags field in the DRR_WRITE, DRR_SPILL and
  * DRR_WRITE_BYREF blocks
  */
-#define	DRR_CHECKSUM_DEDUP	(1<<0)
+#define	DRR_CHECKSUM_DEDUP	(1<<0) /* not used for DRR_SPILL blocks */
 #define	DRR_RAW_ENCRYPTED	(1<<1)
 #define	DRR_RAW_BYTESWAP	(1<<2)
 
@@ -235,7 +236,6 @@ typedef struct dmu_replay_record {
 			/* only nonzero if DRR_RAW_ENCRYPTED flag is set */
 			uint8_t drr_salt[ZIO_DATA_SALT_LEN];
 			uint8_t drr_iv[ZIO_DATA_IV_LEN];
-			uint8_t drr_mac[ZIO_DATA_MAC_LEN];
 			/* content follows */
 		} drr_write;
 		struct drr_free {
@@ -264,7 +264,15 @@ typedef struct dmu_replay_record {
 			uint64_t drr_object;
 			uint64_t drr_length;
 			uint64_t drr_toguid;
-			uint64_t drr_pad[4]; /* needed for crypto */
+			uint8_t drr_flags;
+			uint8_t drr_compressiontype;
+			uint8_t drr_pad[6];
+			/* only nonzero if DRR_RAW_ENCRYPTED flag is set */
+			uint64_t drr_compressed_size;
+			uint8_t drr_salt[ZIO_DATA_SALT_LEN];
+			uint8_t drr_iv[ZIO_DATA_IV_LEN];
+			uint8_t drr_mac[ZIO_DATA_MAC_LEN];
+			uint8_t drr_pad2[4];
 			/* spill data follows */
 		} drr_spill;
 		struct drr_write_embedded {
