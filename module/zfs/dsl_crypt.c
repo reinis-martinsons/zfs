@@ -1942,16 +1942,19 @@ dsl_crypto_populate_key_nvlist(dsl_dataset_t *ds, nvlist_t **nvl_out)
 	if (ret != 0)
 		goto error_unlock;
 
-	ret = dsl_prop_get_dd(ds->ds_dir,
-	    zfs_prop_to_name(ZFS_PROP_PBKDF2_ITERS), 8, 1, &iters, NULL,
-	    B_FALSE);
-	if (ret != 0)
-		goto error_unlock;
+	if (format == ZFS_KEYFORMAT_PASSPHRASE) {
+		ret = dsl_prop_get_dd(ds->ds_dir,
+		    zfs_prop_to_name(ZFS_PROP_PBKDF2_ITERS), 8, 1, &iters,
+		    NULL, B_FALSE);
+		if (ret != 0)
+			goto error_unlock;
 
-	ret = dsl_prop_get_dd(ds->ds_dir,
-	    zfs_prop_to_name(ZFS_PROP_PBKDF2_SALT), 8, 1, &salt, NULL, B_FALSE);
-	if (ret != 0)
-		goto error_unlock;
+		ret = dsl_prop_get_dd(ds->ds_dir,
+		    zfs_prop_to_name(ZFS_PROP_PBKDF2_SALT), 8, 1, &salt,
+		    NULL, B_FALSE);
+		if (ret != 0)
+			goto error_unlock;
+	}
 
 	dsl_pool_config_exit(ds->ds_dir->dd_pool, FTAG);
 
