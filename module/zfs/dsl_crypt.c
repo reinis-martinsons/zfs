@@ -1795,14 +1795,14 @@ dsl_crypto_recv_key_check(void *arg, dmu_tx_t *tx)
 	 */
 	ret = nvlist_lookup_uint64(nvl, zfs_prop_to_name(ZFS_PROP_PBKDF2_ITERS),
 	    &intval);
-	if (ret != 0 || (!is_passphrase && intval != 0)) {
+	if (ret != 0 || (is_passphrase == (intval == 0))) {
 		ret = SET_ERROR(EINVAL);
 		goto error;
 	}
 
-	ret = nvlist_lookup_uint64(nvl, zfs_prop_to_name(ZFS_PROP_PBKDF2_ITERS),
+	ret = nvlist_lookup_uint64(nvl, zfs_prop_to_name(ZFS_PROP_PBKDF2_SALT),
 	    &intval);
-	if (ret != 0 || (!is_passphrase && intval != 0)) {
+	if (ret != 0 || (is_passphrase == (intval == 0))) {
 		ret = SET_ERROR(EINVAL);
 		goto error;
 	}

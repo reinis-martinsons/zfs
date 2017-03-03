@@ -2022,12 +2022,14 @@ dmu_write_policy_override_compress(zio_prop_t *zp, enum zio_compress compress)
  * that field here as well.
  */
 void
-dmu_write_policy_override_encrypt(zio_prop_t *zp, enum zio_compress compress,
-    const uint8_t *salt, const uint8_t *iv, const uint8_t *mac)
+dmu_write_policy_override_encrypt(zio_prop_t *zp, boolean_t byteorder,
+    enum zio_compress compress, const uint8_t *salt, const uint8_t *iv,
+    const uint8_t *mac)
 {
 	ASSERT3U(compress, !=, ZIO_COMPRESS_INHERIT);
 	ASSERT3U(zp->zp_level, <=, 0);
 
+	zp->zp_byteorder = byteorder;
 	zp->zp_compress = compress;
 	zp->zp_nopwrite = B_FALSE;
 	zp->zp_encrypt = B_TRUE;

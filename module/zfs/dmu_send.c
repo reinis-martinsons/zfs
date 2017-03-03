@@ -338,6 +338,7 @@ dump_write(dmu_sendarg_t *dsp, dmu_object_type_t type,
 				drrw->drr_flags |= DRR_RAW_BYTESWAP;
 			zio_crypt_decode_params_bp(bp, drrw->drr_salt,
 			    drrw->drr_iv);
+			zio_crypt_decode_mac_bp(bp, drrw->drr_mac);
 		} else {
 			/* this is a compressed block */
 			ASSERT(dsp->dsa_featureflags &
@@ -2394,7 +2395,8 @@ receive_write(struct receive_writer_arg *rwa, struct drr_write *drrw,
 		dmu_tx_abort(tx);
 		return (err);
 	}
-	if (rwa->byteswap) {
+	if (rwa->byteswap && !arc_is_encrypted(abuf) &&
+	    arc_get_compression(abuf) == ZIO_COMPRESS_OFF) {
 		dmu_object_byteswap_t byteswap =
 		    DMU_OT_BYTESWAP(drrw->drr_type);
 		dmu_ot_byteswap[byteswap].ob_func(abuf->b_data,
@@ -2822,7 +2824,18 @@ receive_read_record(struct receive_arg *ra)
 		struct drr_write *drrw = &ra->rrd->header.drr_u.drr_write;
 		arc_buf_t *abuf;
 		boolean_t is_meta = DMU_OT_IS_METADATA(drrw->drr_type);
-		if (DRR_WRITE_COMPRESSED(drrw)) {
+
+		if (DRR_IS_RAW_ENCRYPTED(drrw->drr_flags)) {
+			boolean_t byteorder = ZFS_HOST_BYTEORDER ^
+			    !!DRR_IS_RAW_BYTESWAPPED(drrw->drr_flags) ^
+			    ra->byteswap;
+
+			abuf = arc_loan_raw_buf(dmu_objset_spa(ra->os),
+			    drrw->drr_object, byteorder, drrw->drr_salt,
+			    drrw->drr_iv, drrw->drr_mac, drrw->drr_type,
+			    drrw->drr_compressed_size, drrw->drr_logical_size,
+			    drrw->drr_compressiontype);
+		} else if (DRR_WRITE_COMPRESSED(drrw)) {
 			ASSERT3U(drrw->drr_compressed_size, >, 0);
 			ASSERT3U(drrw->drr_logical_size, >=,
 			    drrw->drr_compressed_size);

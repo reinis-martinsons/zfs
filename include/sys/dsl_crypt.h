@@ -47,7 +47,7 @@ typedef struct dsl_wrapping_key {
 /*
  * This struct is a simple wrapper around all the parameters that are usually
  * required to setup encryption. It exists so that all of the params can be
- * passed around the kernel together for convenience
+ * passed around the kernel together for convenience.
  */
 typedef struct dsl_crypto_params {
 	/* the encryption algorithm */

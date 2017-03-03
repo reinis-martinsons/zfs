@@ -236,6 +236,7 @@ typedef struct dmu_replay_record {
 			/* only nonzero if DRR_RAW_ENCRYPTED flag is set */
 			uint8_t drr_salt[ZIO_DATA_SALT_LEN];
 			uint8_t drr_iv[ZIO_DATA_IV_LEN];
+			uint8_t drr_mac[ZIO_DATA_MAC_LEN];
 			/* content follows */
 		} drr_write;
 		struct drr_free {

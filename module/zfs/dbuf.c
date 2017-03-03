@@ -1169,18 +1169,31 @@ dbuf_fix_old_data(dmu_buf_impl_t *db, uint64_t txg)
 		arc_space_consume(bonuslen, ARC_SPACE_BONUS);
 		bcopy(db->db.db_data, dr->dt.dl.dr_data, bonuslen);
 	} else if (refcount_count(&db->db_holds) > db->db_dirtycnt) {
+		dnode_t *dn = DB_DNODE(db);
 		int size = arc_buf_size(db->db_buf);
 		arc_buf_contents_t type = DBUF_GET_BUFC_TYPE(db);
 		spa_t *spa = db->db_objset->os_spa;
 		enum zio_compress compress_type =
 		    arc_get_compression(db->db_buf);
 
-		if (compress_type == ZIO_COMPRESS_OFF) {
-			dr->dt.dl.dr_data = arc_alloc_buf(spa, db, type, size);
-		} else {
+		if (arc_is_encrypted(db->db_buf)) {
+			boolean_t byteorder;
+			uint8_t salt[ZIO_DATA_SALT_LEN];
+			uint8_t iv[ZIO_DATA_IV_LEN];
+			uint8_t mac[ZIO_DATA_MAC_LEN];
+
+			arc_get_raw_params(db->db_buf, &byteorder, salt,
+			    iv, mac);
+			dr->dt.dl.dr_data = arc_alloc_raw_buf(spa, db,
+			    dn->dn_object, byteorder, salt, iv, mac,
+			    dn->dn_type, size, arc_buf_lsize(db->db_buf),
+			    compress_type);
+		} else if (compress_type != ZIO_COMPRESS_OFF) {
 			ASSERT3U(type, ==, ARC_BUFC_DATA);
 			dr->dt.dl.dr_data = arc_alloc_compressed_buf(spa, db,
 			    size, arc_buf_lsize(db->db_buf), compress_type);
+		} else {
+			dr->dt.dl.dr_data = arc_alloc_buf(spa, db, type, size);
 		}
 		bcopy(db->db.db_data, dr->dt.dl.dr_data->b_data, size);
 	} else {
@@ -1220,12 +1233,15 @@ dbuf_read(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags)
 		spa_t *spa = dn->dn_objset->os_spa;
 
 		/*
-		 * If the arc buf is compressed, we need to decompress it to
-		 * read the data. This could happen during the "zfs receive" of
-		 * a stream which is compressed and deduplicated.
+		 * If the arc buf is compressed or encrypted, we need to
+		 * untransform it to read the data. This could happen during
+		 * the "zfs receive" of a stream which is deduplicated and
+		 * either raw or compressed. We do not need to do this if the
+		 * caller wants raw encrypted data.
 		 */
-		if (db->db_buf != NULL &&
-		    arc_get_compression(db->db_buf) != ZIO_COMPRESS_OFF) {
+		if (db->db_buf != NULL && (flags & DB_RF_NO_DECRYPT) == 0 &&
+		    (arc_is_encrypted(db->db_buf) ||
+		    arc_get_compression(db->db_buf) != ZIO_COMPRESS_OFF)) {
 			dbuf_fix_old_data(db,
 			    spa_syncing_txg(dmu_objset_spa(db->db_objset)));
 			err = arc_untransform(db->db_buf, spa,
@@ -3392,16 +3408,26 @@ dbuf_sync_leaf(dbuf_dirty_record_t *dr, dmu_tx_t *tx)
 		 * DNONE_DNODE blocks).
 		 */
 		int psize = arc_buf_size(*datap);
+		int lsize = arc_buf_lsize(*datap);
 		arc_buf_contents_t type = DBUF_GET_BUFC_TYPE(db);
 		enum zio_compress compress_type = arc_get_compression(*datap);
 
-		if (compress_type == ZIO_COMPRESS_OFF) {
-			*datap = arc_alloc_buf(os->os_spa, db, type, psize);
-		} else {
-			int lsize = arc_buf_lsize(*datap);
+		if (arc_is_encrypted(*datap)) {
+			boolean_t byteorder;
+			uint8_t salt[ZIO_DATA_SALT_LEN];
+			uint8_t iv[ZIO_DATA_IV_LEN];
+			uint8_t mac[ZIO_DATA_MAC_LEN];
+
+			arc_get_raw_params(*datap, &byteorder, salt, iv, mac);
+			*datap = arc_alloc_raw_buf(os->os_spa, db,
+			    dn->dn_object, byteorder, salt, iv, mac,
+			    dn->dn_type, psize, lsize, compress_type);
+		} else if (compress_type != ZIO_COMPRESS_OFF) {
 			ASSERT3U(type, ==, ARC_BUFC_DATA);
 			*datap = arc_alloc_compressed_buf(os->os_spa, db,
 			    psize, lsize, compress_type);
+		} else {
+			*datap = arc_alloc_buf(os->os_spa, db, type, psize);
 		}
 		bcopy(db->db.db_data, (*datap)->b_data, psize);
 	}
@@ -3824,9 +3850,20 @@ dbuf_write(dbuf_dirty_record_t *dr, arc_buf_t *data, dmu_tx_t *tx)
 
 	dmu_write_policy(os, dn, db->db_level, wp_flag, &zp);
 
-	if (data != NULL && arc_get_compression(data) != ZIO_COMPRESS_OFF) {
-		dmu_write_policy_override_compress(&zp,
-		    arc_get_compression(data));
+	if (data != NULL) {
+		if (arc_is_encrypted(data)) {
+			boolean_t byteorder;
+			uint8_t salt[ZIO_DATA_SALT_LEN];
+			uint8_t iv[ZIO_DATA_IV_LEN];
+			uint8_t mac[ZIO_DATA_MAC_LEN];
+
+			arc_get_raw_params(data, &byteorder, salt, iv, mac);
+			dmu_write_policy_override_encrypt(&zp, byteorder,
+			    arc_get_compression(data), salt, iv, mac);
+		} else if (arc_get_compression(data) != ZIO_COMPRESS_OFF) {
+			dmu_write_policy_override_compress(&zp,
+			    arc_get_compression(data));
+		}
 	}
 
 	DB_DNODE_EXIT(db);

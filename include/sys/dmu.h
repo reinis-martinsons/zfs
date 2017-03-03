@@ -458,7 +458,7 @@ void dmu_write_policy(objset_t *os, struct dnode *dn, int level, int wp,
     struct zio_prop *zp);
 void dmu_write_policy_override_compress(struct zio_prop *zp,
     enum zio_compress compress);
-void dmu_write_policy_override_encrypt(struct zio_prop *zp,
+void dmu_write_policy_override_encrypt(struct zio_prop *zp, boolean_t byteorder,
     enum zio_compress compress, const uint8_t *salt, const uint8_t *iv,
     const uint8_t *mac);
 /*

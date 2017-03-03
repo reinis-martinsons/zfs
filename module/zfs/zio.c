@@ -3564,6 +3564,7 @@ zio_encrypt(zio_t *zio)
 		ASSERT(zio->io_flags & ZIO_FLAG_RAW_COMPRESS);
 		ASSERT(zp->zp_encrypt);
 		BP_SET_ENCRYPTED(bp, B_TRUE);
+		BP_SET_BYTEORDER(bp, zp->zp_byteorder);
 		zio_crypt_encode_params_bp(bp, zp->zp_salt, zp->zp_iv);
 		zio_crypt_encode_mac_bp(bp, zp->zp_mac);
 		return (ZIO_PIPELINE_CONTINUE);

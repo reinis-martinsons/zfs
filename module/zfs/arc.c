@@ -1396,6 +1396,21 @@ arc_is_encrypted(arc_buf_t *buf)
 	return (ARC_BUF_ENCRYPTED(buf) != 0);
 }
 
+void
+arc_get_raw_params(arc_buf_t *buf, boolean_t *byteorder, uint8_t *salt,
+    uint8_t *iv, uint8_t *mac)
+{
+	arc_buf_hdr_t *hdr = buf->b_hdr;
+
+	ASSERT(HDR_ENCRYPTED(hdr));
+
+	bcopy(hdr->b_crypt_hdr.b_salt, salt, ZIO_DATA_SALT_LEN);
+	bcopy(hdr->b_crypt_hdr.b_iv, iv, ZIO_DATA_IV_LEN);
+	bcopy(hdr->b_crypt_hdr.b_mac, mac, ZIO_DATA_MAC_LEN);
+	*byteorder = (hdr->b_l1hdr.b_byteswap == DMU_BSWAP_NUMFUNCS) ?
+	    ZFS_HOST_BYTEORDER : !ZFS_HOST_BYTEORDER;
+}
+
 /*
  * Indicates how this buffer is compressed in memory. If it is not compressed
  * the value will be ZIO_COMPRESS_OFF. It can be made normally readable with
@@ -2729,6 +2744,18 @@ arc_loan_compressed_buf(spa_t *spa, uint64_t psize, uint64_t lsize,
 	return (buf);
 }
 
+arc_buf_t *
+arc_loan_raw_buf(spa_t *spa, uint64_t dsobj, boolean_t byteorder, uint8_t *salt,
+    uint8_t *iv, uint8_t *mac, dmu_object_type_t ot, uint64_t psize,
+    uint64_t lsize, enum zio_compress compression_type)
+{
+	arc_buf_t *buf = arc_alloc_raw_buf(spa, arc_onloan_tag, dsobj,
+	    byteorder, salt, iv, mac, ot, psize, lsize, compression_type);
+
+	atomic_add_64(&arc_loaned_bytes, psize);
+	return (buf);
+}
+
 
 /*
  * Return a loaned arc buffer to the arc.
@@ -3329,8 +3356,8 @@ arc_alloc_compressed_buf(spa_t *spa, void *tag, uint64_t psize, uint64_t lsize,
 	arc_buf_t *buf;
 	ASSERT3U(lsize, >, 0);
 	ASSERT3U(lsize, >=, psize);
-	ASSERT(compression_type > ZIO_COMPRESS_OFF);
-	ASSERT(compression_type < ZIO_COMPRESS_FUNCTIONS);
+	ASSERT3U(compression_type, >, ZIO_COMPRESS_OFF);
+	ASSERT3U(compression_type, <, ZIO_COMPRESS_FUNCTIONS);
 
 	hdr = arc_hdr_alloc(spa_load_guid(spa), psize, lsize, B_FALSE,
 	    compression_type, ARC_BUFC_DATA, B_FALSE);
@@ -3353,6 +3380,42 @@ arc_alloc_compressed_buf(spa_t *spa, void *tag, uint64_t psize, uint64_t lsize,
 		arc_hdr_free_abd(hdr, B_FALSE);
 		arc_share_buf(hdr, buf);
 	}
+
+	return (buf);
+}
+
+arc_buf_t *
+arc_alloc_raw_buf(spa_t *spa, void *tag, uint64_t dsobj, boolean_t byteorder,
+    uint8_t *salt, uint8_t *iv, uint8_t *mac, dmu_object_type_t ot,
+    uint64_t psize, uint64_t lsize, enum zio_compress compression_type)
+{
+	arc_buf_hdr_t *hdr;
+	arc_buf_t *buf;
+	arc_buf_contents_t type = DMU_OT_IS_METADATA(ot) ?
+	    ARC_BUFC_METADATA : ARC_BUFC_DATA;
+
+	ASSERT3U(lsize, >, 0);
+	ASSERT3U(lsize, >=, psize);
+	ASSERT3U(compression_type, >=, ZIO_COMPRESS_OFF);
+	ASSERT3U(compression_type, <, ZIO_COMPRESS_FUNCTIONS);
+
+	hdr = arc_hdr_alloc(spa_load_guid(spa), psize, lsize, B_TRUE,
+	    compression_type, type, B_TRUE);
+	ASSERT(!MUTEX_HELD(HDR_LOCK(hdr)));
+
+	hdr->b_crypt_hdr.b_dsobj = dsobj;
+	hdr->b_crypt_hdr.b_ot = ot;
+	hdr->b_l1hdr.b_byteswap = (byteorder == ZFS_HOST_BYTEORDER) ?
+	    DMU_BSWAP_NUMFUNCS : DMU_OT_BYTESWAP(ot);
+	bcopy(salt, hdr->b_crypt_hdr.b_salt, ZIO_DATA_SALT_LEN);
+	bcopy(iv, hdr->b_crypt_hdr.b_iv, ZIO_DATA_IV_LEN);
+	bcopy(mac, hdr->b_crypt_hdr.b_mac, ZIO_DATA_MAC_LEN);
+
+	buf = NULL;
+	VERIFY0(arc_buf_alloc_impl(hdr, spa, dsobj, tag, B_TRUE, B_TRUE,
+	    B_FALSE, &buf));
+	arc_buf_thaw(buf);
+	ASSERT3P(hdr->b_l1hdr.b_freeze_cksum, ==, NULL);
 
 	return (buf);
 }
