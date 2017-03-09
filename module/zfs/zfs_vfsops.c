@@ -1400,6 +1400,7 @@ zfs_domount(struct super_block *sb, zfs_mntopts_t *zmo, int silent)
 	zfs_sb_t *zsb;
 	struct inode *root_inode;
 	uint64_t recordsize;
+	boolean_t disown_on_error = B_TRUE;
 	int error;
 
 	error = zfs_sb_create(osname, zmo, &zsb);
@@ -1460,6 +1461,9 @@ zfs_domount(struct super_block *sb, zfs_mntopts_t *zmo, int silent)
 			goto out;
 	}
 
+	/* after this point zfs_umount() will disown the os for us */
+	disown_on_error = B_FALSE;
+
 	/* Allocate a root inode for the filesystem. */
 	error = zfs_root(zsb, &root_inode);
 	if (error) {
@@ -1481,8 +1485,10 @@ zfs_domount(struct super_block *sb, zfs_mntopts_t *zmo, int silent)
 	zsb->z_arc_prune = arc_add_prune_callback(zpl_prune_sb, sb);
 out:
 	if (error) {
-		dmu_objset_disown(zsb->z_os, B_TRUE, zsb);
-		zfs_sb_free(zsb);
+		if (disown_on_error) {
+			dmu_objset_disown(zsb->z_os, B_TRUE, zsb);
+			zfs_sb_free(zsb);
+		}
 		/*
 		 * make sure we don't have dangling sb->s_fs_info which
 		 * zfs_preumount will use.
@@ -1543,7 +1549,8 @@ zfs_umount(struct super_block *sb)
 	zfs_sb_t *zsb = sb->s_fs_info;
 	objset_t *os;
 
-	arc_remove_prune_callback(zsb->z_arc_prune);
+	if (zsb->z_arc_prune != NULL)
+		arc_remove_prune_callback(zsb->z_arc_prune);
 	VERIFY(zfs_sb_teardown(zsb, B_TRUE) == 0);
 	os = zsb->z_os;
 	bdi_destroy(sb->s_bdi);

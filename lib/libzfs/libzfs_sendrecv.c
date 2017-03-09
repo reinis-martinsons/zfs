@@ -3779,8 +3779,10 @@ zfs_receive_impl(libzfs_handle_t *hdl, const char *tosnap,
 		return (zfs_error(hdl, EZFS_BADSTREAM, errbuf));
 	}
 
-	if (featureflags & DMU_BACKUP_FEATURE_RAW)
+	if (featureflags & DMU_BACKUP_FEATURE_RAW) {
 		flags->raw = B_TRUE;
+		flags->nomount = B_TRUE;
+	}
 
 	if (strchr(drrb->drr_toname, '@') == NULL) {
 		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN, "invalid "

@@ -499,9 +499,11 @@ dump_freeobjects(dmu_sendarg_t *dsp, uint64_t firstobj, uint64_t numobjs)
 }
 
 static int
-dump_dnode(dmu_sendarg_t *dsp, uint64_t object, dnode_phys_t *dnp)
+dump_dnode(dmu_sendarg_t *dsp, const blkptr_t *bp, uint64_t object,
+    dnode_phys_t *dnp)
 {
 	struct drr_object *drro = &(dsp->dsa_drr->drr_u.drr_object);
+	int bonuslen = P2ROUNDUP(dnp->dn_bonuslen, 8);
 
 	if (object < dsp->dsa_resume_object) {
 		/*
@@ -542,8 +544,20 @@ dump_dnode(dmu_sendarg_t *dsp, uint64_t object, dnode_phys_t *dnp)
 	    drro->drr_blksz > SPA_OLD_MAXBLOCKSIZE)
 		drro->drr_blksz = SPA_OLD_MAXBLOCKSIZE;
 
-	if (dump_record(dsp, DN_BONUS(dnp),
-	    P2ROUNDUP(dnp->dn_bonuslen, 8)) != 0) {
+	if ((dsp->dsa_featureflags & DMU_BACKUP_FEATURE_RAW) &&
+	    BP_IS_ENCRYPTED(bp)) {
+		drro->drr_flags |= DRR_RAW_ENCRYPTED;
+		if (BP_SHOULD_BYTESWAP(bp))
+			drro->drr_flags |= DRR_RAW_BYTESWAP;
+
+		/* raw bonus buffers extend to the end of the dnp */
+		if (bonuslen != 0) {
+			drro->drr_raw_bonuslen = DN_MAX_BONUS_LEN(dnp);
+			bonuslen = drro->drr_raw_bonuslen;
+		}
+	}
+
+	if (dump_record(dsp, DN_BONUS(dnp), bonuslen) != 0) {
 		return (SET_ERROR(EINTR));
 	}
 
@@ -552,6 +566,40 @@ dump_dnode(dmu_sendarg_t *dsp, uint64_t object, dnode_phys_t *dnp)
 	    (dnp->dn_datablkszsec << SPA_MINBLOCKSHIFT), -1ULL) != 0)
 		return (SET_ERROR(EINTR));
 	if (dsp->dsa_err != 0)
+		return (SET_ERROR(EINTR));
+	return (0);
+}
+
+static int
+dump_object_range(dmu_sendarg_t *dsp, const blkptr_t *bp, uint64_t firstobj,
+    uint64_t numslots)
+{
+	struct drr_object_range *drror =
+	    &(dsp->dsa_drr->drr_u.drr_object_range);
+
+	/* we only use this for raw sends */
+	ASSERT(BP_IS_ENCRYPTED(bp));
+	ASSERT(dsp->dsa_featureflags & DMU_BACKUP_FEATURE_RAW);
+	ASSERT3U(BP_GET_COMPRESS(bp), ==, ZIO_COMPRESS_OFF);
+
+	if (dsp->dsa_pending_op != PENDING_NONE) {
+		if (dump_record(dsp, NULL, 0) != 0)
+			return (SET_ERROR(EINTR));
+		dsp->dsa_pending_op = PENDING_NONE;
+	}
+
+	bzero(dsp->dsa_drr, sizeof (dmu_replay_record_t));
+	dsp->dsa_drr->drr_type = DRR_OBJECT_RANGE;
+	drror->drr_firstobj = firstobj;
+	drror->drr_numslots = numslots;
+	drror->drr_toguid = dsp->dsa_toguid;
+	drror->drr_flags |= DRR_RAW_ENCRYPTED;
+	if (BP_SHOULD_BYTESWAP(bp))
+		drror->drr_flags |= DRR_RAW_BYTESWAP;
+	zio_crypt_decode_params_bp(bp, drror->drr_salt, drror->drr_iv);
+	zio_crypt_decode_mac_bp(bp, drror->drr_mac);
+
+	if (dump_record(dsp, NULL, 0) != 0)
 		return (SET_ERROR(EINTR));
 	return (0);
 }
@@ -693,21 +741,38 @@ do_dump(dmu_sendarg_t *dsa, struct send_block_record *data)
 		int epb = BP_GET_LSIZE(bp) >> DNODE_SHIFT;
 		arc_flags_t aflags = ARC_FLAG_WAIT;
 		arc_buf_t *abuf;
+		enum zio_flag zioflags = ZIO_FLAG_CANFAIL;
 		int i;
+
+		if ((dsa->dsa_featureflags & DMU_BACKUP_FEATURE_RAW) &&
+		    BP_IS_ENCRYPTED(bp)) {
+			ASSERT3U(BP_GET_COMPRESS(bp), ==, ZIO_COMPRESS_OFF);
+			zioflags |= ZIO_FLAG_RAW;
+		}
 
 		ASSERT0(zb->zb_level);
 
 		if (arc_read(NULL, spa, bp, arc_getbuf_func, &abuf,
-		    ZIO_PRIORITY_ASYNC_READ, ZIO_FLAG_CANFAIL,
-		    &aflags, zb) != 0)
+		    ZIO_PRIORITY_ASYNC_READ, zioflags, &aflags, zb) != 0)
 			return (SET_ERROR(EIO));
 
 		blk = abuf->b_data;
 		dnobj = zb->zb_blkid * epb;
-		for (i = 0; i < epb; i += blk[i].dn_extra_slots + 1) {
-			err = dump_dnode(dsa, dnobj + i, blk + i);
-			if (err != 0)
-				break;
+
+		/*
+		 * Raw sends require sending encryption parameters for the
+		 * block of dnodes. Regular sends do not need to send this
+		 * info.
+		 */
+		if (arc_is_encrypted(abuf))
+			err = dump_object_range(dsa, bp, dnobj, epb);
+
+		if (err == 0) {
+			for (i = 0; i < epb; i += blk[i].dn_extra_slots + 1) {
+				err = dump_dnode(dsa, bp, dnobj + i, blk + i);
+				if (err != 0)
+					break;
+			}
 		}
 		arc_buf_destroy(abuf, &abuf);
 	} else if (type == DMU_OT_SA) {
@@ -1719,13 +1784,16 @@ dmu_recv_begin_sync(void *arg, dmu_tx_t *tx)
 	}
 
 	/*
-	 * If we are receiving encrypted data zapify the dd now in syncing
-	 * context in preperation for storing the DSL crypto key.
+	 * Usually the os->os_encrypted value is tied to the presence of a
+	 * DSL Crypto Key object in the dd. However, that will not be received
+	 * until dmu_recv_stream(), so we set the value manually for now.
 	 */
 	if ((DMU_GET_FEATUREFLAGS(drrb->drr_versioninfo) &
-	    DMU_BACKUP_FEATURE_RAW) && !dsl_dir_is_zapified(newds->ds_dir)) {
-		dmu_buf_will_dirty(newds->ds_dir->dd_dbuf, tx);
-		dsl_dir_zapify(newds->ds_dir, tx);
+	    DMU_BACKUP_FEATURE_RAW)) {
+		objset_t *os;
+
+		VERIFY0(dmu_objset_from_ds(newds, &os));
+		os->os_encrypted = B_TRUE;
 	}
 
 	dmu_buf_will_dirty(newds->ds_dbuf, tx);
@@ -1953,7 +2021,7 @@ struct receive_record_arg {
 	 * If the record is a write, pointer to the arc_buf_t containing the
 	 * payload.
 	 */
-	arc_buf_t *write_buf;
+	arc_buf_t *arc_buf;
 	int payload_size;
 	uint64_t bytes_read; /* bytes read from stream when record created */
 	boolean_t eos_marker; /* Marks the end of the stream */
@@ -2110,6 +2178,7 @@ byteswap_record(dmu_replay_record_t *drr)
 		DO32(drr_object.drr_bonustype);
 		DO32(drr_object.drr_blksz);
 		DO32(drr_object.drr_bonuslen);
+		DO32(drr_object.drr_raw_bonuslen);
 		DO64(drr_object.drr_toguid);
 		break;
 	case DRR_FREEOBJECTS:
@@ -2157,6 +2226,12 @@ byteswap_record(dmu_replay_record_t *drr)
 		DO64(drr_spill.drr_object);
 		DO64(drr_spill.drr_length);
 		DO64(drr_spill.drr_toguid);
+		DO32(drr_spill.drr_type);
+		break;
+	case DRR_OBJECT_RANGE:
+		DO64(drr_object_range.drr_firstobj);
+		DO64(drr_object_range.drr_numslots);
+		DO64(drr_object_range.drr_toguid);
 		break;
 	case DRR_END:
 		DO64(drr_end.drr_toguid);
@@ -2245,6 +2320,16 @@ receive_object(struct receive_writer_arg *rwa, struct drr_object *drro,
 		return (SET_ERROR(EINVAL));
 	}
 
+	if (DRR_IS_RAW_ENCRYPTED(drro->drr_flags)) {
+		if (drro->drr_raw_bonuslen < drro->drr_bonuslen ||
+		    DN_SLOTS_TO_BONUSLEN(drro->drr_dn_slots) <
+		    drro->drr_raw_bonuslen)
+			return (SET_ERROR(EINVAL));
+	} else {
+		if (drro->drr_flags != 0 && drro->drr_raw_bonuslen != 0)
+			return (SET_ERROR(EINVAL));
+	}
+
 	err = dmu_object_info(rwa->os, drro->drr_object, &doi);
 
 	if (err != 0 && err != ENOENT)
@@ -2306,17 +2391,27 @@ receive_object(struct receive_writer_arg *rwa, struct drr_object *drro,
 
 	if (data != NULL) {
 		dmu_buf_t *db;
+		uint32_t dbflags = DB_RF_MUST_SUCCEED | DB_RF_NOPREFETCH;
 
-		VERIFY0(dmu_bonus_hold(rwa->os, drro->drr_object, FTAG, &db));
+		if ((drro->drr_flags & DRR_RAW_ENCRYPTED) != 0)
+			dbflags |= DB_RF_NO_DECRYPT;
+
+		VERIFY0(dmu_bonus_hold_impl(rwa->os, drro->drr_object,
+		    FTAG, dbflags, &db));
 		dmu_buf_will_dirty(db, tx);
 
 		ASSERT3U(db->db_size, >=, drro->drr_bonuslen);
-		bcopy(data, db->db_data, drro->drr_bonuslen);
-		if (rwa->byteswap) {
+		bcopy(data, db->db_data, DRR_OBJECT_PAYLOAD_SIZE(drro));
+
+		/*
+		 * Raw bonus buffers have their byteorder determined by the
+		 * DRR_OBJECT_RANGE record.
+		 */
+		if (rwa->byteswap && !(drro->drr_flags & DRR_RAW_ENCRYPTED)) {
 			dmu_object_byteswap_t byteswap =
 			    DMU_OT_BYTESWAP(drro->drr_bonustype);
 			dmu_ot_byteswap[byteswap].ob_func(db->db_data,
-			    drro->drr_bonuslen);
+			    DRR_OBJECT_PAYLOAD_SIZE(drro));
 		}
 		dmu_buf_rele(db, FTAG);
 	}
@@ -2524,7 +2619,7 @@ receive_write_embedded(struct receive_writer_arg *rwa,
 
 static int
 receive_spill(struct receive_writer_arg *rwa, struct drr_spill *drrs,
-    void *data)
+    arc_buf_t *abuf)
 {
 	dmu_tx_t *tx;
 	dmu_buf_t *db, *db_spill;
@@ -2559,7 +2654,7 @@ receive_spill(struct receive_writer_arg *rwa, struct drr_spill *drrs,
 	if (db_spill->db_size < drrs->drr_length)
 		VERIFY(0 == dbuf_spill_set_blksz(db_spill,
 		    drrs->drr_length, tx));
-	bcopy(data, db_spill->db_data, drrs->drr_length);
+	dmu_assign_arcbuf_impl(db_spill, abuf, tx);
 
 	dmu_buf_rele(db, FTAG);
 	dmu_buf_rele(db_spill, FTAG);
@@ -2585,6 +2680,59 @@ receive_free(struct receive_writer_arg *rwa, struct drr_free *drrf)
 	    drrf->drr_offset, drrf->drr_length);
 
 	return (err);
+}
+
+static int
+receive_object_range(struct receive_writer_arg *rwa,
+    struct drr_object_range *drror)
+{
+	int ret;
+	dmu_tx_t *tx;
+	dnode_t *mdn = NULL;
+	dmu_buf_t *db = NULL;
+	uint64_t offset;
+	boolean_t byteorder = ZFS_HOST_BYTEORDER ^
+	    !!DRR_IS_RAW_BYTESWAPPED(drror->drr_flags) ^
+	    rwa->byteswap;
+
+	/*
+	 * Since dnode block sizes are constant, we should not need to worry
+	 * about making sure that the dnode block size is the same on the
+	 * sending and receiving sides for the time being. For non-raw sends,
+	 * this does not matter (and in fact we do not send a DRR_OBJECT_RANGE
+	 * record at all). Raw sends require this record type because the
+	 * encryption parameters are used to protect an entire block of bonus
+	 * buffers. If the size of dnode blocks ever becomes variable,
+	 * handling will need to be added to ensure that dnode block sizes
+	 * match on the sending and receiving side.
+	 */
+	if (drror->drr_numslots != DNODES_PER_BLOCK ||
+	    drror->drr_numslots - drror->drr_firstobj != DNODES_PER_BLOCK ||
+	    (drror->drr_flags & DRR_RAW_ENCRYPTED) == 0)
+		return (SET_ERROR(EINVAL));
+
+	offset = drror->drr_firstobj * sizeof (dnode_phys_t);
+	mdn = DMU_META_DNODE(rwa->os);
+
+	tx = dmu_tx_create(rwa->os);
+	ret = dmu_tx_assign(tx, TXG_WAIT);
+	if (ret != 0) {
+		dmu_tx_abort(tx);
+		return (ret);
+	}
+
+	ret = dmu_buf_hold_by_dnode(mdn, offset, FTAG, &db, DMU_READ_PREFETCH);
+	if (ret != 0) {
+		dmu_tx_commit(tx);
+		return (ret);
+	}
+
+	dmu_buf_will_dirty(db, tx);
+	dmu_convert_to_raw(db, byteorder, drror->drr_salt, drror->drr_iv,
+	    drror->drr_mac);
+	dmu_buf_rele(db, FTAG);
+	dmu_tx_commit(tx);
+	return (0);
 }
 
 /* used to destroy the drc_ds on error */
@@ -2794,9 +2942,10 @@ receive_read_record(struct receive_arg *ra)
 	case DRR_OBJECT:
 	{
 		struct drr_object *drro = &ra->rrd->header.drr_u.drr_object;
-		uint32_t size = P2ROUNDUP(drro->drr_bonuslen, 8);
+		uint32_t size = DRR_OBJECT_PAYLOAD_SIZE(drro);
 		void *buf = kmem_zalloc(size, KM_SLEEP);
 		dmu_object_info_t doi;
+
 		err = receive_read_payload_and_next_header(ra, size, buf);
 		if (err != 0) {
 			kmem_free(buf, size);
@@ -2855,7 +3004,7 @@ receive_read_record(struct receive_arg *ra)
 			dmu_return_arcbuf(abuf);
 			return (err);
 		}
-		ra->rrd->write_buf = abuf;
+		ra->rrd->arc_buf = abuf;
 		receive_read_prefetch(ra, drrw->drr_object, drrw->drr_offset,
 		    drrw->drr_logical_size);
 		return (err);
@@ -2905,11 +3054,40 @@ receive_read_record(struct receive_arg *ra)
 	case DRR_SPILL:
 	{
 		struct drr_spill *drrs = &ra->rrd->header.drr_u.drr_spill;
-		void *buf = kmem_zalloc(drrs->drr_length, KM_SLEEP);
-		err = receive_read_payload_and_next_header(ra, drrs->drr_length,
-		    buf);
-		if (err != 0)
-			kmem_free(buf, drrs->drr_length);
+		arc_buf_t *abuf;
+		int len;
+
+		/* DRR_SPILL records are either raw or uncompressed */
+		if (DRR_IS_RAW_ENCRYPTED(drrs->drr_flags)) {
+			boolean_t byteorder = ZFS_HOST_BYTEORDER ^
+			    !!DRR_IS_RAW_BYTESWAPPED(drrs->drr_flags) ^
+			    ra->byteswap;
+
+			abuf = arc_loan_raw_buf(dmu_objset_spa(ra->os),
+			    drrs->drr_object, byteorder, drrs->drr_salt,
+			    drrs->drr_iv, drrs->drr_mac, drrs->drr_type,
+			    drrs->drr_compressed_size, drrs->drr_length,
+			    drrs->drr_compressiontype);
+			len = drrs->drr_compressed_size;
+		} else {
+			abuf = arc_loan_buf(dmu_objset_spa(ra->os),
+			    DMU_OT_IS_METADATA(drrs->drr_type),
+			    drrs->drr_length);
+			len = drrs->drr_length;
+		}
+
+		err = receive_read_payload_and_next_header(ra, len,
+		    abuf->b_data);
+		if (err != 0) {
+			dmu_return_arcbuf(abuf);
+			return (err);
+		}
+		ra->rrd->arc_buf = abuf;
+		return (err);
+	}
+	case DRR_OBJECT_RANGE:
+	{
+		err = receive_read_payload_and_next_header(ra, 0, NULL);
 		return (err);
 	}
 	default:
@@ -2948,11 +3126,11 @@ receive_process_record(struct receive_writer_arg *rwa,
 	case DRR_WRITE:
 	{
 		struct drr_write *drrw = &rrd->header.drr_u.drr_write;
-		err = receive_write(rwa, drrw, rrd->write_buf);
+		err = receive_write(rwa, drrw, rrd->arc_buf);
 		/* if receive_write() is successful, it consumes the arc_buf */
 		if (err != 0)
-			dmu_return_arcbuf(rrd->write_buf);
-		rrd->write_buf = NULL;
+			dmu_return_arcbuf(rrd->arc_buf);
+		rrd->arc_buf = NULL;
 		rrd->payload = NULL;
 		return (err);
 	}
@@ -2979,10 +3157,19 @@ receive_process_record(struct receive_writer_arg *rwa,
 	case DRR_SPILL:
 	{
 		struct drr_spill *drrs = &rrd->header.drr_u.drr_spill;
-		err = receive_spill(rwa, drrs, rrd->payload);
-		kmem_free(rrd->payload, rrd->payload_size);
+		err = receive_spill(rwa, drrs, rrd->arc_buf);
+		/* if receive_spill() is successful, it consumes the arc_buf */
+		if (err != 0)
+			dmu_return_arcbuf(rrd->arc_buf);
+		rrd->arc_buf = NULL;
 		rrd->payload = NULL;
 		return (err);
+	}
+	case DRR_OBJECT_RANGE:
+	{
+		struct drr_object_range *drror =
+		    &rrd->header.drr_u.drr_object_range;
+		return (receive_object_range(rwa, drror));
 	}
 	default:
 		return (SET_ERROR(EINVAL));
@@ -3009,9 +3196,9 @@ receive_writer_thread(void *arg)
 		 */
 		if (rwa->err == 0) {
 			rwa->err = receive_process_record(rwa, rrd);
-		} else if (rrd->write_buf != NULL) {
-			dmu_return_arcbuf(rrd->write_buf);
-			rrd->write_buf = NULL;
+		} else if (rrd->arc_buf != NULL) {
+			dmu_return_arcbuf(rrd->arc_buf);
+			rrd->arc_buf = NULL;
 			rrd->payload = NULL;
 		} else if (rrd->payload != NULL) {
 			kmem_free(rrd->payload, rrd->payload_size);
@@ -3165,6 +3352,8 @@ dmu_recv_stream(dmu_recv_cookie_t *drc, vnode_t *vp, offset_t *voffp,
 	/* handle DSL encryption key payload */
 	if (featureflags & DMU_BACKUP_FEATURE_RAW) {
 		nvlist_t *keynvl = NULL;
+
+		ASSERT(ra->os->os_encrypted);
 
 		err = nvlist_lookup_nvlist(begin_nvl, "crypt_keydata", &keynvl);
 		if (err != 0)

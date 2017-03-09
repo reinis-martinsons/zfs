@@ -2205,10 +2205,11 @@ dbuf_destroy(dmu_buf_impl_t *db)
 	if (db->db_blkid == DMU_BONUS_BLKID) {
 		int slots = DB_DNODE(db)->dn_num_slots;
 		int bonuslen = DN_SLOTS_TO_BONUSLEN(slots);
-		ASSERT(db->db.db_data != NULL);
-		kmem_free(db->db.db_data, bonuslen);
-		arc_space_return(bonuslen, ARC_SPACE_BONUS);
-		db->db_state = DB_UNCACHED;
+		if (db->db.db_data != NULL) {
+			kmem_free(db->db.db_data, bonuslen);
+			arc_space_return(bonuslen, ARC_SPACE_BONUS);
+			db->db_state = DB_UNCACHED;
+		}
 	}
 
 	dbuf_clear_data(db);
@@ -3342,9 +3343,10 @@ dbuf_sync_leaf(dbuf_dirty_record_t *dr, dmu_tx_t *tx)
 
 		ASSERT(*datap != NULL);
 		ASSERT0(db->db_level);
-		ASSERT3U(dn->dn_phys->dn_bonuslen, <=,
+		ASSERT3U(DN_MAX_BONUS_LEN(dn->dn_phys), <=,
 		    DN_SLOTS_TO_BONUSLEN(dn->dn_phys->dn_extra_slots + 1));
-		bcopy(*datap, DN_BONUS(dn->dn_phys), dn->dn_phys->dn_bonuslen);
+		bcopy(*datap, DN_BONUS(dn->dn_phys),
+		    DN_MAX_BONUS_LEN(dn->dn_phys));
 		DB_DNODE_EXIT(db);
 
 		if (*datap != db->db.db_data) {

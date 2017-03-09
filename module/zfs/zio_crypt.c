@@ -846,8 +846,8 @@ zio_crypt_decode_mac_zil(const void *data, uint8_t *mac)
 void
 zio_crypt_copy_dnode_bonus(abd_t *src_abd, uint8_t *dst, uint_t datalen)
 {
-	uint_t i, crypt_len, max_dnp = datalen >> DNODE_SHIFT;
-	uint8_t *src, *bonus, *bonus_end, *dn_end;
+	uint_t i, max_dnp = datalen >> DNODE_SHIFT;
+	uint8_t *src;
 	dnode_phys_t *dnp, *sdnp, *ddnp;
 
 	src = abd_borrow_buf_copy(src_abd, datalen);
@@ -857,18 +857,11 @@ zio_crypt_copy_dnode_bonus(abd_t *src_abd, uint8_t *dst, uint_t datalen)
 
 	for (i = 0; i < max_dnp; i += sdnp[i].dn_extra_slots + 1) {
 		dnp = &sdnp[i];
-		dn_end = (uint8_t *)(dnp + (dnp->dn_extra_slots + 1));
 		if (dnp->dn_type != DMU_OT_NONE &&
 		    DMU_OT_IS_ENCRYPTED(dnp->dn_bonustype) &&
 		    dnp->dn_bonuslen != 0) {
-			bonus = (uint8_t *)DN_BONUS(dnp);
-			if (dnp->dn_flags & DNODE_FLAG_SPILL_BLKPTR) {
-				bonus_end = (uint8_t *)DN_SPILL_BLKPTR(dnp);
-			} else {
-				bonus_end = (uint8_t *)dn_end;
-			}
-			crypt_len = bonus_end - bonus;
-			bcopy(bonus, DN_BONUS(&ddnp[i]), crypt_len);
+			bcopy(DN_BONUS(dnp), DN_BONUS(&ddnp[i]),
+			    DN_MAX_BONUS_LEN(dnp));
 		}
 	}
 
@@ -1408,8 +1401,13 @@ zio_do_crypt_abd(boolean_t encrypt, zio_crypt_key_t *key, uint8_t *salt,
 	return (0);
 
 error:
-	abd_return_buf(pabd, ptmp, datalen);
-	abd_return_buf(cabd, ctmp, datalen);
+	if (encrypt) {
+		abd_return_buf(pabd, ptmp, datalen);
+		abd_return_buf_copy(cabd, ctmp, datalen);
+	} else {
+		abd_return_buf_copy(pabd, ptmp, datalen);
+		abd_return_buf(cabd, ctmp, datalen);
+	}
 
 	return (ret);
 }

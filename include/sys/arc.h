@@ -230,6 +230,9 @@ void arc_get_raw_params(arc_buf_t *buf, boolean_t *byteorder, uint8_t *salt,
     uint8_t *iv, uint8_t *mac);
 int arc_untransform(arc_buf_t *buf, spa_t *spa, uint64_t dsobj,
     boolean_t in_place);
+void arc_convert_to_raw(arc_buf_t *buf, uint64_t dsobj, boolean_t byteorder,
+    dmu_object_type_t ot, const uint8_t *salt, const uint8_t *iv,
+    const uint8_t *mac);
 arc_buf_t *arc_alloc_buf(spa_t *spa, void *tag, arc_buf_contents_t type,
     int32_t size);
 arc_buf_t *arc_alloc_compressed_buf(spa_t *spa, void *tag,

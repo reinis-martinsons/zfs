@@ -316,7 +316,8 @@ dmu_rm_spill(objset_t *os, uint64_t object, dmu_tx_t *tx)
  * returns ENOENT, EIO, or 0.
  */
 int
-dmu_bonus_hold(objset_t *os, uint64_t object, void *tag, dmu_buf_t **dbp)
+dmu_bonus_hold_impl(objset_t *os, uint64_t object, void *tag, uint32_t flags,
+    dmu_buf_t **dbp)
 {
 	dnode_t *dn;
 	dmu_buf_impl_t *db;
@@ -350,10 +351,23 @@ dmu_bonus_hold(objset_t *os, uint64_t object, void *tag, dmu_buf_t **dbp)
 
 	dnode_rele(dn, FTAG);
 
-	VERIFY(0 == dbuf_read(db, NULL, DB_RF_MUST_SUCCEED | DB_RF_NOPREFETCH));
+	error = dbuf_read(db, NULL, flags);
+	if (error) {
+		dnode_evict_bonus(dn);
+		dbuf_rele(db, tag);
+		*dbp = NULL;
+		return (error);
+	}
 
 	*dbp = &db->db;
 	return (0);
+}
+
+int
+dmu_bonus_hold(objset_t *os, uint64_t object, void *tag, dmu_buf_t **dbp)
+{
+	return (dmu_bonus_hold_impl(os, object, tag,
+	    DB_RF_MUST_SUCCEED | DB_RF_NOPREFETCH, dbp));
 }
 
 /*
@@ -1455,6 +1469,31 @@ dmu_return_arcbuf(arc_buf_t *buf)
 {
 	arc_return_buf(buf, FTAG);
 	arc_buf_destroy(buf, FTAG);
+}
+
+void
+dmu_assign_arcbuf_impl(dmu_buf_t *handle, arc_buf_t *buf, dmu_tx_t *tx)
+{
+	dmu_buf_impl_t *db = (dmu_buf_impl_t *)handle;
+	dbuf_assign_arcbuf(db, buf, tx);
+}
+
+void
+dmu_convert_to_raw(dmu_buf_t *handle, boolean_t byteorder, const uint8_t *salt,
+    const uint8_t *iv, const uint8_t *mac)
+{
+	dmu_object_type_t type;
+	dmu_buf_impl_t *db = (dmu_buf_impl_t *)handle;
+	uint64_t dsobj = dmu_objset_id(db->db_objset);
+
+	ASSERT3P(db->db_buf, !=, NULL);
+	ASSERT3U(dsobj, !=, 0);
+
+	DB_DNODE_ENTER(db);
+	type = DB_DNODE(db)->dn_type;
+	DB_DNODE_EXIT(db);
+
+	arc_convert_to_raw(db->db_buf, dsobj, byteorder, type, salt, iv, mac);
 }
 
 /*

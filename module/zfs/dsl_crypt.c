@@ -2191,16 +2191,18 @@ spa_do_crypt_abd(boolean_t encrypt, spa_t *spa, zbookmark_phys_t *zb,
 	return (0);
 
 error:
-	/* zero out any state we might have changed while encrypting */
 	if (encrypt) {
+		/* zero out any state we might have changed while encrypting */
 		bzero(salt, ZIO_DATA_SALT_LEN);
 		bzero(iv, ZIO_DATA_IV_LEN);
 		bzero(mac, (ot == DMU_OT_INTENT_LOG) ?
 		    ZIO_ZIL_MAC_LEN : ZIO_DATA_MAC_LEN);
+		abd_return_buf(pabd, plainbuf, datalen);
+		abd_return_buf_copy(cabd, cipherbuf, datalen);
+	} else {
+		abd_return_buf_copy(pabd, plainbuf, datalen);
+		abd_return_buf(cabd, cipherbuf, datalen);
 	}
-
-	abd_return_buf(pabd, plainbuf, datalen);
-	abd_return_buf(cabd, cipherbuf, datalen);
 
 	if (dck != NULL)
 		spa_keystore_dsl_key_rele(spa, dck, FTAG);

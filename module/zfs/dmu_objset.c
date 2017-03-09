@@ -899,7 +899,11 @@ dmu_objset_create_impl(spa_t *spa, dsl_dataset_t *ds, blkptr_t *bp,
 	ASSERT(type != DMU_OST_ANY);
 	ASSERT(type < DMU_OST_NUMTYPES);
 	os->os_phys->os_type = type;
-	if (dmu_objset_userused_enabled(os)) {
+
+	/* enable user accounting if it is enabled and this is not a raw recv */
+	if (dmu_objset_userused_enabled(os) && (!os->os_encrypted ||
+	    spa_keystore_lookup_key(os->os_spa, dmu_objset_id(os),
+	    NULL, NULL) == 0)) {
 		os->os_phys->os_flags |= OBJSET_FLAG_USERACCOUNTING_COMPLETE;
 		if (dmu_objset_userobjused_enabled(os)) {
 			ds->ds_feature_activation_needed[
@@ -1224,9 +1228,12 @@ dmu_objset_upgrade_stop(objset_t *os)
 }
 
 static void
-dmu_objset_sync_dnodes(list_t *list, list_t *newlist, dmu_tx_t *tx)
+dmu_objset_sync_dnodes(objset_t *os, list_t *list, list_t *newlist,
+    dmu_tx_t *tx)
 {
 	dnode_t *dn;
+	boolean_t raw = (os->os_encrypted && spa_keystore_lookup_key(os->os_spa,
+	    dmu_objset_id(os), NULL, NULL) != 0);
 
 	while ((dn = list_head(list))) {
 		ASSERT(dn->dn_object != DMU_META_DNODE_OBJECT);
@@ -1241,7 +1248,7 @@ dmu_objset_sync_dnodes(list_t *list, list_t *newlist, dmu_tx_t *tx)
 		ASSERT3U(dn->dn_nlevels, <=, DN_MAX_LEVELS);
 		list_remove(list, dn);
 
-		if (newlist) {
+		if (newlist && !raw) {
 			(void) dnode_add_ref(dn, newlist);
 			list_insert_tail(newlist, dn);
 		}
@@ -1376,8 +1383,8 @@ dmu_objset_sync(objset_t *os, zio_t *pio, dmu_tx_t *tx)
 		    offsetof(dnode_t, dn_dirty_link[txgoff]));
 	}
 
-	dmu_objset_sync_dnodes(&os->os_free_dnodes[txgoff], newlist, tx);
-	dmu_objset_sync_dnodes(&os->os_dirty_dnodes[txgoff], newlist, tx);
+	dmu_objset_sync_dnodes(os, &os->os_free_dnodes[txgoff], newlist, tx);
+	dmu_objset_sync_dnodes(os, &os->os_dirty_dnodes[txgoff], newlist, tx);
 
 	list = &DMU_META_DNODE(os)->dn_dirty_records[txgoff];
 	while ((dr = list_head(list))) {
@@ -1664,6 +1671,18 @@ dmu_objset_userquota_get_ids(dnode_t *dn, boolean_t before, dmu_tx_t *tx)
 	boolean_t have_spill = B_FALSE;
 
 	if (!dmu_objset_userused_enabled(dn->dn_objset))
+		return;
+
+	/*
+	 * If we are doing a raw receive we will be writing out raw data
+	 * and will not have access to the decrypted bonus / spill data that
+	 * we would normally need to do all of the user space accounting.
+	 * However, in this case the we will receive the user accounting data
+	 * as part of the send anyway so we can simply rely on that without
+	 * redoing the work.
+	 */
+	if (os->os_encrypted && spa_keystore_lookup_key(os->os_spa,
+	    dmu_objset_id(os), NULL, NULL) != 0)
 		return;
 
 	if (before && (flags & (DN_ID_CHKED_BONUS|DN_ID_OLD_EXIST|

@@ -473,6 +473,8 @@ void dmu_write_policy_override_encrypt(struct zio_prop *zp, boolean_t byteorder,
  *
  * Returns ENOENT, EIO, or 0.
  */
+int dmu_bonus_hold_impl(objset_t *os, uint64_t object, void *tag,
+    uint32_t flags, dmu_buf_t **dbp);
 int dmu_bonus_hold(objset_t *os, uint64_t object, void *tag, dmu_buf_t **);
 int dmu_bonus_max(void);
 int dmu_set_bonus(dmu_buf_t *, int, dmu_tx_t *);
@@ -794,6 +796,10 @@ struct arc_buf *dmu_request_arcbuf(dmu_buf_t *handle, int size);
 void dmu_return_arcbuf(struct arc_buf *buf);
 void dmu_assign_arcbuf(dmu_buf_t *handle, uint64_t offset, struct arc_buf *buf,
     dmu_tx_t *tx);
+void dmu_assign_arcbuf_impl(dmu_buf_t *handle, struct arc_buf *buf,
+    dmu_tx_t *tx);
+void dmu_convert_to_raw(dmu_buf_t *handle, boolean_t byteorder,
+    const uint8_t *salt, const uint8_t *iv, const uint8_t *mac);
 #ifdef HAVE_UIO_ZEROCOPY
 int dmu_xuio_init(struct xuio *uio, int niov);
 void dmu_xuio_fini(struct xuio *uio);

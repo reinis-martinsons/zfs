@@ -158,8 +158,8 @@ typedef enum dmu_send_resume_token_version {
 #define	DRR_FLAG_FREERECORDS	(1<<2)
 
 /*
- * flags in the drr_flags field in the DRR_WRITE, DRR_SPILL and
- * DRR_WRITE_BYREF blocks
+ * flags in the drr_flags field in the DRR_WRITE, DRR_SPILL, DRR_OBJECT,
+ * DRR_WRITE_BYREF, and DRR_OBJECT_RANGE blocks
  */
 #define	DRR_CHECKSUM_DEDUP	(1<<0) /* not used for DRR_SPILL blocks */
 #define	DRR_RAW_ENCRYPTED	(1<<1)
@@ -174,6 +174,9 @@ typedef enum dmu_send_resume_token_version {
 #define	DRR_WRITE_PAYLOAD_SIZE(drrw) \
 	(DRR_WRITE_COMPRESSED(drrw) ? (drrw)->drr_compressed_size : \
 	(drrw)->drr_logical_size)
+#define	DRR_OBJECT_PAYLOAD_SIZE(drro) \
+	(DRR_IS_RAW_ENCRYPTED(drro->drr_flags) ? \
+	drro->drr_raw_bonuslen : P2ROUNDUP(drro->drr_bonuslen, 8))
 
 /*
  * zfs ioctl command structure
@@ -182,7 +185,8 @@ typedef struct dmu_replay_record {
 	enum {
 		DRR_BEGIN, DRR_OBJECT, DRR_FREEOBJECTS,
 		DRR_WRITE, DRR_FREE, DRR_END, DRR_WRITE_BYREF,
-		DRR_SPILL, DRR_WRITE_EMBEDDED, DRR_NUMTYPES
+		DRR_SPILL, DRR_WRITE_EMBEDDED, DRR_OBJECT_RANGE,
+		DRR_NUMTYPES
 	} drr_type;
 	uint32_t drr_payloadlen;
 	union {
@@ -209,7 +213,8 @@ typedef struct dmu_replay_record {
 			uint8_t drr_checksumtype;
 			uint8_t drr_compress;
 			uint8_t drr_dn_slots;
-			uint8_t drr_pad[5];
+			uint8_t drr_flags;
+			uint32_t drr_raw_bonuslen;
 			uint64_t drr_toguid;
 			/* bonus content follows */
 		} drr_object;
@@ -273,7 +278,7 @@ typedef struct dmu_replay_record {
 			uint8_t drr_salt[ZIO_DATA_SALT_LEN];
 			uint8_t drr_iv[ZIO_DATA_IV_LEN];
 			uint8_t drr_mac[ZIO_DATA_MAC_LEN];
-			uint8_t drr_pad2[4];
+			dmu_object_type_t drr_type;
 			/* spill data follows */
 		} drr_spill;
 		struct drr_write_embedded {
@@ -289,6 +294,16 @@ typedef struct dmu_replay_record {
 			uint32_t drr_psize; /* compr. (real) size of payload */
 			/* (possibly compressed) content follows */
 		} drr_write_embedded;
+		struct drr_object_range {
+			uint64_t drr_firstobj;
+			uint64_t drr_numslots;
+			uint64_t drr_toguid;
+			uint8_t drr_salt[ZIO_DATA_SALT_LEN];
+			uint8_t drr_iv[ZIO_DATA_IV_LEN];
+			uint8_t drr_mac[ZIO_DATA_MAC_LEN];
+			uint8_t drr_flags;
+			uint8_t drr_pad[3];
+		} drr_object_range;
 
 		/*
 		 * Nore: drr_checksum is overlaid with all record types
