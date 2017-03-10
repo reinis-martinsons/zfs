@@ -2084,6 +2084,7 @@ struct receive_arg  {
 
 typedef struct guid_map_entry {
 	uint64_t	guid;
+	boolean_t	raw;
 	dsl_dataset_t	*gme_ds;
 	avl_node_t	avlnode;
 } guid_map_entry_t;
@@ -2106,7 +2107,8 @@ free_guid_map_onexit(void *arg)
 
 	while ((gmep = avl_destroy_nodes(ca, &cookie)) != NULL) {
 		dsl_dataset_long_rele(gmep->gme_ds, gmep);
-		dsl_dataset_rele(gmep->gme_ds, gmep);
+		dsl_dataset_rele_flags(gmep->gme_ds,
+		    (gmep->raw) ? 0 : DS_HOLD_FLAG_DECRYPT, gmep);
 		kmem_free(gmep, sizeof (guid_map_entry_t));
 	}
 	avl_destroy(ca);
@@ -2638,6 +2640,13 @@ receive_spill(struct receive_writer_arg *rwa, struct drr_spill *drrs,
 	if (drrs->drr_length < SPA_MINBLOCKSIZE ||
 	    drrs->drr_length > spa_maxblocksize(dmu_objset_spa(rwa->os)))
 		return (SET_ERROR(EINVAL));
+
+	if (DRR_IS_RAW_ENCRYPTED(drrs->drr_flags)) {
+		if (!DMU_OT_IS_VALID(drrs->drr_type) ||
+		    drrs->drr_compressiontype >= ZIO_COMPRESS_FUNCTIONS ||
+		    drrs->drr_compressed_size == 0)
+			return (SET_ERROR(EINVAL));
+	}
 
 	if (dmu_object_info(rwa->os, drrs->drr_object, NULL) != 0)
 		return (SET_ERROR(EINVAL));
@@ -3371,6 +3380,8 @@ dmu_recv_stream(dmu_recv_cookie_t *drc, vnode_t *vp, offset_t *voffp,
 		    drc->drc_ds->ds_object, keynvl);
 		if (err != 0)
 			goto out;
+
+		drc->drc_raw = B_TRUE;
 	}
 
 	if (featureflags & DMU_BACKUP_FEATURE_RESUMING) {
@@ -3646,11 +3657,13 @@ dmu_recv_end_sync(void *arg, dmu_tx_t *tx)
 }
 
 static int
-add_ds_to_guidmap(const char *name, avl_tree_t *guid_map, uint64_t snapobj)
+add_ds_to_guidmap(const char *name, avl_tree_t *guid_map, uint64_t snapobj,
+    boolean_t raw)
 {
 	dsl_pool_t *dp;
 	dsl_dataset_t *snapds;
 	guid_map_entry_t *gmep;
+	ds_hold_flags_t dsflags = (raw) ? 0 : DS_HOLD_FLAG_DECRYPT;
 	int err;
 
 	ASSERT(guid_map != NULL);
@@ -3659,9 +3672,10 @@ add_ds_to_guidmap(const char *name, avl_tree_t *guid_map, uint64_t snapobj)
 	if (err != 0)
 		return (err);
 	gmep = kmem_alloc(sizeof (*gmep), KM_SLEEP);
-	err = dsl_dataset_hold_obj(dp, snapobj, gmep, &snapds);
+	err = dsl_dataset_hold_obj_flags(dp, snapobj, dsflags, gmep, &snapds);
 	if (err == 0) {
 		gmep->guid = dsl_dataset_phys(snapds)->ds_guid;
+		gmep->raw = raw;
 		gmep->gme_ds = snapds;
 		avl_add(guid_map, gmep);
 		dsl_dataset_long_hold(snapds, gmep);
@@ -3716,9 +3730,8 @@ dmu_recv_end(dmu_recv_cookie_t *drc, void *owner)
 	if (error != 0) {
 		dmu_recv_cleanup_ds(drc);
 	} else if (drc->drc_guid_to_ds_map != NULL) {
-		(void) add_ds_to_guidmap(drc->drc_tofs,
-		    drc->drc_guid_to_ds_map,
-		    drc->drc_newsnapobj);
+		(void) add_ds_to_guidmap(drc->drc_tofs, drc->drc_guid_to_ds_map,
+		    drc->drc_newsnapobj, drc->drc_raw);
 	}
 	return (error);
 }
