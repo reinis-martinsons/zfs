@@ -1185,8 +1185,8 @@ dbuf_fix_old_data(dmu_buf_impl_t *db, uint64_t txg)
 			arc_get_raw_params(db->db_buf, &byteorder, salt,
 			    iv, mac);
 			dr->dt.dl.dr_data = arc_alloc_raw_buf(spa, db,
-			    dn->dn_object, byteorder, salt, iv, mac,
-			    dn->dn_type, size, arc_buf_lsize(db->db_buf),
+			    dmu_objset_id(dn->dn_objset), byteorder, salt, iv,
+			    mac, dn->dn_type, size, arc_buf_lsize(db->db_buf),
 			    compress_type);
 		} else if (compress_type != ZIO_COMPRESS_OFF) {
 			ASSERT3U(type, ==, ARC_BUFC_DATA);
@@ -3422,7 +3422,7 @@ dbuf_sync_leaf(dbuf_dirty_record_t *dr, dmu_tx_t *tx)
 
 			arc_get_raw_params(*datap, &byteorder, salt, iv, mac);
 			*datap = arc_alloc_raw_buf(os->os_spa, db,
-			    dn->dn_object, byteorder, salt, iv, mac,
+			    dmu_objset_id(os), byteorder, salt, iv, mac,
 			    dn->dn_type, psize, lsize, compress_type);
 		} else if (compress_type != ZIO_COMPRESS_OFF) {
 			ASSERT3U(type, ==, ARC_BUFC_DATA);

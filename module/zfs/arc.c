@@ -1821,8 +1821,10 @@ arc_hdr_decrypt(arc_buf_hdr_t *hdr, kmutex_t *hash_lock, spa_t *spa,
 	 * won't be accessible via that dsobj anymore.
 	 */
 	ret = spa_keystore_lookup_key(spa, dsobj, FTAG, &dck);
-	if (ret != 0)
+	if (ret != 0) {
+		ret = SET_ERROR(EACCES);
 		goto error;
+	}
 
 	ret = zio_do_crypt_abd(B_FALSE, &dck->dck_key,
 	    hdr->b_crypt_hdr.b_salt, hdr->b_crypt_hdr.b_ot,

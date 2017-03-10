@@ -174,6 +174,9 @@ typedef enum dmu_send_resume_token_version {
 #define	DRR_WRITE_PAYLOAD_SIZE(drrw) \
 	(DRR_WRITE_COMPRESSED(drrw) ? (drrw)->drr_compressed_size : \
 	(drrw)->drr_logical_size)
+#define	DRR_SPILL_PAYLOAD_SIZE(drrs) \
+	(DRR_IS_RAW_ENCRYPTED(drrs->drr_flags) ? \
+	(drrs)->drr_compressed_size : (drrs)->drr_length)
 #define	DRR_OBJECT_PAYLOAD_SIZE(drro) \
 	(DRR_IS_RAW_ENCRYPTED(drro->drr_flags) ? \
 	drro->drr_raw_bonuslen : P2ROUNDUP(drro->drr_bonuslen, 8))

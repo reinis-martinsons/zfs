@@ -330,8 +330,7 @@ dump_write(dmu_sendarg_t *dsp, dmu_object_type_t type,
 			 * This is a raw encrypted block so we set the encrypted
 			 * flag. We need to pass along everything the receiving
 			 * side will need to interpret this block, including the
-			 * byteswap, salt, and IV. The MAC will be sent in
-			 * the drr_key.ddk_cksum.
+			 * byteswap, salt, IV, and MAC.
 			 */
 			drrw->drr_flags |= DRR_RAW_ENCRYPTED;
 			if (BP_SHOULD_BYTESWAP(bp))
@@ -2391,13 +2390,13 @@ receive_object(struct receive_writer_arg *rwa, struct drr_object *drro,
 
 	if (data != NULL) {
 		dmu_buf_t *db;
-		uint32_t dbflags = DB_RF_MUST_SUCCEED | DB_RF_NOPREFETCH;
+		uint32_t flags = DMU_READ_NO_PREFETCH;
 
 		if ((drro->drr_flags & DRR_RAW_ENCRYPTED) != 0)
-			dbflags |= DB_RF_NO_DECRYPT;
+			flags |= DMU_READ_NO_DECRYPT;
 
 		VERIFY0(dmu_bonus_hold_impl(rwa->os, drro->drr_object,
-		    FTAG, dbflags, &db));
+		    FTAG, flags, &db));
 		dmu_buf_will_dirty(db, tx);
 
 		ASSERT3U(db->db_size, >=, drro->drr_bonuslen);
@@ -2533,6 +2532,7 @@ receive_write_byref(struct receive_writer_arg *rwa,
 	guid_map_entry_t *gmep;
 	avl_index_t where;
 	objset_t *ref_os = NULL;
+	int flags = DMU_READ_PREFETCH;
 	dmu_buf_t *dbp;
 
 	if (drrwbr->drr_offset + drrwbr->drr_length < drrwbr->drr_offset)
@@ -2554,8 +2554,13 @@ receive_write_byref(struct receive_writer_arg *rwa,
 		ref_os = rwa->os;
 	}
 
+	if (DRR_IS_RAW_ENCRYPTED(drrwbr->drr_flags)) {
+		flags |= DMU_READ_NO_DECRYPT;
+	}
+
+	/* may return either a regular db or an encrypted one */
 	err = dmu_buf_hold(ref_os, drrwbr->drr_refobject,
-	    drrwbr->drr_refoffset, FTAG, &dbp, DMU_READ_PREFETCH);
+	    drrwbr->drr_refoffset, FTAG, &dbp, flags);
 	if (err != 0)
 		return (err);
 
@@ -2568,8 +2573,14 @@ receive_write_byref(struct receive_writer_arg *rwa,
 		dmu_tx_abort(tx);
 		return (err);
 	}
-	dmu_write(rwa->os, drrwbr->drr_object,
-	    drrwbr->drr_offset, drrwbr->drr_length, dbp->db_data, tx);
+
+	if (DRR_IS_RAW_ENCRYPTED(drrwbr->drr_flags)) {
+		dmu_copy_from_buf(rwa->os, drrwbr->drr_object,
+		    drrwbr->drr_offset, dbp, tx);
+	} else {
+		dmu_write(rwa->os, drrwbr->drr_object,
+		    drrwbr->drr_offset, drrwbr->drr_length, dbp->db_data, tx);
+	}
 	dmu_buf_rele(dbp, FTAG);
 
 	/* See comment in restore_write. */
@@ -3055,7 +3066,7 @@ receive_read_record(struct receive_arg *ra)
 	{
 		struct drr_spill *drrs = &ra->rrd->header.drr_u.drr_spill;
 		arc_buf_t *abuf;
-		int len;
+		int len = DRR_SPILL_PAYLOAD_SIZE(drrs);
 
 		/* DRR_SPILL records are either raw or uncompressed */
 		if (DRR_IS_RAW_ENCRYPTED(drrs->drr_flags)) {
@@ -3068,12 +3079,10 @@ receive_read_record(struct receive_arg *ra)
 			    drrs->drr_iv, drrs->drr_mac, drrs->drr_type,
 			    drrs->drr_compressed_size, drrs->drr_length,
 			    drrs->drr_compressiontype);
-			len = drrs->drr_compressed_size;
 		} else {
 			abuf = arc_loan_buf(dmu_objset_spa(ra->os),
 			    DMU_OT_IS_METADATA(drrs->drr_type),
 			    drrs->drr_length);
-			len = drrs->drr_length;
 		}
 
 		err = receive_read_payload_and_next_header(ra, len,

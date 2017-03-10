@@ -335,11 +335,9 @@ cksummer(void *arg)
 			struct drr_object *drro = &drr->drr_u.drr_object;
 			if (drro->drr_bonuslen > 0) {
 				(void) ssread(buf,
-				    P2ROUNDUP((uint64_t)drro->drr_bonuslen, 8),
-				    ofp);
+				    DRR_OBJECT_PAYLOAD_SIZE(drro), ofp);
 			}
-			if (dump_record(drr, buf,
-			    P2ROUNDUP((uint64_t)drro->drr_bonuslen, 8),
+			if (dump_record(drr, buf, DRR_OBJECT_PAYLOAD_SIZE(drro),
 			    &stream_cksum, outfd) != 0)
 				goto out;
 			break;
@@ -348,8 +346,8 @@ cksummer(void *arg)
 		case DRR_SPILL:
 		{
 			struct drr_spill *drrs = &drr->drr_u.drr_spill;
-			(void) ssread(buf, drrs->drr_length, ofp);
-			if (dump_record(drr, buf, drrs->drr_length,
+			(void) ssread(buf, DRR_SPILL_PAYLOAD_SIZE(drrs), ofp);
+			if (dump_record(drr, buf, DRR_SPILL_PAYLOAD_SIZE(drrs),
 			    &stream_cksum, outfd) != 0)
 				goto out;
 			break;
@@ -396,7 +394,7 @@ cksummer(void *arg)
 				drrw->drr_key.ddk_cksum.zc_word[3] =
 				    BE_64(tmpsha256.zc_word[3]);
 				drrw->drr_checksumtype = ZIO_CHECKSUM_SHA256;
-				drrw->drr_flags = DRR_CHECKSUM_DEDUP;
+				drrw->drr_flags |= DRR_CHECKSUM_DEDUP;
 			}
 
 			dataref.ref_guid = drrw->drr_toguid;
@@ -457,6 +455,14 @@ cksummer(void *arg)
 		}
 
 		case DRR_FREE:
+		{
+			if (dump_record(drr, NULL, 0, &stream_cksum,
+			    outfd) != 0)
+				goto out;
+			break;
+		}
+
+		case DRR_OBJECT_RANGE:
 		{
 			if (dump_record(drr, NULL, 0, &stream_cksum,
 			    outfd) != 0)

@@ -773,6 +773,7 @@ int dmu_free_long_object(objset_t *os, uint64_t object);
  */
 #define	DMU_READ_PREFETCH	0 /* prefetch */
 #define	DMU_READ_NO_PREFETCH	1 /* don't prefetch */
+#define	DMU_READ_NO_DECRYPT	2 /* don't decrypt */
 int dmu_read(objset_t *os, uint64_t object, uint64_t offset, uint64_t size,
 	void *buf, uint32_t flags);
 int dmu_read_by_dnode(dnode_t *dn, uint64_t offset, uint64_t size, void *buf,
@@ -800,6 +801,8 @@ void dmu_assign_arcbuf_impl(dmu_buf_t *handle, struct arc_buf *buf,
     dmu_tx_t *tx);
 void dmu_convert_to_raw(dmu_buf_t *handle, boolean_t byteorder,
     const uint8_t *salt, const uint8_t *iv, const uint8_t *mac);
+void dmu_copy_from_buf(objset_t *os, uint64_t object, uint64_t offset,
+    dmu_buf_t *handle, dmu_tx_t *tx);
 #ifdef HAVE_UIO_ZEROCOPY
 int dmu_xuio_init(struct xuio *uio, int niov);
 void dmu_xuio_fini(struct xuio *uio);
