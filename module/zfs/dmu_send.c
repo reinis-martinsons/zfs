@@ -556,9 +556,8 @@ dump_dnode(dmu_sendarg_t *dsp, const blkptr_t *bp, uint64_t object,
 		}
 	}
 
-	if (dump_record(dsp, DN_BONUS(dnp), bonuslen) != 0) {
+	if (dump_record(dsp, DN_BONUS(dnp), bonuslen) != 0)
 		return (SET_ERROR(EINTR));
-	}
 
 	/* Free anything past the end of the file. */
 	if (dump_free(dsp, object, (dnp->dn_maxblkid + 1) *

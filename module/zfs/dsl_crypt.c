@@ -1856,6 +1856,7 @@ dsl_crypto_recv_key_sync(void *arg, dmu_tx_t *tx)
 	dsl_crypto_key_sync_impl(mos, ds->ds_dir->dd_crypto_obj, crypt, iv,
 	    mac, keydata, hmac_keydata, tx);
 	dsl_dataset_activate_feature(dsobj, SPA_FEATURE_ENCRYPTION, tx);
+	ds->ds_feature_inuse[SPA_FEATURE_ENCRYPTION] = B_TRUE;
 
 	/* save the dd_crypto_obj on disk */
 	VERIFY0(zap_add(mos, ds->ds_dir->dd_object, DD_FIELD_CRYPTO_KEY_OBJ,
