@@ -1666,24 +1666,30 @@ dmu_recv_begin_check(void *arg, dmu_tx_t *tx)
 
 		if (drba->drba_origin != NULL) {
 			dsl_dataset_t *origin;
-			error = dsl_dataset_hold(dp, drba->drba_origin,
-			    FTAG, &origin);
+
+			/*
+			 * We hold origin with DS_HOLD_FLAG_DECRYPT for non-raw
+			 * sends so that we can check that the key is loaded
+			 * for cloning.
+			 */
+			error = dsl_dataset_hold_flags(dp, drba->drba_origin,
+			    dsflags, FTAG, &origin);
 			if (error != 0) {
 				dsl_dataset_rele_flags(ds, dsflags, FTAG);
 				return (error);
 			}
 			if (!origin->ds_is_snapshot) {
-				dsl_dataset_rele(origin, FTAG);
+				dsl_dataset_rele_flags(origin, dsflags, FTAG);
 				dsl_dataset_rele_flags(ds, dsflags, FTAG);
 				return (SET_ERROR(EINVAL));
 			}
 			if (dsl_dataset_phys(origin)->ds_guid != fromguid &&
 			    fromguid != 0) {
-				dsl_dataset_rele(origin, FTAG);
+				dsl_dataset_rele_flags(origin, dsflags, FTAG);
 				dsl_dataset_rele_flags(ds, dsflags, FTAG);
 				return (SET_ERROR(ENODEV));
 			}
-			dsl_dataset_rele(origin, FTAG);
+			dsl_dataset_rele_flags(origin, dsflags, FTAG);
 		}
 		dsl_dataset_rele_flags(ds, dsflags, FTAG);
 		error = 0;
