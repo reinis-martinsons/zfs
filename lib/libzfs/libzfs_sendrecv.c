@@ -648,7 +648,7 @@ typedef struct send_data {
 	 */
 } send_data_t;
 
-static void send_iterate_prop(zfs_handle_t *zhp, nvlist_t *nv, boolean_t raw);
+static void send_iterate_prop(zfs_handle_t *zhp, nvlist_t *nv);
 
 static int
 send_iterate_snap(zfs_handle_t *zhp, void *arg)
@@ -703,7 +703,7 @@ send_iterate_snap(zfs_handle_t *zhp, void *arg)
 	}
 
 	VERIFY(0 == nvlist_alloc(&nv, NV_UNIQUE_NAME, 0));
-	send_iterate_prop(zhp, nv, sd->raw);
+	send_iterate_prop(zhp, nv);
 	VERIFY(0 == nvlist_add_nvlist(sd->snapprops, snapname, nv));
 	nvlist_free(nv);
 
@@ -712,7 +712,7 @@ send_iterate_snap(zfs_handle_t *zhp, void *arg)
 }
 
 static void
-send_iterate_prop(zfs_handle_t *zhp, nvlist_t *nv, boolean_t raw)
+send_iterate_prop(zfs_handle_t *zhp, nvlist_t *nv)
 {
 	nvpair_t *elem = NULL;
 
@@ -881,7 +881,7 @@ send_iterate_fs(zfs_handle_t *zhp, void *arg)
 
 	/* iterate over props */
 	VERIFY(0 == nvlist_alloc(&nv, NV_UNIQUE_NAME, 0));
-	send_iterate_prop(zhp, nv, sd->raw);
+	send_iterate_prop(zhp, nv);
 
 	if (zfs_prop_get_int(zhp, ZFS_PROP_ENCRYPTION) != ZIO_CRYPT_OFF) {
 		/*
