@@ -44,6 +44,10 @@ typedef struct dsl_wrapping_key {
 	uint64_t wk_ddobj;
 } dsl_wrapping_key_t;
 
+typedef enum dcp_flags {
+	DCP_FLAG_RAW_RECV = (1 << 0) /* dcp represents raw recv */
+} dcp_flags_t;
+
 /*
  * This struct is a simple wrapper around all the parameters that are usually
  * required to setup encryption. It exists so that all of the params can be
@@ -52,6 +56,9 @@ typedef struct dsl_wrapping_key {
 typedef struct dsl_crypto_params {
 	/* the encryption algorithm */
 	enum zio_encrypt cp_crypt;
+
+	/* flags for extra info */
+	dcp_flags_t cp_flags;
 
 	/* keyformat property enum */
 	zfs_keyformat_t cp_keyformat;
@@ -135,7 +142,8 @@ int dsl_wrapping_key_create(uint8_t *wkeydata, dsl_wrapping_key_t **wkey_out);
 int dsl_crypto_params_create_nvlist(nvlist_t *props, nvlist_t *crypto_args,
     dsl_crypto_params_t **dcp_out);
 void dsl_crypto_params_free(dsl_crypto_params_t *dcp, boolean_t unload);
-int dsl_crypto_can_set_keylocation(const char *dsname, const char *keylocation);
+int dsl_crypto_can_set_keylocation(const char *dsname, zprop_source_t source,
+    const char *keylocation);
 
 void spa_keystore_init(spa_keystore_t *sk);
 void spa_keystore_fini(spa_keystore_t *sk);

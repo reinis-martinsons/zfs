@@ -721,9 +721,6 @@ typedef struct recvflags {
 	/* byteswap flag is used internally; callers need not specify */
 	boolean_t byteswap;
 
-	/* raw flag is used internally; callers need not specify */
-	boolean_t raw;
-
 	/* do not mount file systems as they are extracted (private) */
 	boolean_t nomount;
 } recvflags_t;

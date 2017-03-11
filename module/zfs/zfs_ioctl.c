@@ -2451,7 +2451,7 @@ zfs_prop_set_special(const char *dsname, zprop_source_t source,
 			err = -1;
 		break;
 	case ZFS_PROP_KEYLOCATION:
-		err = dsl_crypto_can_set_keylocation(dsname, strval);
+		err = dsl_crypto_can_set_keylocation(dsname, source, strval);
 
 		/*
 		 * Set err to -1 to force the zfs_set_prop_nvlist code down the
@@ -4191,7 +4191,11 @@ extract_delay_props(nvlist_t *props)
 {
 	nvlist_t *delayprops;
 	nvpair_t *nvp, *tmp;
-	static const zfs_prop_t delayable[] = { ZFS_PROP_REFQUOTA, 0 };
+	static const zfs_prop_t delayable[] = {
+		ZFS_PROP_REFQUOTA,
+		ZFS_PROP_KEYLOCATION,
+		0
+	};
 	int i;
 
 	VERIFY(nvlist_alloc(&delayprops, NV_UNIQUE_NAME, KM_SLEEP) == 0);
@@ -4307,6 +4311,14 @@ zfs_ioc_recv_impl(char *tofs, char *tosnap, char *origin,
 			(void) zfs_set_prop_nvlist(tofs, ZPROP_SRC_RECEIVED,
 			    props, *errors);
 		}
+	} else if (drc.drc_raw) {
+		/*
+		 * Raw send streams default to a "prompt" keylocation if
+		 * no properties are given.
+		 */
+		delayprops = fnvlist_alloc();
+		fnvlist_add_string(delayprops,
+		    zfs_prop_to_name(ZFS_PROP_KEYLOCATION), "prompt");
 	}
 
 	off = input_fp->f_offset;
@@ -4347,7 +4359,7 @@ zfs_ioc_recv_impl(char *tofs, char *tosnap, char *origin,
 		}
 	}
 
-	if (delayprops != NULL) {
+	if (delayprops != NULL && props != NULL) {
 		/*
 		 * Merge delayed props back in with initial props, in case
 		 * we're DEBUG and zfs_ioc_recv_inject_err is set (which means

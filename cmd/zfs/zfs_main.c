@@ -3955,7 +3955,7 @@ zfs_do_send(int argc, char **argv)
 			lzc_flags |= LZC_SEND_FLAG_EMBED_DATA;
 		if (flags.compress)
 			lzc_flags |= LZC_SEND_FLAG_COMPRESS;
-		if (flags.compress)
+		if (flags.raw)
 			lzc_flags |= LZC_SEND_FLAG_RAW;
 
 		if (fromname != NULL &&

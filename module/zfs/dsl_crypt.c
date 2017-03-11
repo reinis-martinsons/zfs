@@ -501,7 +501,8 @@ error:
 }
 
 int
-dsl_crypto_can_set_keylocation(const char *dsname, const char *keylocation)
+dsl_crypto_can_set_keylocation(const char *dsname, zprop_source_t source,
+    const char *keylocation)
 {
 	int ret = 0;
 	dsl_dir_t *dd = NULL;
@@ -532,6 +533,12 @@ dsl_crypto_can_set_keylocation(const char *dsname, const char *keylocation)
 	/* check for a valid keylocation for encrypted datasets */
 	if (!zfs_prop_valid_keylocation(keylocation, B_TRUE)) {
 		ret = SET_ERROR(EINVAL);
+		goto out;
+	}
+
+	/* If this is a received keylocation we don't need do anything else */
+	if ((source & ZPROP_SRC_RECEIVED) != 0) {
+		ret = 0;
 		goto out;
 	}
 
@@ -1572,6 +1579,9 @@ dmu_objset_create_crypt_check(dsl_dir_t *parentdd, dsl_dir_t *origindd,
 		return (0);
 	}
 
+	/* flags are only used for raw receives, which are not checked here */
+	ASSERT0(dcp->cp_flags);
+
 	/* check for valid dcp with no encryption (inherited or local) */
 	if (effective_crypt == ZIO_CRYPT_OFF) {
 		/* Must not specify encryption params */
@@ -1595,7 +1605,8 @@ dmu_objset_create_crypt_check(dsl_dir_t *parentdd, dsl_dir_t *origindd,
 	if (dcp->cp_wkey == NULL) {
 		/* key must be fully unspecified */
 		if (dcp->cp_keyformat != ZFS_KEYFORMAT_NONE ||
-		    dcp->cp_keylocation != NULL)
+		    dcp->cp_keylocation != NULL || dcp->cp_salt != 0 ||
+		    dcp->cp_iters != 0)
 			return (SET_ERROR(EINVAL));
 
 		/* parent must have a key to inherit */
@@ -1659,6 +1670,25 @@ dsl_dataset_create_crypt_sync(uint64_t dsobj, dsl_dir_t *dd,
 	uint64_t crypt = (dcp != NULL) ? dcp->cp_crypt : ZIO_CRYPT_INHERIT;
 	dsl_wrapping_key_t *wkey = (dcp != NULL) ? dcp->cp_wkey : NULL;
 
+	if (dcp != NULL) {
+		/* raw receives will handle their own key creation */
+		if (dcp->cp_flags & DCP_FLAG_RAW_RECV) {
+			ASSERT3U(dcp->cp_crypt, ==, ZIO_CRYPT_INHERIT);
+			ASSERT3U(dcp->cp_keyformat, ==, ZFS_KEYFORMAT_NONE);
+			ASSERT3P(dcp->cp_keylocation, ==, NULL);
+			ASSERT3U(dcp->cp_wkey, ==, NULL);
+			ASSERT0(dcp->cp_salt);
+			ASSERT0(dcp->cp_iters);
+			return;
+		}
+
+		crypt = dcp->cp_crypt;
+		wkey = dcp->cp_wkey;
+	} else {
+		crypt = ZIO_CRYPT_INHERIT;
+		wkey = NULL;
+	}
+
 	/* figure out the effective crypt */
 	if (!dsl_dir_is_clone(dd)) {
 		if (crypt == ZIO_CRYPT_INHERIT && dd->dd_parent != NULL) {
@@ -1702,7 +1732,7 @@ dsl_dataset_create_crypt_sync(uint64_t dsobj, dsl_dir_t *dd,
 	    tx));
 
 	/*
-	 * If we inheritted the wrapping key we release our reference now.
+	 * If we inherited the wrapping key we release our reference now.
 	 * Otherwise, this is a new key and we need to load it into the
 	 * keystore.
 	 */

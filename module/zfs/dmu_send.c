@@ -1083,6 +1083,8 @@ dmu_send_impl(void *tag, dsl_pool_t *dp, dsl_dataset_t *to_ds,
 	to_arg.ds = to_ds;
 	to_arg.fromtxg = fromtxg;
 	to_arg.flags = TRAVERSE_PRE | TRAVERSE_PREFETCH;
+	if (rawok)
+		to_arg.flags |= TRAVERSE_NO_DECRYPT;
 	(void) thread_create(NULL, 0, send_traverse_thread, &to_arg, 0, curproc,
 	    TS_RUN, minclsyspri);
 
@@ -1128,7 +1130,6 @@ dmu_send_impl(void *tag, dsl_pool_t *dp, dsl_dataset_t *to_ds,
 
 	if (dump_record(dsp, NULL, 0) != 0)
 		err = dsp->dsa_err;
-
 out:
 	mutex_enter(&to_ds->ds_sendstream_lock);
 	list_remove(&to_ds->ds_sendstreams, dsp);
@@ -1152,7 +1153,7 @@ dmu_send_obj(const char *pool, uint64_t tosnap, uint64_t fromsnap,
 	dsl_pool_t *dp;
 	dsl_dataset_t *ds;
 	dsl_dataset_t *fromds = NULL;
-	int dsflags = DS_HOLD_FLAG_DECRYPT;
+	ds_hold_flags_t dsflags = (rawok) ? 0 : DS_HOLD_FLAG_DECRYPT;
 	int err;
 
 	err = dsl_pool_hold(pool, FTAG, &dp);
@@ -1204,7 +1205,7 @@ dmu_send(const char *tosnap, const char *fromsnap, boolean_t embedok,
 	dsl_pool_t *dp;
 	dsl_dataset_t *ds;
 	int err;
-	int dsflags = DS_HOLD_FLAG_DECRYPT;
+	ds_hold_flags_t dsflags = (rawok) ? 0 : DS_HOLD_FLAG_DECRYPT;
 	boolean_t owned = B_FALSE;
 
 	if (fromsnap != NULL && strpbrk(fromsnap, "@#") == NULL)
@@ -1535,7 +1536,7 @@ dmu_recv_begin_check(void *arg, dmu_tx_t *tx)
 	struct drr_begin *drrb = drba->drba_cookie->drc_drrb;
 	uint64_t fromguid = drrb->drr_fromguid;
 	int flags = drrb->drr_flags;
-	int dsflags = DS_HOLD_FLAG_DECRYPT;
+	ds_hold_flags_t dsflags = 0;
 	int error;
 	uint64_t featureflags = DMU_GET_FEATUREFLAGS(drrb->drr_versioninfo);
 	dsl_dataset_t *ds;
@@ -1597,9 +1598,12 @@ dmu_recv_begin_check(void *arg, dmu_tx_t *tx)
 		return (SET_ERROR(ENOTSUP));
 
 	/* raw receives require the encryption feature */
-	if ((featureflags & DMU_BACKUP_FEATURE_RAW) &&
-	    !spa_feature_is_enabled(dp->dp_spa, SPA_FEATURE_ENCRYPTION))
-		return (SET_ERROR(ENOTSUP));
+	if ((featureflags & DMU_BACKUP_FEATURE_RAW)) {
+		if (!spa_feature_is_enabled(dp->dp_spa, SPA_FEATURE_ENCRYPTION))
+			return (SET_ERROR(ENOTSUP));
+	} else {
+		dsflags |= DS_HOLD_FLAG_DECRYPT;
+	}
 
 	error = dsl_dataset_hold_flags(dp, tofs, dsflags, FTAG, &ds);
 	if (error == 0) {
@@ -1695,14 +1699,21 @@ dmu_recv_begin_sync(void *arg, dmu_tx_t *tx)
 	objset_t *mos = dp->dp_meta_objset;
 	struct drr_begin *drrb = drba->drba_cookie->drc_drrb;
 	const char *tofs = drba->drba_cookie->drc_tofs;
+	uint64_t featureflags = DMU_GET_FEATUREFLAGS(drrb->drr_versioninfo);
 	dsl_dataset_t *ds, *newds;
 	uint64_t dsobj;
-	int dsflags = DS_HOLD_FLAG_DECRYPT;
+	ds_hold_flags_t dsflags = 0;
 	int error;
 	uint64_t crflags = 0;
+	dsl_crypto_params_t dcp = { 0 };
 
 	if (drrb->drr_flags & DRR_FLAG_CI_DATA)
 		crflags |= DS_FLAG_CI_DATASET;
+	if ((featureflags & DMU_BACKUP_FEATURE_RAW) == 0) {
+		dsflags |= DS_HOLD_FLAG_DECRYPT;
+	} else {
+		dcp.cp_flags |= DCP_FLAG_RAW_RECV;
+	}
 
 	error = dsl_dataset_hold_flags(dp, tofs, dsflags, FTAG, &ds);
 	if (error == 0) {
@@ -1713,7 +1724,7 @@ dmu_recv_begin_sync(void *arg, dmu_tx_t *tx)
 			    drba->drba_snapobj, FTAG, &snap));
 		}
 		dsobj = dsl_dataset_create_sync(ds->ds_dir, recv_clone_name,
-		    snap, crflags, drba->drba_cred, NULL, tx);
+		    snap, crflags, drba->drba_cred, &dcp, tx);
 		if (drba->drba_snapobj != 0)
 			dsl_dataset_rele(snap, FTAG);
 		dsl_dataset_rele_flags(ds, dsflags, FTAG);
@@ -1732,7 +1743,7 @@ dmu_recv_begin_sync(void *arg, dmu_tx_t *tx)
 		/* Create new dataset. */
 		dsobj = dsl_dataset_create_sync(dd,
 		    strrchr(tofs, '/') + 1,
-		    origin, crflags, drba->drba_cred, NULL, tx);
+		    origin, crflags, drba->drba_cred, &dcp, tx);
 		if (origin != NULL)
 			dsl_dataset_rele(origin, FTAG);
 		dsl_dir_rele(dd, FTAG);
@@ -1759,23 +1770,19 @@ dmu_recv_begin_sync(void *arg, dmu_tx_t *tx)
 		    8, 1, &zero, tx));
 		VERIFY0(zap_add(mos, dsobj, DS_FIELD_RESUME_BYTES,
 		    8, 1, &zero, tx));
-		if (DMU_GET_FEATUREFLAGS(drrb->drr_versioninfo) &
-		    DMU_BACKUP_FEATURE_LARGE_BLOCKS) {
+		if (featureflags & DMU_BACKUP_FEATURE_LARGE_BLOCKS) {
 			VERIFY0(zap_add(mos, dsobj, DS_FIELD_RESUME_LARGEBLOCK,
 			    8, 1, &one, tx));
 		}
-		if (DMU_GET_FEATUREFLAGS(drrb->drr_versioninfo) &
-		    DMU_BACKUP_FEATURE_EMBED_DATA) {
+		if (featureflags & DMU_BACKUP_FEATURE_EMBED_DATA) {
 			VERIFY0(zap_add(mos, dsobj, DS_FIELD_RESUME_EMBEDOK,
 			    8, 1, &one, tx));
 		}
-		if (DMU_GET_FEATUREFLAGS(drrb->drr_versioninfo) &
-		    DMU_BACKUP_FEATURE_COMPRESSED) {
+		if (featureflags & DMU_BACKUP_FEATURE_COMPRESSED) {
 			VERIFY0(zap_add(mos, dsobj, DS_FIELD_RESUME_COMPRESSOK,
 			    8, 1, &one, tx));
 		}
-		if (DMU_GET_FEATUREFLAGS(drrb->drr_versioninfo) &
-		    DMU_BACKUP_FEATURE_RAW) {
+		if (featureflags & DMU_BACKUP_FEATURE_RAW) {
 			VERIFY0(zap_add(mos, dsobj, DS_FIELD_RESUME_RAWOK,
 			    8, 1, &one, tx));
 		}
@@ -1786,12 +1793,11 @@ dmu_recv_begin_sync(void *arg, dmu_tx_t *tx)
 	 * DSL Crypto Key object in the dd. However, that will not be received
 	 * until dmu_recv_stream(), so we set the value manually for now.
 	 */
-	if ((DMU_GET_FEATUREFLAGS(drrb->drr_versioninfo) &
-	    DMU_BACKUP_FEATURE_RAW)) {
+	if (featureflags & DMU_BACKUP_FEATURE_RAW) {
 		objset_t *os;
-
 		VERIFY0(dmu_objset_from_ds(newds, &os));
 		os->os_encrypted = B_TRUE;
+		drba->drba_cookie->drc_raw = B_TRUE;
 	}
 
 	dmu_buf_will_dirty(newds->ds_dbuf, tx);
@@ -1820,7 +1826,7 @@ dmu_recv_resume_begin_check(void *arg, dmu_tx_t *tx)
 	dsl_pool_t *dp = dmu_tx_pool(tx);
 	struct drr_begin *drrb = drba->drba_cookie->drc_drrb;
 	int error;
-	int dsflags = DS_HOLD_FLAG_DECRYPT;
+	ds_hold_flags_t dsflags = 0;
 	uint64_t featureflags = DMU_GET_FEATUREFLAGS(drrb->drr_versioninfo);
 	dsl_dataset_t *ds;
 	const char *tofs = drba->drba_cookie->drc_tofs;
@@ -1863,6 +1869,9 @@ dmu_recv_resume_begin_check(void *arg, dmu_tx_t *tx)
 
 	(void) snprintf(recvname, sizeof (recvname), "%s/%s",
 	    tofs, recv_clone_name);
+
+	if ((featureflags & DMU_BACKUP_FEATURE_RAW) == 0)
+		dsflags |= DS_HOLD_FLAG_DECRYPT;
 
 	if (dsl_dataset_hold_flags(dp, recvname, dsflags, FTAG, &ds) != 0) {
 		/* %recv does not exist; continue in tofs */
@@ -1929,7 +1938,10 @@ dmu_recv_resume_begin_sync(void *arg, dmu_tx_t *tx)
 	dmu_recv_begin_arg_t *drba = arg;
 	dsl_pool_t *dp = dmu_tx_pool(tx);
 	const char *tofs = drba->drba_cookie->drc_tofs;
+	struct drr_begin *drrb = drba->drba_cookie->drc_drrb;
+	uint64_t featureflags = DMU_GET_FEATUREFLAGS(drrb->drr_versioninfo);
 	dsl_dataset_t *ds;
+	ds_hold_flags_t dsflags = 0;
 	uint64_t dsobj;
 	/* 6 extra bytes for /%recv */
 	char recvname[ZFS_MAX_DATASET_NAME_LEN + 6];
@@ -1937,9 +1949,15 @@ dmu_recv_resume_begin_sync(void *arg, dmu_tx_t *tx)
 	(void) snprintf(recvname, sizeof (recvname), "%s/%s",
 	    tofs, recv_clone_name);
 
-	if (dsl_dataset_hold(dp, recvname, FTAG, &ds) != 0) {
+	if (featureflags & DMU_BACKUP_FEATURE_RAW) {
+		drba->drba_cookie->drc_raw = B_TRUE;
+	} else {
+		dsflags |= DS_HOLD_FLAG_DECRYPT;
+	}
+
+	if (dsl_dataset_hold_flags(dp, recvname, dsflags, FTAG, &ds) != 0) {
 		/* %recv does not exist; continue in tofs */
-		VERIFY0(dsl_dataset_hold(dp, tofs, FTAG, &ds));
+		VERIFY0(dsl_dataset_hold_flags(dp, tofs, dsflags, FTAG, &ds));
 		drba->drba_cookie->drc_newfs = B_TRUE;
 	}
 
@@ -1948,10 +1966,9 @@ dmu_recv_resume_begin_sync(void *arg, dmu_tx_t *tx)
 	dmu_buf_will_dirty(ds->ds_dbuf, tx);
 	dsl_dataset_phys(ds)->ds_flags &= ~DS_FLAG_INCONSISTENT;
 	dsobj = ds->ds_object;
-	dsl_dataset_rele(ds, FTAG);
+	dsl_dataset_rele_flags(ds, dsflags, FTAG);
 
-	VERIFY0(dsl_dataset_own_obj(dp, dsobj, DS_HOLD_FLAG_DECRYPT,
-	    dmu_recv_tag, &ds));
+	VERIFY0(dsl_dataset_own_obj(dp, dsobj, dsflags, dmu_recv_tag, &ds));
 
 	dmu_buf_will_dirty(ds->ds_dbuf, tx);
 	dsl_dataset_phys(ds)->ds_flags |= DS_FLAG_INCONSISTENT;
@@ -2758,7 +2775,7 @@ receive_object_range(struct receive_writer_arg *rwa,
 static void
 dmu_recv_cleanup_ds(dmu_recv_cookie_t *drc)
 {
-	int dsflags = DS_HOLD_FLAG_DECRYPT;
+	ds_hold_flags_t dsflags = DS_HOLD_FLAG_DECRYPT;
 
 	if (drc->drc_resumable) {
 		/* wait for our resume state to be written to disk */
@@ -3371,6 +3388,7 @@ dmu_recv_stream(dmu_recv_cookie_t *drc, vnode_t *vp, offset_t *voffp,
 		nvlist_t *keynvl = NULL;
 
 		ASSERT(ra->os->os_encrypted);
+		ASSERT(drc->drc_raw);
 
 		err = nvlist_lookup_nvlist(begin_nvl, "crypt_keydata", &keynvl);
 		if (err != 0)
@@ -3380,8 +3398,6 @@ dmu_recv_stream(dmu_recv_cookie_t *drc, vnode_t *vp, offset_t *voffp,
 		    drc->drc_ds->ds_object, keynvl);
 		if (err != 0)
 			goto out;
-
-		drc->drc_raw = B_TRUE;
 	}
 
 	if (featureflags & DMU_BACKUP_FEATURE_RESUMING) {
@@ -3650,8 +3666,10 @@ dmu_recv_end_sync(void *arg, dmu_tx_t *tx)
 	 * we release the key mapping manually here while we do have a valid
 	 * pointer.
 	 */
-	(void) spa_keystore_remove_mapping(dmu_tx_pool(tx)->dp_spa,
-	    drc->drc_ds->ds_object, drc->drc_ds);
+	if (!drc->drc_raw) {
+		(void) spa_keystore_remove_mapping(dmu_tx_pool(tx)->dp_spa,
+		    drc->drc_ds->ds_object, drc->drc_ds);
+	}
 	dsl_dataset_disown(drc->drc_ds, 0, dmu_recv_tag);
 	drc->drc_ds = NULL;
 }

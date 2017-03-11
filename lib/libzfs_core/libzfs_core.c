@@ -667,9 +667,6 @@ recv_impl(const char *snapname, nvlist_t *props, const char *origin,
 		if (resumable)
 			fnvlist_add_boolean(innvl, "resumable");
 
-		if (raw)
-			fnvlist_add_boolean(innvl, "raw");
-
 		if (cleanup_fd >= 0)
 			fnvlist_add_int32(innvl, "cleanup_fd", cleanup_fd);
 
