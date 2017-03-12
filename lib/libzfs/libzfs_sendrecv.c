@@ -885,7 +885,7 @@ send_iterate_fs(zfs_handle_t *zhp, void *arg)
 
 	if (zfs_prop_get_int(zhp, ZFS_PROP_ENCRYPTION) != ZIO_CRYPT_OFF) {
 		/*
-		 * If the root dataset  of a recursive send is encrypted, but
+		 * If the root dataset of a properties send is encrypted but
 		 * not an encryption root we need to adjust the properties so
 		 * that it appears to be an encryption root. This ensures that
 		 * all received datasets will have a valid keylocation.
@@ -916,8 +916,8 @@ send_iterate_fs(zfs_handle_t *zhp, void *arg)
 		if (!sd->raw) {
 			(void) fprintf(stderr, dgettext(TEXT_DOMAIN,
 			    "cannot send %s@%s: encrypted dataset %s may not "
-			    "be sent with properties unless raw flag is "
-			    "given\n"), sd->fsname, sd->tosnap, zhp->zfs_name);
+			    "be sent with properties without the raw flag\n"),
+			    sd->fsname, sd->tosnap, zhp->zfs_name);
 			rv = -1;
 			goto out;
 		}
@@ -2519,12 +2519,11 @@ recv_incremental_replication(libzfs_handle_t *hdl, const char *tofs,
 	char newname[ZFS_MAX_DATASET_NAME_LEN];
 	char guidname[32];
 	int error;
-	boolean_t needagain, progress, recursive, raw;
+	boolean_t needagain, progress, recursive;
 	char *s1, *s2;
 
 	VERIFY(0 == nvlist_lookup_string(stream_nv, "fromsnap", &fromsnap));
 
-	raw = (nvlist_lookup_boolean(stream_nv, "raw") == 0);
 	recursive = (nvlist_lookup_boolean(stream_nv, "not_recursive") ==
 	    ENOENT);
 
@@ -2537,7 +2536,7 @@ again:
 	VERIFY(0 == nvlist_alloc(&deleted, NV_UNIQUE_NAME, 0));
 
 	if ((error = gather_nvlist(hdl, tofs, fromsnap, NULL,
-	    recursive, raw, B_FALSE, &local_nv, &local_avl)) != 0)
+	    recursive, B_TRUE, B_FALSE, &local_nv, &local_avl)) != 0)
 		return (error);
 
 	/*
@@ -3593,7 +3592,7 @@ zfs_receive_one(libzfs_handle_t *hdl, int infd, const char *tosnap,
 		 * get a strange "does not exist" error message.
 		 */
 		*cp = '\0';
-		if (gather_nvlist(hdl, destsnap, NULL, NULL, B_FALSE, B_FALSE,
+		if (gather_nvlist(hdl, destsnap, NULL, NULL, B_FALSE, B_TRUE,
 		    B_FALSE, &local_nv, &local_avl) == 0) {
 			*cp = '@';
 			fs = fsavl_find(local_avl, drrb->drr_toguid, NULL);
@@ -3829,9 +3828,11 @@ zfs_receive_impl(libzfs_handle_t *hdl, const char *tosnap,
 		return (zfs_error(hdl, EZFS_BADSTREAM, errbuf));
 	}
 
-	/* don't attempt to mount raw receives since we won't have the key */
-	if (featureflags & DMU_BACKUP_FEATURE_RAW)
-		flags->nomount = B_TRUE;
+	if ((featureflags & DMU_BACKUP_FEATURE_RAW) && originsnap != NULL) {
+		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+		    "origin may not be specified for raw sends"));
+		return (zfs_error(hdl, EZFS_BADRESTORE, errbuf));
+	}
 
 	if (strchr(drrb->drr_toname, '@') == NULL) {
 		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN, "invalid "

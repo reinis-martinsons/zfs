@@ -1597,10 +1597,17 @@ dmu_recv_begin_check(void *arg, dmu_tx_t *tx)
 	    !spa_feature_is_enabled(dp->dp_spa, SPA_FEATURE_LARGE_DNODE))
 		return (SET_ERROR(ENOTSUP));
 
-	/* raw receives require the encryption feature */
 	if ((featureflags & DMU_BACKUP_FEATURE_RAW)) {
+		/* raw receives require the encryption feature */
 		if (!spa_feature_is_enabled(dp->dp_spa, SPA_FEATURE_ENCRYPTION))
 			return (SET_ERROR(ENOTSUP));
+
+		/*
+		 * Raw receives cannot specify an origin snapshot because we
+		 * cannot ensure the keys match.
+		 */
+		if (drba->drba_origin != NULL)
+			return (SET_ERROR(EINVAL));
 	} else {
 		dsflags |= DS_HOLD_FLAG_DECRYPT;
 	}
@@ -1668,28 +1675,30 @@ dmu_recv_begin_check(void *arg, dmu_tx_t *tx)
 			dsl_dataset_t *origin;
 
 			/*
-			 * We hold origin with DS_HOLD_FLAG_DECRYPT for non-raw
-			 * sends so that we can check that the key is loaded
-			 * for cloning.
+			 * We hold origin with DS_HOLD_FLAG_DECRYPT so that we
+			 * can check that the key is loaded for cloning.
 			 */
 			error = dsl_dataset_hold_flags(dp, drba->drba_origin,
-			    dsflags, FTAG, &origin);
+			    DS_HOLD_FLAG_DECRYPT, FTAG, &origin);
 			if (error != 0) {
 				dsl_dataset_rele_flags(ds, dsflags, FTAG);
 				return (error);
 			}
 			if (!origin->ds_is_snapshot) {
-				dsl_dataset_rele_flags(origin, dsflags, FTAG);
+				dsl_dataset_rele_flags(origin,
+				    DS_HOLD_FLAG_DECRYPT, FTAG);
 				dsl_dataset_rele_flags(ds, dsflags, FTAG);
 				return (SET_ERROR(EINVAL));
 			}
 			if (dsl_dataset_phys(origin)->ds_guid != fromguid &&
 			    fromguid != 0) {
-				dsl_dataset_rele_flags(origin, dsflags, FTAG);
+				dsl_dataset_rele_flags(origin,
+				    DS_HOLD_FLAG_DECRYPT, FTAG);
 				dsl_dataset_rele_flags(ds, dsflags, FTAG);
 				return (SET_ERROR(ENODEV));
 			}
-			dsl_dataset_rele_flags(origin, dsflags, FTAG);
+			dsl_dataset_rele_flags(origin,
+			    DS_HOLD_FLAG_DECRYPT, FTAG);
 		}
 		dsl_dataset_rele_flags(ds, dsflags, FTAG);
 		error = 0;
