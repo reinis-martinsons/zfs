@@ -26,8 +26,12 @@
 #include <sys/spa.h>
 #include <sys/dsl_dataset.h>
 
-/* forward declarations */
-struct dsl_dataset;
+/* ZAP entry keys for DSL Encryption Keys stored on disk */
+#define	DSL_CRYPTO_KEY_CRYPTO_SUITE "DSL_CRYPTO_SUITE"
+#define	DSL_CRYPTO_KEY_IV "DSL_CRYPTO_IV"
+#define	DSL_CRYPTO_KEY_MAC "DSL_CRYPTO_MAC"
+#define	DSL_CRYPTO_KEY_MASTER_KEY "DSL_CRYPTO_MASTER_KEY_1"
+#define	DSL_CRYPTO_KEY_HMAC_KEY "DSL_CRYPTO_HMAC_KEY_1"
 
 /* in memory representation of a wrapping key */
 typedef struct dsl_wrapping_key {

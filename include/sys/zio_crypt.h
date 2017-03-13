@@ -93,13 +93,6 @@ typedef struct zio_crypt_info {
 
 extern zio_crypt_info_t zio_crypt_table[ZIO_CRYPT_FUNCTIONS];
 
-/* ZAP entry keys for DSL Encryption Keys stored on disk */
-#define	DSL_CRYPTO_KEY_CRYPTO_SUITE "DSL_CRYPTO_SUITE"
-#define	DSL_CRYPTO_KEY_IV "DSL_CRYPTO_IV"
-#define	DSL_CRYPTO_KEY_MAC "DSL_CRYPTO_MAC"
-#define	DSL_CRYPTO_KEY_MASTER_KEY "DSL_CRYPTO_MASTER_KEY"
-#define	DSL_CRYPTO_KEY_HMAC_KEY "DSL_CRYPTO_HMAC_KEY"
-
 /* in memory representation of an unwrapped key that is loaded into memory */
 typedef struct zio_crypt_key {
 	/* encryption algorithm */
