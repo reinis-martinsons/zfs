@@ -1080,7 +1080,7 @@ zil_lwb_write_start(zilog_t *zilog, lwb_t *lwb)
 		wsz = lwb->lwb_sz;
 	}
 
-	zilc->zc_mac = 0;
+	zilc->zc_pad = 0;
 	zilc->zc_nused = lwb->lwb_nused;
 	zilc->zc_eck.zec_cksum = lwb->lwb_blk.blk_cksum;
 

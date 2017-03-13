@@ -124,7 +124,6 @@ enum zio_encrypt {
 #define	ZIO_DATA_IV_LEN 12
 #define	ZIO_DATA_SALT_LEN 8
 #define	ZIO_DATA_MAC_LEN 16
-#define	ZIO_ZIL_MAC_LEN 8
 
 /*
  * The number of "legacy" compression functions which can be set on individual

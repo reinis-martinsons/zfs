@@ -2226,8 +2226,7 @@ error:
 		/* zero out any state we might have changed while encrypting */
 		bzero(salt, ZIO_DATA_SALT_LEN);
 		bzero(iv, ZIO_DATA_IV_LEN);
-		bzero(mac, (ot == DMU_OT_INTENT_LOG) ?
-		    ZIO_ZIL_MAC_LEN : ZIO_DATA_MAC_LEN);
+		bzero(mac, ZIO_DATA_MAC_LEN);
 		abd_return_buf(pabd, plainbuf, datalen);
 		abd_return_buf_copy(cabd, cipherbuf, datalen);
 	} else {

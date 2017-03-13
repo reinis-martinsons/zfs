@@ -86,12 +86,18 @@
  * ZIL ENCRYPTION:
  * ZIL blocks have their bp written to disk ahead of the associated data, so we
  * cannot store encryption paramaters there as we normally do. For these blocks
- * the MAC is stored in the zil_chain_t header (in zc_mac) in a previously
- * unused 8 bytes. The salt and IV are generated for the block on bp allocation.
- * Since ZIL blocks are rewritten many times as new log records are added it is
- * important that we do not reuse the IV with the same salt. To accomplish this
- * we add in zc_nused from the zil_chain_t which should be incremented on each
- * rewrite.
+ * the MAC is stored in the embedded checksum within the zil_chain_t header. The
+ * salt and IV are generated for the block on bp allocation instead of at
+ * encryption time. In addition, ZIL blocks have some pieces that must be left
+ * in plaintext for claiming while all of the sensitive user data still needs to
+ * be encrypted. The function zio_crypt_init_uios_zil() handles parsing which
+ * which pieces of the block need to be encrypted.
+ *
+ * DNODE ENCRYPTION:
+ * Similarly to ZIL blocks, the core part of each dnode_phys_t needs to be left
+ * in plaintext for scrubbing and claiming, but the bonus buffers might contain
+ * sensitive user data. The function zio_crypt_init_uios_dnode() handles parsing
+ * which which pieces of the block need to be encrypted.
  *
  * CONSIDERATIONS FOR DEDUP:
  * In order for dedup to work, blocks that we want to dedup with one another
@@ -823,8 +829,11 @@ zio_crypt_decode_mac_bp(const blkptr_t *bp, uint8_t *mac)
 void
 zio_crypt_encode_mac_zil(void *data, uint8_t *mac)
 {
-	zil_chain_t *zc = data;
-	bcopy(mac, &zc->zc_mac, sizeof (uint64_t));
+	zil_chain_t *zilc = data;
+
+	bcopy(mac, &zilc->zc_eck.zec_cksum.zc_word[2], sizeof (uint64_t));
+	bcopy(mac + sizeof (uint64_t), &zilc->zc_eck.zec_cksum.zc_word[3],
+	    sizeof (uint64_t));
 }
 
 void
@@ -835,8 +844,11 @@ zio_crypt_decode_mac_zil(const void *data, uint8_t *mac)
 	 * not have been byteswapped by the time this function has been called.
 	 * As a result, we don't need to worry about byteswapping the MAC.
 	 */
-	const zil_chain_t *zc = data;
-	bcopy(&zc->zc_mac, mac, sizeof (uint64_t));
+	const zil_chain_t *zilc = data;
+
+	bcopy(&zilc->zc_eck.zec_cksum.zc_word[2], mac, sizeof (uint64_t));
+	bcopy(&zilc->zc_eck.zec_cksum.zc_word[3], mac + sizeof (uint64_t),
+	    sizeof (uint64_t));
 }
 
 /*
@@ -1237,7 +1249,6 @@ zio_crypt_init_uios(boolean_t encrypt, dmu_object_type_t ot, uint8_t *plainbuf,
     uint_t *enc_len)
 {
 	int ret;
-	uint_t maclen;
 	iovec_t *mac_iov;
 
 	ASSERT(DMU_OT_IS_ENCRYPTED(ot) || ot == DMU_OT_NONE);
@@ -1247,17 +1258,14 @@ zio_crypt_init_uios(boolean_t encrypt, dmu_object_type_t ot, uint8_t *plainbuf,
 	case DMU_OT_INTENT_LOG:
 		ret = zio_crypt_init_uios_zil(encrypt, plainbuf, cipherbuf,
 		    datalen, puio, cuio, enc_len);
-		maclen = ZIO_ZIL_MAC_LEN;
 		break;
 	case DMU_OT_DNODE:
 		ret = zio_crypt_init_uios_dnode(encrypt, plainbuf, cipherbuf,
 		    datalen, puio, cuio, enc_len);
-		maclen = ZIO_DATA_MAC_LEN;
 		break;
 	default:
 		ret = zio_crypt_init_uios_normal(encrypt, plainbuf, cipherbuf,
 		    datalen, puio, cuio, enc_len);
-		maclen = ZIO_DATA_MAC_LEN;
 		break;
 	}
 
@@ -1271,7 +1279,7 @@ zio_crypt_init_uios(boolean_t encrypt, dmu_object_type_t ot, uint8_t *plainbuf,
 
 	mac_iov = ((iovec_t *)&cuio->uio_iov[cuio->uio_iovcnt - 1]);
 	mac_iov->iov_base = mac;
-	mac_iov->iov_len = maclen;
+	mac_iov->iov_len = ZIO_DATA_MAC_LEN;
 
 	return (0);
 
