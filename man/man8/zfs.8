@@ -175,12 +175,12 @@ zfs \- configures ZFS file systems
 
 .LP
 .nf
-\fBzfs\fR \fBsend\fR [\fB-DnPpRveLc\fR] [\fB-\fR[\fBiI\fR] \fIsnapshot\fR] \fIsnapshot\fR
+\fBzfs\fR \fBsend\fR [\fB-DnPpRveLcr\fR] [\fB-\fR[\fBiI\fR] \fIsnapshot\fR] \fIsnapshot\fR
 .fi
 
 .LP
 .nf
-\fBzfs\fR \fBsend\fR [\fB-Le\fR] [\fB-i \fIsnapshot\fR|\fIbookmark\fR]\fR \fIfilesystem\fR|\fIvolume\fR|\fIsnapshot\fR
+\fBzfs\fR \fBsend\fR [\fB-Lecr\fR] [\fB-i \fIsnapshot\fR|\fIbookmark\fR]\fR \fIfilesystem\fR|\fIvolume\fR|\fIsnapshot\fR
 .fi
 
 .LP
@@ -1043,7 +1043,7 @@ For more details and caveats about encryption see the "Encryption" section.
 .ad
 .sp .6
 .RS 4n
-Controls what format the user's encryption key will be provided as. This 
+Controls what format the user's encryption key will be provided as. This
 property is only set when the dataset is encrypted.
 .sp
 Raw keys and hex keys must be 32 bytes long (regardless of the chosen
@@ -1051,7 +1051,7 @@ encryption suite) and must be randomly generated. Passphrases must be between
 8 and 64 bytes long and will be processed through PBKDF2 before being used
 (see the \fBpbkdf2iters\fR property). Even though the encryption suite cannot
 be changed after dataset creation, the keyformat can be with
-\fBzfs change-key\fR. 
+\fBzfs change-key\fR.
 .RE
 
 .sp
@@ -1073,7 +1073,7 @@ children that inherit the \fBkeylocation\fR property are automatically loaded
 as well.
 .sp
 Even though the encryption suite cannot be changed after dataset creation, the
-keylocation can be with \fBzfs change-key\fR. If the dataset is an encryption 
+keylocation can be with \fBzfs change-key\fR. If the dataset is an encryption
 root this property may also be changed with \fBzfs set\fR. If \fBprompt\fR is
 selected ZFS will ask for the key at the command prompt when it is required to
 access the encrypted data (see \fBzfs load-key\fR). This setting will also
@@ -2890,7 +2890,7 @@ See \fBzpool-features\fR(5) for details on ZFS feature flags and the
 .sp
 .ne 2
 .na
-\fBzfs send\fR [\fB-DnPpRveLc\fR] [\fB-\fR[\fBiI\fR] \fIsnapshot\fR] \fIsnapshot\fR
+\fBzfs send\fR [\fB-DnPpRveLcr\fR] [\fB-\fR[\fBiI\fR] \fIsnapshot\fR] \fIsnapshot\fR
 .ad
 .sp .6
 .RS 4n
@@ -2985,6 +2985,23 @@ system, then the receiving system must have that feature enabled as well.  If
 the \fBlarge_blocks\fR feature is enabled on the sending system but the \fB-L\fR
 option is not supplied in conjunction with \fB-c\fR, then the data will be
 decompressed before sending so it can be split into smaller block sizes.
+.RE
+
+.sp
+.ne 2
+.na
+\fB\fB-r\fR\fR
+.ad
+.sp .6
+.RS 4n
+For encrypted datasets send data exactly as it exists on disk. This allows
+backups to be taken even if encryption keys are not currently loaded. The
+backup may then be received on an untrusted machine since that machine will
+not have the encryption keys to read the protected data or alter it without
+being detected. Upon being received, the dataset will have the same encryption
+keys as it did on the send side, although the \fBkeylocation\fR property will
+be defaulted to \fBprompt\fR. For unencrypted datasets, this flag will be
+equivalent to \fB-c\fR.
 .RE
 
 .sp
@@ -3095,6 +3112,23 @@ system, then the receiving system must have that feature enabled as well.  If
 the \fBlarge_blocks\fR feature is enabled on the sending system but the \fB-L\fR
 option is not supplied in conjunction with \fB-c\fR, then the data will be
 decompressed before sending so it can be split into smaller block sizes.
+.RE
+
+.sp
+.ne 2
+.na
+\fB\fB-r\fR\fR
+.ad
+.sp .6
+.RS 4n
+For encrypted datasets send data exactly as it exists on disk. This allows
+backups to be taken even if encryption keys are not currently loaded. The
+backup may then be received on an untrusted machine since that machine will
+not have the encryption keys to read the protected data or alter it without
+being detected. Upon being received, the dataset will have the same encryption
+keys as it did on the send side, although the \fBkeylocation\fR property will
+be defaulted to \fBprompt\fR. For unencrypted datasets, this flag will be
+equivalent to \fB-c\fR.
 .RE
 
 .sp
