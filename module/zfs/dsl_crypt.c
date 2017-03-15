@@ -1190,15 +1190,10 @@ spa_keystore_rewrap_check(void *arg, dmu_tx_t *tx)
 {
 	int ret;
 	uint64_t keyformat = ZFS_KEYFORMAT_NONE;
-	dsl_dir_t *dd = NULL;
+	dsl_dir_t *dd = NULL, *inherit_dd = NULL;
 	dsl_pool_t *dp = dmu_tx_pool(tx);
 	spa_keystore_rewrap_args_t *skra = arg;
 	dsl_crypto_params_t *dcp = skra->skra_cp;
-
-	/* hold the dd */
-	ret = dsl_dir_hold(dp, skra->skra_dsname, FTAG, &dd, NULL);
-	if (ret != 0)
-		goto error;
 
 	/* check for the encryption feature */
 	if (!spa_feature_is_enabled(dp->dp_spa, SPA_FEATURE_ENCRYPTION)) {
@@ -1206,18 +1201,34 @@ spa_keystore_rewrap_check(void *arg, dmu_tx_t *tx)
 		goto error;
 	}
 
+	/* hold the dd */
+	ret = dsl_dir_hold(dp, skra->skra_dsname, FTAG, &dd, NULL);
+	if (ret != 0)
+		goto error;
+
 	/* verify that the dataset is encrypted */
 	if (dd->dd_crypto_obj == 0) {
 		ret = SET_ERROR(EINVAL);
 		goto error;
 	}
 
+	/* hold the dd where this dd is inheritting its key from */
+	ret = dsl_dir_hold_keylocation_source_dd(dd, FTAG, &inherit_dd);
+	if (ret != 0)
+		goto error;
+
 	/*
 	 * A NULL dcp implies that the user wants this dataset to inherit
 	 * the parent's wrapping key.
 	 */
 	if (dcp == NULL) {
-		/* Quickly check that the parent is encrypted */
+		/* check that this is an encryption root */
+		if (dd->dd_object != inherit_dd->dd_object) {
+			ret = SET_ERROR(EINVAL);
+			goto error;
+		}
+
+		/* check that the parent is encrypted */
 		if (dd->dd_parent->dd_crypto_obj == 0) {
 			ret = SET_ERROR(EINVAL);
 			goto error;
@@ -1232,8 +1243,20 @@ spa_keystore_rewrap_check(void *arg, dmu_tx_t *tx)
 			goto error;
 
 		dsl_dir_rele(dd, FTAG);
+		dsl_dir_rele(inherit_dd, FTAG);
 
 		return (0);
+	}
+
+	/*
+	 * If this dataset is not currently an encryption root we need a fully
+	 * specified key for this dataset to become a new encryption root.
+	 */
+	if (dd->dd_object != inherit_dd->dd_object &&
+	    (dcp->cp_keyformat == ZFS_KEYFORMAT_NONE ||
+	    dcp->cp_keylocation == NULL)) {
+		ret = SET_ERROR(EINVAL);
+		goto error;
 	}
 
 	/* figure out what the new format will be */
@@ -1246,6 +1269,12 @@ spa_keystore_rewrap_check(void *arg, dmu_tx_t *tx)
 		keyformat = dcp->cp_keyformat;
 	}
 
+	/* crypt cannot be changed after creation */
+	if (dcp->cp_crypt != ZIO_CRYPT_INHERIT) {
+		ret = SET_ERROR(EINVAL);
+		goto error;
+	}
+
 	/* we are not inheritting our parent's wkey so we need one ourselves */
 	if (dcp->cp_wkey == NULL) {
 		ret = SET_ERROR(EINVAL);
@@ -1255,12 +1284,6 @@ spa_keystore_rewrap_check(void *arg, dmu_tx_t *tx)
 	/* check that the keylocation is valid or NULL */
 	if (dcp->cp_keylocation != NULL &&
 	    !zfs_prop_valid_keylocation(dcp->cp_keylocation, B_TRUE)) {
-		ret = SET_ERROR(EINVAL);
-		goto error;
-	}
-
-	/* crypt cannot be changed after creation */
-	if (dcp->cp_crypt != ZIO_CRYPT_INHERIT) {
 		ret = SET_ERROR(EINVAL);
 		goto error;
 	}
@@ -1279,12 +1302,15 @@ spa_keystore_rewrap_check(void *arg, dmu_tx_t *tx)
 		goto error;
 
 	dsl_dir_rele(dd, FTAG);
+	dsl_dir_rele(inherit_dd, FTAG);
 
 	return (0);
 
 error:
 	if (dd != NULL)
 		dsl_dir_rele(dd, FTAG);
+	if (inherit_dd != NULL)
+		dsl_dir_rele(inherit_dd, FTAG);
 
 	return (ret);
 }

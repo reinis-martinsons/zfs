@@ -1504,21 +1504,57 @@ zfs_crypto_rewrap(zfs_handle_t *zhp, nvlist_t *raw_props, boolean_t inheritkey)
 		(void) nvlist_lookup_string(props,
 		    zfs_prop_to_name(ZFS_PROP_KEYLOCATION), &keylocation);
 
-		if (keyformat == ZFS_KEYFORMAT_NONE)
-			keyformat = zfs_prop_get_int(zhp, ZFS_PROP_KEYFORMAT);
+		/* check whether zhp is an encryption root */
+		ret = zfs_crypto_is_encryption_root(zhp, &is_encroot);
+		if (ret != 0) {
+			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
+			    "Failed to find encryption root."));
+			ret = EINVAL;
+			goto error;
+		}
 
-		if (keylocation == NULL) {
-			ret = zfs_prop_get(zhp, ZFS_PROP_KEYLOCATION,
-			    prop_keylocation, sizeof (prop_keylocation),
-			    NULL, NULL, 0, B_TRUE);
-			if (ret != 0) {
+		if (is_encroot) {
+			/*
+			 * If this is already an ecryption root, just keep
+			 * any properties not set by the user
+			 */
+			if (keyformat == ZFS_KEYFORMAT_NONE)
+				keyformat = zfs_prop_get_int(zhp,
+				    ZFS_PROP_KEYFORMAT);
+
+			if (keylocation == NULL) {
+				ret = zfs_prop_get(zhp, ZFS_PROP_KEYLOCATION,
+				    prop_keylocation, sizeof (prop_keylocation),
+				    NULL, NULL, 0, B_TRUE);
+				if (ret != 0) {
+					zfs_error_aux(zhp->zfs_hdl,
+					    dgettext(TEXT_DOMAIN, "Failed to "
+					    "get existing keylocation "
+					    "property."));
+					goto error;
+				}
+
+				keylocation = prop_keylocation;
+			}
+		} else {
+			/* need a new key for non-encryption roots */
+			if (keyformat == ZFS_KEYFORMAT_NONE) {
+				ret = EINVAL;
 				zfs_error_aux(zhp->zfs_hdl,
-				    dgettext(TEXT_DOMAIN, "Failed to get "
-				    "existing keylocation property."));
+				    dgettext(TEXT_DOMAIN, "Keyformat required "
+				    "for new encryption root."));
 				goto error;
 			}
 
-			keylocation = prop_keylocation;
+			/* default to prompt if no keylocation is specified */
+			if (keylocation == NULL) {
+				keylocation = "prompt";
+				ret = nvlist_add_string(props,
+				    zfs_prop_to_name(ZFS_PROP_KEYLOCATION),
+				    keylocation);
+				if (ret != 0)
+					goto error;
+			}
 		}
 
 		/* fetch the new wrapping key and associated properties */
