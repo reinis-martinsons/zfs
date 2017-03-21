@@ -1796,6 +1796,7 @@ arc_hdr_decrypt(arc_buf_hdr_t *hdr, kmutex_t *hash_lock, spa_t *spa,
 	dsl_crypto_key_t *dck = NULL;
 	abd_t *cabd = NULL;
 	void *tmp = NULL;
+	boolean_t no_crypt = B_FALSE;
 
 	if (hash_lock != NULL)
 		mutex_enter(hash_lock);
@@ -1830,12 +1831,13 @@ arc_hdr_decrypt(arc_buf_hdr_t *hdr, kmutex_t *hash_lock, spa_t *spa,
 	    hdr->b_crypt_hdr.b_salt, hdr->b_crypt_hdr.b_ot,
 	    hdr->b_crypt_hdr.b_iv, hdr->b_crypt_hdr.b_mac,
 	    HDR_GET_PSIZE(hdr), hdr->b_l1hdr.b_pabd,
-	    hdr->b_crypt_hdr.b_rabd);
-	if (ret == ZIO_NO_ENCRYPTION_NEEDED) {
+	    hdr->b_crypt_hdr.b_rabd, &no_crypt);
+	if (ret != 0)
+		goto error;
+
+	if (no_crypt) {
 		abd_copy(hdr->b_l1hdr.b_pabd, hdr->b_crypt_hdr.b_rabd,
 		    HDR_GET_PSIZE(hdr));
-	} else if (ret != 0) {
-		goto error;
 	}
 
 	/*
@@ -7682,10 +7684,11 @@ l2arc_read_done(zio_t *zio)
 		uint8_t iv[ZIO_DATA_IV_LEN];
 		uint8_t mac[ZIO_DATA_MAC_LEN];
 		abd_t *eabd = arc_get_data_abd(hdr, arc_hdr_size(hdr), hdr);
+		boolean_t no_crypt = B_FALSE;
 
 		/*
 		 * ZIL data is never be written to the L2ARC, so we don't need
-		 * special handling for its unique mac storage.
+		 * special handling for its unique MAC storage.
 		 */
 		ASSERT3U(BP_GET_TYPE(bp), !=, DMU_OT_INTENT_LOG);
 
@@ -7700,12 +7703,12 @@ l2arc_read_done(zio_t *zio)
 
 			tfm_error = zio_do_crypt_abd(B_FALSE, &dck->dck_key,
 			    salt, BP_GET_TYPE(bp), iv, mac, HDR_GET_PSIZE(hdr),
-			    eabd, hdr->b_l1hdr.b_pabd);
+			    eabd, hdr->b_l1hdr.b_pabd, &no_crypt);
 
 			spa_keystore_dsl_key_rele(spa, dck, FTAG);
 		}
 
-		if (tfm_error == 0) {
+		if (tfm_error == 0 && !no_crypt) {
 			arc_free_data_abd(hdr, hdr->b_l1hdr.b_pabd,
 			    arc_hdr_size(hdr), hdr);
 			hdr->b_l1hdr.b_pabd = eabd;
@@ -7955,6 +7958,7 @@ l2arc_apply_transforms(spa_t *spa, arc_buf_hdr_t *hdr, abd_t **abd_out,
 	boolean_t ismd = HDR_ISTYPE_METADATA(hdr);
 	dsl_crypto_key_t *dck = NULL;
 	uint8_t mac[ZIO_DATA_MAC_LEN] = { 0 };
+	boolean_t no_crypt;
 
 	ASSERT((HDR_GET_COMPRESS(hdr) != ZIO_COMPRESS_OFF &&
 	    !HDR_COMPRESSION_ENABLED(hdr)) ||
@@ -8005,9 +8009,16 @@ l2arc_apply_transforms(spa_t *spa, arc_buf_hdr_t *hdr, abd_t **abd_out,
 
 		ret = zio_do_crypt_abd(B_TRUE, &dck->dck_key,
 		    hdr->b_crypt_hdr.b_salt, hdr->b_crypt_hdr.b_ot,
-		    hdr->b_crypt_hdr.b_iv, mac, csize, to_write, eabd);
+		    hdr->b_crypt_hdr.b_iv, mac, csize, to_write,
+		    eabd, &no_crypt);
 		if (ret != 0)
 			goto error;
+
+		if (no_crypt) {
+			spa_keystore_dsl_key_rele(spa, dck, FTAG);
+			abd_free(eabd);
+			goto out;
+		}
 
 		/* assert that the MAC we got here matches the one we saved */
 		ASSERT0(bcmp(mac, hdr->b_crypt_hdr.b_mac, ZIO_DATA_MAC_LEN));

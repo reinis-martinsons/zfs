@@ -401,7 +401,8 @@ done:
 	zilog->zl_parse_lr_count = lr_count;
 
 	ASSERT(!claimed || !(zh->zh_flags & ZIL_CLAIM_LR_SEQ_VALID) ||
-	    (max_blk_seq == claim_blk_seq && max_lr_seq == claim_lr_seq));
+	    (max_blk_seq == claim_blk_seq && max_lr_seq == claim_lr_seq) ||
+	    (decrypt && error == EIO));
 
 	zil_bp_tree_fini(zilog);
 	zio_buf_free(lrbuf, SPA_OLD_MAXBLOCKSIZE);

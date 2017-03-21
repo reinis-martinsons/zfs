@@ -2180,8 +2180,8 @@ error:
  */
 int
 spa_do_crypt_abd(boolean_t encrypt, spa_t *spa, zbookmark_phys_t *zb,
-    blkptr_t *bp, uint64_t txgid, uint_t datalen, abd_t *pabd, abd_t *cabd,
-    uint8_t *iv, uint8_t *mac, uint8_t *salt)
+    const blkptr_t *bp, uint64_t txgid, uint_t datalen, abd_t *pabd,
+    abd_t *cabd, uint8_t *iv, uint8_t *mac, uint8_t *salt, boolean_t *no_crypt)
 {
 	int ret;
 	dmu_object_type_t ot = BP_GET_TYPE(bp);
@@ -2231,7 +2231,7 @@ spa_do_crypt_abd(boolean_t encrypt, spa_t *spa, zbookmark_phys_t *zb,
 
 	/* call lower level function to perform encryption / decryption */
 	ret = zio_do_crypt_data(encrypt, &dck->dck_key, salt, ot, iv, mac,
-	    datalen, plainbuf, cipherbuf);
+	    datalen, plainbuf, cipherbuf, no_crypt);
 	if (ret != 0)
 		goto error;
 
