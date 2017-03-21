@@ -3476,6 +3476,8 @@ zfs_receive_one(libzfs_handle_t *hdl, int infd, const char *tosnap,
 
 		zfs_close(zhp);
 	} else {
+		zfs_handle_t *zhp;
+
 		/*
 		 * Destination filesystem does not exist.  Therefore we better
 		 * be creating a new filesystem (either from a full backup, or
@@ -3502,6 +3504,37 @@ zfs_receive_one(libzfs_handle_t *hdl, int infd, const char *tosnap,
 		    create_parents(hdl, destsnap, strlen(tosnap)) != 0) {
 			err = zfs_error(hdl, EZFS_BADRESTORE, errbuf);
 			goto out;
+		}
+
+		/*
+		 * It is invalid to receive a properties stream that was
+		 * unencrypted on the send side as a child of an encrypted
+		 * parent. Technically there is nothing preventing this, but
+		 * it would mean that the encryption=off property which is
+		 * locally set on the send side would not be received correctly.
+		 * We can infer encryption=off if the stream is not raw and
+		 * properties were included since the send side will only ever
+		 * send the encryption property in a raw nvlist header.
+		 */
+		if (!raw && props != NULL) {
+			uint64_t crypt;
+
+			zhp = zfs_open(hdl, name, ZFS_TYPE_DATASET);
+			if (zhp == NULL) {
+				err = zfs_error(hdl, EZFS_BADRESTORE, errbuf);
+				goto out;
+			}
+
+			crypt = zfs_prop_get_int(zhp, ZFS_PROP_ENCRYPTION);
+			zfs_close(zhp);
+
+			if (crypt != ZIO_CRYPT_OFF) {
+				zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+				    "parent '%s' must not be encrypted to "
+				    "receive unenecrypted property"), name);
+				err = zfs_error(hdl, EZFS_BADPROP, errbuf);
+				goto out;
+			}
 		}
 
 		newfs = B_TRUE;
