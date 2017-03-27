@@ -1034,7 +1034,7 @@ dbuf_read_impl(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags)
 		    DMU_OT_IS_ENCRYPTED(dn->dn_bonustype) &&
 		    (flags & DB_RF_NO_DECRYPT) == 0) {
 			err = arc_untransform(dn_buf, dn->dn_objset->os_spa,
-			    dmu_objset_id(dn->dn_objset), B_TRUE);
+			    dmu_objset_id(dn->dn_objset), B_TRUE, B_FALSE);
 			if (err != 0) {
 				DB_DNODE_EXIT(db);
 				mutex_exit(&db->db_mtx);
@@ -1113,7 +1113,7 @@ dbuf_read_impl(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags)
 	zio_flags = (flags & DB_RF_CANFAIL) ?
 	    ZIO_FLAG_CANFAIL : ZIO_FLAG_MUSTSUCCEED;
 
-	if ((flags & DB_RF_NO_DECRYPT) && BP_IS_ENCRYPTED(db->db_blkptr)) {
+	if ((flags & DB_RF_NO_DECRYPT) && BP_IS_PROTECTED(db->db_blkptr)) {
 		ASSERT3U(BP_GET_TYPE(db->db_blkptr), ==, DMU_OT_DNODE);
 		ASSERT3U(BP_GET_LEVEL(db->db_blkptr), ==, 0);
 		zio_flags |= ZIO_FLAG_RAW;
@@ -1244,8 +1244,9 @@ dbuf_read(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags)
 		    arc_get_compression(db->db_buf) != ZIO_COMPRESS_OFF)) {
 			dbuf_fix_old_data(db,
 			    spa_syncing_txg(dmu_objset_spa(db->db_objset)));
+			//FIXME: last bool should be whether key is loaded
 			err = arc_untransform(db->db_buf, spa,
-			    dmu_objset_id(db->db_objset), B_FALSE);
+			    dmu_objset_id(db->db_objset), B_FALSE, B_FALSE);
 			dbuf_set_data(db, db->db_buf);
 		}
 		mutex_exit(&db->db_mtx);

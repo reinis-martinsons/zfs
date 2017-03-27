@@ -1305,7 +1305,7 @@ dmu_objset_write_ready(zio_t *zio, arc_buf_t *abuf, void *arg)
 	uint64_t fill = 0;
 
 	ASSERT(!BP_IS_EMBEDDED(bp));
-	ASSERT(!BP_IS_ENCRYPTED(bp));
+	ASSERT(!BP_IS_PROTECTED(bp));
 	ASSERT3U(BP_GET_TYPE(bp), ==, DMU_OT_OBJSET);
 	ASSERT0(BP_GET_LEVEL(bp));
 

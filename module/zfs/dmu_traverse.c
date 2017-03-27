@@ -197,7 +197,7 @@ traverse_prefetch_metadata(traverse_data_t *td,
 	if (BP_GET_LEVEL(bp) == 0 && BP_GET_TYPE(bp) != DMU_OT_DNODE)
 		return;
 
-	if ((td->td_flags & TRAVERSE_NO_DECRYPT) && BP_IS_ENCRYPTED(bp))
+	if ((td->td_flags & TRAVERSE_NO_DECRYPT) && BP_IS_PROTECTED(bp))
 		zio_flags |= ZIO_FLAG_RAW;
 
 	(void) arc_read(NULL, td->td_spa, bp, NULL, NULL,
@@ -298,7 +298,7 @@ traverse_visitbp(traverse_data_t *td, const dnode_phys_t *dnp,
 		int32_t epb = BP_GET_LSIZE(bp) >> SPA_BLKPTRSHIFT;
 		zbookmark_phys_t *czb;
 
-		ASSERT(!BP_IS_ENCRYPTED(bp));
+		ASSERT(!BP_IS_PROTECTED(bp));
 
 		err = arc_read(NULL, td->td_spa, bp, arc_getbuf_func, &buf,
 		    ZIO_PRIORITY_ASYNC_READ, ZIO_FLAG_CANFAIL, &flags, zb);
@@ -339,7 +339,7 @@ traverse_visitbp(traverse_data_t *td, const dnode_phys_t *dnp,
 		 * dnode blocks might have their bonus buffers encrypted, so
 		 * we must be careful to honor TRAVERSE_NO_DECRYPT
 		 */
-		if ((td->td_flags & TRAVERSE_NO_DECRYPT) && BP_IS_ENCRYPTED(bp))
+		if ((td->td_flags & TRAVERSE_NO_DECRYPT) && BP_IS_PROTECTED(bp))
 			zio_flags |= ZIO_FLAG_RAW;
 
 		err = arc_read(NULL, td->td_spa, bp, arc_getbuf_func, &buf,
@@ -365,7 +365,7 @@ traverse_visitbp(traverse_data_t *td, const dnode_phys_t *dnp,
 		arc_flags_t flags = ARC_FLAG_WAIT;
 		objset_phys_t *osp;
 
-		ASSERT(!BP_IS_ENCRYPTED(bp));
+		ASSERT(!BP_IS_PROTECTED(bp));
 
 		err = arc_read(NULL, td->td_spa, bp, arc_getbuf_func, &buf,
 		    ZIO_PRIORITY_ASYNC_READ, ZIO_FLAG_CANFAIL, &flags, zb);
@@ -536,7 +536,7 @@ traverse_prefetcher(spa_t *spa, zilog_t *zilog, const blkptr_t *bp,
 	cv_broadcast(&pfd->pd_cv);
 	mutex_exit(&pfd->pd_mtx);
 
-	if ((pfd->pd_flags & TRAVERSE_NO_DECRYPT) && BP_IS_ENCRYPTED(bp))
+	if ((pfd->pd_flags & TRAVERSE_NO_DECRYPT) && BP_IS_PROTECTED(bp))
 		zio_flags |= ZIO_FLAG_RAW;
 
 	(void) arc_read(NULL, spa, bp, NULL, NULL, ZIO_PRIORITY_ASYNC_READ,

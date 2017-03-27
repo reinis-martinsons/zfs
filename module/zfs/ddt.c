@@ -287,7 +287,7 @@ ddt_bp_create(enum zio_checksum checksum,
 	BP_SET_LSIZE(bp, DDK_GET_LSIZE(ddk));
 	BP_SET_PSIZE(bp, DDK_GET_PSIZE(ddk));
 	BP_SET_COMPRESS(bp, DDK_GET_COMPRESS(ddk));
-	BP_SET_ENCRYPTED(bp, DDK_GET_ENCRYPTED(ddk));
+	BP_SET_CRYPT(bp, DDK_GET_CRYPT(ddk));
 	BP_SET_FILL(bp, 1);
 	BP_SET_CHECKSUM(bp, checksum);
 	BP_SET_TYPE(bp, DMU_OT_DEDUP);
@@ -305,7 +305,7 @@ ddt_key_fill(ddt_key_t *ddk, const blkptr_t *bp)
 	DDK_SET_LSIZE(ddk, BP_GET_LSIZE(bp));
 	DDK_SET_PSIZE(ddk, BP_GET_PSIZE(bp));
 	DDK_SET_COMPRESS(ddk, BP_GET_COMPRESS(bp));
-	DDK_SET_ENCRYPTED(ddk, BP_IS_ENCRYPTED(bp));
+	DDK_SET_CRYPT(ddk, BP_USES_CRYPT(bp));
 }
 
 void
@@ -598,7 +598,7 @@ ddt_ditto_copies_needed(ddt_t *ddt, ddt_entry_t *dde, ddt_phys_t *ddp_willref)
 	copies_needed = MAX(desired_copies, total_copies) - total_copies;
 
 	/* encrypted blocks store their IV in DVA[2] */
-	if (DDK_GET_ENCRYPTED(&dde->dde_key))
+	if (DDK_GET_CRYPT(&dde->dde_key))
 		copies_needed = MIN(copies_needed, SPA_DVAS_PER_BP - 1);
 
 	return (copies_needed);

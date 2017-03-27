@@ -612,7 +612,7 @@ dsl_scan_prefetch(dsl_scan_t *scn, arc_buf_t *buf, blkptr_t *bp,
 	    (BP_GET_LEVEL(bp) == 0 && BP_GET_TYPE(bp) != DMU_OT_DNODE))
 		return;
 
-	if (BP_IS_ENCRYPTED(bp)) {
+	if (BP_IS_PROTECTED(bp)) {
 		ASSERT3U(BP_GET_TYPE(bp), ==, DMU_OT_DNODE);
 		ASSERT3U(BP_GET_LEVEL(bp), ==, 0);
 		zio_flags |= ZIO_FLAG_RAW;
@@ -707,7 +707,7 @@ dsl_scan_recurse(dsl_scan_t *scn, dsl_dataset_t *ds, dmu_objset_type_t ostype,
 		int epb = BP_GET_LSIZE(bp) >> DNODE_SHIFT;
 		arc_buf_t *buf;
 
-		if (BP_IS_ENCRYPTED(bp)) {
+		if (BP_IS_PROTECTED(bp)) {
 			ASSERT3U(BP_GET_COMPRESS(bp), ==, ZIO_COMPRESS_OFF);
 			zio_flags |= ZIO_FLAG_RAW;
 		}

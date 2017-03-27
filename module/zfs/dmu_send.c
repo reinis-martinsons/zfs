@@ -324,7 +324,7 @@ dump_write(dmu_sendarg_t *dsp, dmu_object_type_t type,
 		ASSERT3S(psize, >, 0);
 
 		if (raw) {
-			ASSERT(BP_IS_ENCRYPTED(bp));
+			ASSERT(BP_IS_PROTECTED(bp));
 
 			/*
 			 * This is a raw encrypted block so we set the encrypted
@@ -356,7 +356,7 @@ dump_write(dmu_sendarg_t *dsp, dmu_object_type_t type,
 		payload_size = drrw->drr_logical_size;
 	}
 
-	if (bp == NULL || BP_IS_EMBEDDED(bp) || (BP_IS_ENCRYPTED(bp) && !raw)) {
+	if (bp == NULL || BP_IS_EMBEDDED(bp) || (BP_IS_PROTECTED(bp) && !raw)) {
 		/*
 		 * There's no pre-computed checksum for partial-block writes,
 		 * embedded BP's, or encrypted BP's that are being sent as
@@ -372,7 +372,7 @@ dump_write(dmu_sendarg_t *dsp, dmu_object_type_t type,
 		DDK_SET_LSIZE(&drrw->drr_key, BP_GET_LSIZE(bp));
 		DDK_SET_PSIZE(&drrw->drr_key, BP_GET_PSIZE(bp));
 		DDK_SET_COMPRESS(&drrw->drr_key, BP_GET_COMPRESS(bp));
-		DDK_SET_ENCRYPTED(&drrw->drr_key, BP_IS_ENCRYPTED(bp));
+		DDK_SET_CRYPT(&drrw->drr_key, BP_IS_PROTECTED(bp));
 		drrw->drr_key.ddk_cksum = bp->blk_cksum;
 	}
 
@@ -436,7 +436,7 @@ dump_spill(dmu_sendarg_t *dsp, const blkptr_t *bp, uint64_t object, void *data)
 
 	/* handle raw send fields */
 	if ((dsp->dsa_featureflags & DMU_BACKUP_FEATURE_RAW) != 0 &&
-	    BP_IS_ENCRYPTED(bp)) {
+	    BP_IS_PROTECTED(bp)) {
 		drrs->drr_flags |= DRR_RAW_ENCRYPTED;
 		if (BP_SHOULD_BYTESWAP(bp))
 			drrs->drr_flags |= DRR_RAW_BYTESWAP;
@@ -544,7 +544,7 @@ dump_dnode(dmu_sendarg_t *dsp, const blkptr_t *bp, uint64_t object,
 		drro->drr_blksz = SPA_OLD_MAXBLOCKSIZE;
 
 	if ((dsp->dsa_featureflags & DMU_BACKUP_FEATURE_RAW) &&
-	    BP_IS_ENCRYPTED(bp)) {
+	    BP_IS_PROTECTED(bp)) {
 		drro->drr_flags |= DRR_RAW_ENCRYPTED;
 		if (BP_SHOULD_BYTESWAP(bp))
 			drro->drr_flags |= DRR_RAW_BYTESWAP;
@@ -576,7 +576,7 @@ dump_object_range(dmu_sendarg_t *dsp, const blkptr_t *bp, uint64_t firstobj,
 	    &(dsp->dsa_drr->drr_u.drr_object_range);
 
 	/* we only use this for raw sends */
-	ASSERT(BP_IS_ENCRYPTED(bp));
+	ASSERT(BP_IS_PROTECTED(bp));
 	ASSERT(dsp->dsa_featureflags & DMU_BACKUP_FEATURE_RAW);
 	ASSERT3U(BP_GET_COMPRESS(bp), ==, ZIO_COMPRESS_OFF);
 
@@ -743,7 +743,7 @@ do_dump(dmu_sendarg_t *dsa, struct send_block_record *data)
 		int i;
 
 		if ((dsa->dsa_featureflags & DMU_BACKUP_FEATURE_RAW) &&
-		    BP_IS_ENCRYPTED(bp)) {
+		    BP_IS_PROTECTED(bp)) {
 			ASSERT3U(BP_GET_COMPRESS(bp), ==, ZIO_COMPRESS_OFF);
 			zioflags |= ZIO_FLAG_RAW;
 		}
@@ -779,7 +779,7 @@ do_dump(dmu_sendarg_t *dsa, struct send_block_record *data)
 		enum zio_flag zioflags = ZIO_FLAG_CANFAIL;
 
 		if ((dsa->dsa_featureflags & DMU_BACKUP_FEATURE_RAW) &&
-		    BP_IS_ENCRYPTED(bp))
+		    BP_IS_PROTECTED(bp))
 			zioflags |= ZIO_FLAG_RAW;
 
 		if (arc_read(NULL, spa, bp, arc_getbuf_func, &abuf,
@@ -833,7 +833,7 @@ do_dump(dmu_sendarg_t *dsa, struct send_block_record *data)
 		 */
 		boolean_t request_raw =
 		    (dsa->dsa_featureflags & DMU_BACKUP_FEATURE_RAW) &&
-		    BP_IS_ENCRYPTED(bp);
+		    BP_IS_PROTECTED(bp);
 
 		IMPLY(request_raw, !request_compressed);
 		IMPLY(request_raw, !split_large_blocks);

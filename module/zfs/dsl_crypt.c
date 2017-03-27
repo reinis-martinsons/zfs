@@ -2172,6 +2172,49 @@ error:
 	return (ret);
 }
 
+int
+spa_do_crypt_mac_abd(boolean_t generate, spa_t *spa, uint64_t dsobj, abd_t *abd,
+    uint_t datalen, uint8_t *mac)
+{
+	int ret;
+	dsl_crypto_key_t *dck = NULL;
+	uint8_t *buf = abd_borrow_buf(abd, datalen);
+	uint8_t digestbuf[SHA_256_DIGEST_LEN];
+
+	/* look up the key from the spa's keystore */
+	ret = spa_keystore_lookup_key(spa, dsobj, FTAG, &dck);
+	if (ret != 0)
+		goto error;
+
+	/* perform the hmac */
+	ret = zio_crypt_do_hmac(&dck->dck_key, buf, datalen, digestbuf);
+	if (ret != 0)
+		goto error;
+
+	abd_return_buf(abd, buf, datalen);
+	spa_keystore_dsl_key_rele(spa, dck, FTAG);
+
+	/*
+	 * Truncate and fill in mac buffer if we were asked to generate a MAC.
+	 * Otherwise verify that the MAC matched what we expected.
+	 */
+	if (generate) {
+		bcopy(digestbuf, mac, ZIO_DATA_MAC_LEN);
+		return (0);
+	}
+
+	if (bcmp(digestbuf, mac, ZIO_DATA_MAC_LEN) != 0)
+		return (SET_ERROR(EIO));
+
+	return (0);
+
+error:
+	if (dck != NULL)
+		spa_keystore_dsl_key_rele(spa, dck, FTAG);
+	abd_return_buf(abd, buf, datalen);
+	return (ret);
+}
+
 /*
  * This function serve as a multiplexer for encryption and decryption of
  * all blocks (except the L2ARC). For encryption, it will populate the IV,

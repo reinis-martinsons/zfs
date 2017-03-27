@@ -395,20 +395,35 @@ zio_decrypt(zio_t *zio, abd_t *data, uint64_t size)
 	int ret;
 	void *tmp;
 	blkptr_t *bp = zio->io_bp;
+	dmu_object_type_t ot = BP_GET_TYPE(bp);
 	uint8_t salt[ZIO_DATA_SALT_LEN];
 	uint8_t iv[ZIO_DATA_IV_LEN];
 	uint8_t mac[ZIO_DATA_MAC_LEN];
 	boolean_t no_crypt = B_FALSE;
 
-	ASSERT(BP_IS_ENCRYPTED(bp));
+	ASSERT(BP_IS_PROTECTED(bp));
 	ASSERT3U(size, !=, 0);
 
 	if (zio->io_error != 0)
 		return;
 
+	/*
+	 * If this is an authenticated block, just check the MAC. It would be
+	 * nice to separate this out into its own flag, but for the moment
+	 * enum zio_flag is out of space.
+	 */
+	if (BP_IS_AUTHENTICATED(bp)) {
+		zio_crypt_decode_mac_bp(bp, mac);
+		ret = spa_do_crypt_mac_abd(B_FALSE, zio->io_spa,
+		    zio->io_bookmark.zb_objset, zio->io_abd, size, mac);
+		abd_copy(data, zio->io_abd, size);
+		if (ret != 0)
+			goto error;
+	}
+
 	zio_crypt_decode_params_bp(bp, salt, iv);
 
-	if (BP_GET_TYPE(bp) == DMU_OT_INTENT_LOG) {
+	if (ot == DMU_OT_INTENT_LOG) {
 		tmp = abd_borrow_buf_copy(zio->io_abd, sizeof (zil_chain_t));
 		zio_crypt_decode_mac_zil(tmp, mac);
 		abd_return_buf(zio->io_abd, tmp, sizeof (zil_chain_t));
@@ -418,14 +433,18 @@ zio_decrypt(zio_t *zio, abd_t *data, uint64_t size)
 
 	ret = spa_do_crypt_abd(B_FALSE, zio->io_spa, &zio->io_bookmark, bp,
 	    bp->blk_birth, size, data, zio->io_abd, iv, mac, salt, &no_crypt);
-	if (ret != 0) {
-		/* assert that the key was found unless this was speculative */
-		ASSERT(ret != ENOENT || (zio->io_flags & ZIO_FLAG_SPECULATIVE));
-		zio->io_error = ret;
-	}
-
 	if (no_crypt)
 		abd_copy(data, zio->io_abd, size);
+
+	if (ret != 0)
+		goto error;
+
+	return;
+
+error:
+	/* assert that the key was found unless this was speculative */
+	ASSERT(ret != ENOENT || (zio->io_flags & ZIO_FLAG_SPECULATIVE));
+	zio->io_error = ret;
 }
 
 /*
@@ -641,8 +660,6 @@ zio_create(zio_t *pio, spa_t *spa, uint64_t txg, const blkptr_t *bp,
 	ASSERT(vd || stage == ZIO_STAGE_OPEN);
 
 	IMPLY(lsize != psize, (flags & ZIO_FLAG_RAW_COMPRESS) != 0);
-	IMPLY((flags & ZIO_FLAG_RAW_ENCRYPT) != 0,
-	    (flags & ZIO_FLAG_RAW_COMPRESS) != 0);
 
 	zio = kmem_cache_alloc(zio_cache, KM_SLEEP);
 	bzero(zio, sizeof (zio_t));
@@ -1235,7 +1252,7 @@ zio_read_bp_init(zio_t *zio)
 		    psize, psize, zio_decompress);
 	}
 
-	if (BP_IS_ENCRYPTED(bp) && zio->io_child_type == ZIO_CHILD_LOGICAL &&
+	if (BP_IS_PROTECTED(bp) && zio->io_child_type == ZIO_CHILD_LOGICAL &&
 	    !(zio->io_flags & ZIO_FLAG_RAW_ENCRYPT)) {
 		zio_push_transform(zio, abd_alloc_sametype(zio->io_abd, psize),
 		    psize, psize, zio_decrypt);
@@ -3199,7 +3216,7 @@ zio_alloc_zil(spa_t *spa, objset_t *os, uint64_t txg, blkptr_t *new_bp,
 			uint8_t iv[ZIO_DATA_IV_LEN];
 			uint8_t salt[ZIO_DATA_SALT_LEN];
 
-			BP_SET_ENCRYPTED(new_bp, B_TRUE);
+			BP_SET_CRYPT(new_bp, B_TRUE);
 			VERIFY0(spa_crypt_get_salt(spa,
 			    dmu_objset_id(os), salt));
 			VERIFY0(zio_crypt_generate_iv(iv));
@@ -3574,19 +3591,26 @@ zio_encrypt(zio_t *zio)
 	    BP_GET_TYPE(bp) != DMU_OT_INTENT_LOG)
 		return (ZIO_PIPELINE_CONTINUE);
 
+	if (!(zp->zp_encrypt || BP_IS_ENCRYPTED(bp))) {
+		BP_SET_CRYPT(bp, B_FALSE);
+		return (ZIO_PIPELINE_CONTINUE);
+	}
+
 	/* if we are doing raw encryption set the provided encryption params */
 	if (zio->io_flags & ZIO_FLAG_RAW_ENCRYPT) {
-		ASSERT(zio->io_flags & ZIO_FLAG_RAW_COMPRESS);
-		ASSERT(zp->zp_encrypt);
-		BP_SET_ENCRYPTED(bp, B_TRUE);
+		BP_SET_CRYPT(bp, B_TRUE);
 		BP_SET_BYTEORDER(bp, zp->zp_byteorder);
 		zio_crypt_encode_params_bp(bp, zp->zp_salt, zp->zp_iv);
 		zio_crypt_encode_mac_bp(bp, zp->zp_mac);
 		return (ZIO_PIPELINE_CONTINUE);
 	}
 
-	if (!(zp->zp_encrypt || BP_IS_ENCRYPTED(bp))) {
-		BP_SET_ENCRYPTED(bp, B_FALSE);
+	/* Unencrypted object types are only authenticated with a MAC */
+	if (!DMU_OT_IS_ENCRYPTED(ot)) {
+		BP_SET_CRYPT(bp, B_TRUE);
+		VERIFY0(spa_do_crypt_mac_abd(B_TRUE, spa,
+		    zio->io_bookmark.zb_objset, zio->io_abd, psize, mac));
+		zio_crypt_encode_mac_bp(bp, mac);
 		return (ZIO_PIPELINE_CONTINUE);
 	}
 
@@ -3615,7 +3639,7 @@ zio_encrypt(zio_t *zio)
 	if (ot == DMU_OT_INTENT_LOG) {
 		zio_crypt_decode_params_bp(bp, salt, iv);
 	} else {
-		BP_SET_ENCRYPTED(bp, B_TRUE);
+		BP_SET_CRYPT(bp, B_TRUE);
 	}
 
 	/* Perform the encryption. This should not fail */
@@ -3633,7 +3657,7 @@ zio_encrypt(zio_t *zio)
 	} else {
 		if (no_crypt) {
 			ASSERT3U(ot, ==, DMU_OT_DNODE);
-			BP_SET_ENCRYPTED(bp, B_FALSE);
+			BP_SET_CRYPT(bp, B_FALSE);
 			abd_free(eabd);
 		} else {
 			zio_crypt_encode_params_bp(bp, salt, iv);

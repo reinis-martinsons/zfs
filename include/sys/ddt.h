@@ -88,12 +88,12 @@ typedef struct ddt_key {
 #define	DDK_GET_COMPRESS(ddk)		BF64_GET((ddk)->ddk_prop, 32, 7)
 #define	DDK_SET_COMPRESS(ddk, x)	BF64_SET((ddk)->ddk_prop, 32, 7, x)
 
-#define	DDK_GET_ENCRYPTED(ddk)		BF64_GET((ddk)->ddk_prop, 39, 1)
-#define	DDK_SET_ENCRYPTED(ddk, x)	BF64_SET((ddk)->ddk_prop, 39, 1, x)
+#define	DDK_GET_CRYPT(ddk)		BF64_GET((ddk)->ddk_prop, 39, 1)
+#define	DDK_SET_CRYPT(ddk, x)	BF64_SET((ddk)->ddk_prop, 39, 1, x)
 
 #define	DDT_KEY_WORDS	(sizeof (ddt_key_t) / sizeof (uint64_t))
 
-#define	DDE_GET_NDVAS(dde) (DDK_GET_ENCRYPTED(&dde->dde_key) \
+#define	DDE_GET_NDVAS(dde) (DDK_GET_CRYPT(&dde->dde_key) \
 	? SPA_DVAS_PER_BP : SPA_DVAS_PER_BP - 1)
 
 typedef struct ddt_phys {

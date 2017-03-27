@@ -2063,20 +2063,22 @@ dmu_write_policy(objset_t *os, dnode_t *dn, int level, int wp, zio_prop_t *zp)
 	}
 
 	/*
-	 * Encrypted objects override the checksum type with sha256-mac (which
-	 * is dedupable). Encrypted, dedup'd ojects cannot use all available
-	 * copies since we use the last one to store the IV. Encryption is also
-	 * incompatible with nopwrite because encrypted checksums are not
-	 * reproducible (unless dedup is on).
+	 * All objects in an encrypted objset are protected from modification
+	 * via a MAC. Encrypted objects store their IV and salt in the last DVA
+	 * in the bp, so we cannot use all copies. Encrypted objects are also
+	 * not subject to nopwrite since writing the same data will still
+	 * result in a new ciphertext.
 	 */
-	if (os->os_encrypted && DMU_OT_IS_ENCRYPTED(type) &&
-	    !(wp & WP_NOFILL) && level <= 0) {
+	if (os->os_encrypted && level <= 0 && (wp & WP_NOFILL) == 0) {
 		encrypt = B_TRUE;
-		nopwrite = B_FALSE;
-		copies = MIN(copies, SPA_DVAS_PER_BP - 1);
 
-		if (type == DMU_OT_DNODE)
-			compress = ZIO_COMPRESS_EMPTY;
+		if (DMU_OT_IS_ENCRYPTED(type)) {
+			copies = MIN(copies, SPA_DVAS_PER_BP - 1);
+			nopwrite = B_FALSE;
+
+			if (type == DMU_OT_DNODE)
+				compress = ZIO_COMPRESS_EMPTY;
+		}
 	}
 
 	zp->zp_compress = compress;

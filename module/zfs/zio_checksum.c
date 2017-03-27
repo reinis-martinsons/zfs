@@ -358,7 +358,7 @@ zio_checksum_compute(zio_t *zio, enum zio_checksum checksum,
 	}
 
 	ci->ci_func[0](abd, size, spa->spa_cksum_tmpls[checksum], &cksum);
-	if (bp != NULL && BP_IS_ENCRYPTED(bp)) {
+	if (bp != NULL && BP_USES_CRYPT(bp)) {
 		/*
 		 * Weak checksums do not have their entropy spread evenly
 		 * across the bits of the checksum. Therefore, when truncating
@@ -470,7 +470,7 @@ zio_checksum_error_impl(spa_t *spa, blkptr_t *bp, enum zio_checksum checksum,
 	 * actually be the encryption MAC. This will be verified by the
 	 * decryption process, so we just check the truncated checksum now.
 	 */
-	if (bp != NULL && BP_IS_ENCRYPTED(bp)) {
+	if (bp != NULL && BP_USES_CRYPT(bp)) {
 		if (!(ci->ci_flags & ZCHECKSUM_FLAG_DEDUP)) {
 			actual_cksum.zc_word[0] ^= actual_cksum.zc_word[2];
 			actual_cksum.zc_word[1] ^= actual_cksum.zc_word[3];

@@ -713,13 +713,12 @@ error:
 }
 
 int
-zio_crypt_generate_iv_salt_dedup(zio_crypt_key_t *key, uint8_t *data,
-    uint_t datalen, uint8_t *ivbuf, uint8_t *salt)
+zio_crypt_do_hmac(zio_crypt_key_t *key, uint8_t *data, uint_t datalen,
+    uint8_t *digestbuf)
 {
 	int ret;
 	crypto_mechanism_t mech;
 	crypto_data_t in_data, digest_data;
-	uint8_t digestbuf[SHA_256_DIGEST_LEN];
 
 	/* initialize sha256-hmac mechanism and crypto data */
 	mech.cm_type = crypto_mech2id(SUN_CKM_SHA256_HMAC);
@@ -747,14 +746,27 @@ zio_crypt_generate_iv_salt_dedup(zio_crypt_key_t *key, uint8_t *data,
 		goto error;
 	}
 
-	/* truncate and copy the digest into the output buffer */
-	bcopy(digestbuf, salt, ZIO_DATA_SALT_LEN);
-	bcopy(digestbuf + ZIO_DATA_SALT_LEN, ivbuf, ZIO_DATA_IV_LEN);
-
 	return (0);
 
 error:
 	return (ret);
+}
+
+int
+zio_crypt_generate_iv_salt_dedup(zio_crypt_key_t *key, uint8_t *data,
+    uint_t datalen, uint8_t *ivbuf, uint8_t *salt)
+{
+	int ret;
+	uint8_t digestbuf[SHA_256_DIGEST_LEN];
+
+	ret = zio_crypt_do_hmac(key, data, datalen, digestbuf);
+	if (ret != 0)
+		return (ret);
+
+	bcopy(digestbuf, salt, ZIO_DATA_SALT_LEN);
+	bcopy(digestbuf + ZIO_DATA_SALT_LEN, ivbuf, ZIO_DATA_IV_LEN);
+
+	return (0);
 }
 
 void
@@ -776,7 +788,14 @@ zio_crypt_decode_params_bp(const blkptr_t *bp, uint8_t *salt, uint8_t *iv)
 	uint64_t val64;
 	uint32_t val32;
 
-	ASSERT(BP_IS_ENCRYPTED(bp));
+	ASSERT(BP_IS_PROTECTED(bp));
+
+	/* for convenience, so callers don't need to check */
+	if (BP_IS_AUTHENTICATED(bp)) {
+		bzero(salt, ZIO_DATA_SALT_LEN);
+		bzero(iv, ZIO_DATA_IV_LEN);
+		return;
+	}
 
 	if (!BP_SHOULD_BYTESWAP(bp)) {
 		bcopy(&bp->blk_dva[2].dva_word[0], salt, sizeof (uint64_t));
@@ -799,7 +818,7 @@ zio_crypt_decode_params_bp(const blkptr_t *bp, uint8_t *salt, uint8_t *iv)
 void
 zio_crypt_encode_mac_bp(blkptr_t *bp, uint8_t *mac)
 {
-	ASSERT(BP_IS_ENCRYPTED(bp));
+	ASSERT(BP_IS_PROTECTED(bp));
 
 	bcopy(mac, &bp->blk_cksum.zc_word[2], sizeof (uint64_t));
 	bcopy(mac + sizeof (uint64_t), &bp->blk_cksum.zc_word[3],
@@ -811,7 +830,7 @@ zio_crypt_decode_mac_bp(const blkptr_t *bp, uint8_t *mac)
 {
 	uint64_t val64;
 
-	ASSERT(BP_IS_ENCRYPTED(bp));
+	ASSERT(BP_IS_PROTECTED(bp));
 
 	if (!BP_SHOULD_BYTESWAP(bp)) {
 		bcopy(&bp->blk_cksum.zc_word[2], mac, sizeof (uint64_t));
