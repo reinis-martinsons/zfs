@@ -555,6 +555,9 @@ dsl_dataset_hold_obj_flags(dsl_pool_t *dp, uint64_t dsobj,
 			dsl_dataset_rele(ds, tag);
 			return (SET_ERROR(EACCES));
 		}
+
+		if (ds->ds_objset != NULL)
+			ds->ds_objset->os_key_mapped = B_TRUE;
 	}
 
 	return (0);
@@ -738,6 +741,9 @@ dsl_dataset_rele_flags(dsl_dataset_t *ds, ds_hold_flags_t flags, void *tag)
 	    (flags & DS_HOLD_FLAG_DECRYPT)) {
 		(void) spa_keystore_remove_mapping(ds->ds_dir->dd_pool->dp_spa,
 		    ds->ds_object, ds);
+
+		if (ds->ds_objset != NULL)
+			ds->ds_objset->os_key_mapped = B_FALSE;
 	}
 
 	dmu_buf_rele(ds->ds_dbuf, tag);
@@ -3728,11 +3734,14 @@ MODULE_PARM_DESC(zfs_max_recordsize, "Max allowed record size");
 #endif
 
 EXPORT_SYMBOL(dsl_dataset_hold);
+EXPORT_SYMBOL(dsl_dataset_hold_flags);
 EXPORT_SYMBOL(dsl_dataset_hold_obj);
+EXPORT_SYMBOL(dsl_dataset_hold_obj_flags);
 EXPORT_SYMBOL(dsl_dataset_own);
 EXPORT_SYMBOL(dsl_dataset_own_obj);
 EXPORT_SYMBOL(dsl_dataset_name);
 EXPORT_SYMBOL(dsl_dataset_rele);
+EXPORT_SYMBOL(dsl_dataset_rele_flags);
 EXPORT_SYMBOL(dsl_dataset_disown);
 EXPORT_SYMBOL(dsl_dataset_tryown);
 EXPORT_SYMBOL(dsl_dataset_create_sync);

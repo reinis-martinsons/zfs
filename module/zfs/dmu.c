@@ -113,9 +113,9 @@ const dmu_object_type_info_t dmu_ot[DMU_OT_NUMTYPES] = {
 	{ DMU_BSWAP_ZAP,	TRUE,	FALSE,	"DDT ZAP algorithm"	},
 	{ DMU_BSWAP_ZAP,	TRUE,	FALSE,	"DDT statistics"	},
 	{ DMU_BSWAP_UINT8,	TRUE,	TRUE,	"System attributes"	},
-	{ DMU_BSWAP_ZAP,	TRUE,	FALSE,	"SA master node"	},
-	{ DMU_BSWAP_ZAP,	TRUE,	FALSE,	"SA attr registration"	},
-	{ DMU_BSWAP_ZAP,	TRUE,	FALSE,	"SA attr layouts"	},
+	{ DMU_BSWAP_ZAP,	TRUE,	TRUE,	"SA master node"	},
+	{ DMU_BSWAP_ZAP,	TRUE,	TRUE,	"SA attr registration"	},
+	{ DMU_BSWAP_ZAP,	TRUE,	TRUE,	"SA attr layouts"	},
 	{ DMU_BSWAP_ZAP,	TRUE,	FALSE,	"scan translations"	},
 	{ DMU_BSWAP_UINT8,	FALSE,	FALSE,	"deduplicated block"	},
 	{ DMU_BSWAP_ZAP,	TRUE,	FALSE,	"DSL deadlist map"	},
@@ -2069,7 +2069,8 @@ dmu_write_policy(objset_t *os, dnode_t *dn, int level, int wp, zio_prop_t *zp)
 	 * not subject to nopwrite since writing the same data will still
 	 * result in a new ciphertext.
 	 */
-	if (os->os_encrypted && level <= 0 && (wp & WP_NOFILL) == 0) {
+	if (os->os_encrypted && level <= 0 && (wp & WP_NOFILL) == 0 &&
+	    type != DMU_OT_OBJSET) {
 		encrypt = B_TRUE;
 
 		if (DMU_OT_IS_ENCRYPTED(type)) {
@@ -2093,8 +2094,6 @@ dmu_write_policy(objset_t *os, dnode_t *dn, int level, int wp, zio_prop_t *zp)
 	bzero(zp->zp_salt, ZIO_DATA_SALT_LEN);
 	bzero(zp->zp_iv, ZIO_DATA_IV_LEN);
 	bzero(zp->zp_mac, ZIO_DATA_MAC_LEN);
-
-	ASSERT(!(zp->zp_encrypt && zp->zp_copies >= 3));
 }
 
 /*

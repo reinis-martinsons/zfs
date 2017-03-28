@@ -452,6 +452,11 @@ dmu_objset_open_impl(spa_t *spa, dsl_dataset_t *ds, blkptr_t *bp,
 			needlock = B_TRUE;
 			dsl_pool_config_enter(dmu_objset_pool(os), FTAG);
 		}
+
+		/* os_key_mapped is protected by the pool_config lock */
+		os->os_key_mapped = (spa_keystore_lookup_key(spa,
+		    ds->ds_object, NULL, NULL) == 0);
+
 		err = dsl_prop_register(ds,
 		    zfs_prop_to_name(ZFS_PROP_PRIMARYCACHE),
 		    primary_cache_changed_cb, os);
@@ -520,6 +525,7 @@ dmu_objset_open_impl(spa_t *spa, dsl_dataset_t *ds, blkptr_t *bp,
 		os->os_checksum = ZIO_CHECKSUM_FLETCHER_4;
 		os->os_compress = ZIO_COMPRESS_ON;
 		os->os_encrypted = B_FALSE;
+		os->os_key_mapped = B_FALSE;
 		os->os_copies = spa_max_replication(spa);
 		os->os_dedup_checksum = ZIO_CHECKSUM_OFF;
 		os->os_dedup_verify = B_FALSE;
@@ -603,16 +609,18 @@ dmu_objset_from_ds(dsl_dataset_t *ds, objset_t **osp)
  * can be held at a time.
  */
 int
-dmu_objset_hold(const char *name, void *tag, objset_t **osp)
+dmu_objset_hold_flags(const char *name, boolean_t decrypt, void *tag,
+    objset_t **osp)
 {
 	dsl_pool_t *dp;
 	dsl_dataset_t *ds;
 	int err;
+	ds_hold_flags_t flags = (decrypt) ? DS_HOLD_FLAG_DECRYPT : 0;
 
 	err = dsl_pool_hold(name, tag, &dp);
 	if (err != 0)
 		return (err);
-	err = dsl_dataset_hold(dp, name, tag, &ds);
+	err = dsl_dataset_hold_flags(dp, name, flags, tag, &ds);
 	if (err != 0) {
 		dsl_pool_rele(dp, tag);
 		return (err);
@@ -625,6 +633,12 @@ dmu_objset_hold(const char *name, void *tag, objset_t **osp)
 	}
 
 	return (err);
+}
+
+int
+dmu_objset_hold(const char *name, void *tag, objset_t **osp)
+{
+	return (dmu_objset_hold_flags(name, B_FALSE, tag, osp));
 }
 
 static int
@@ -651,12 +665,12 @@ dmu_objset_own_impl(dsl_dataset_t *ds, dmu_objset_type_t type,
  */
 int
 dmu_objset_own(const char *name, dmu_objset_type_t type,
-    boolean_t readonly, boolean_t key_required, void *tag, objset_t **osp)
+    boolean_t readonly, boolean_t decrypt, void *tag, objset_t **osp)
 {
 	dsl_pool_t *dp;
 	dsl_dataset_t *ds;
 	int err;
-	int flags = (key_required) ? DS_HOLD_FLAG_DECRYPT : 0;
+	ds_hold_flags_t flags = (decrypt) ? DS_HOLD_FLAG_DECRYPT : 0;
 
 	err = dsl_pool_hold(name, FTAG, &dp);
 	if (err != 0)
@@ -675,7 +689,8 @@ dmu_objset_own(const char *name, dmu_objset_type_t type,
 
 	dsl_pool_rele(dp, FTAG);
 
-	if (dmu_objset_userobjspace_upgradable(*osp))
+	if (dmu_objset_userobjspace_upgradable(*osp) &&
+	    (!(*osp)->os_encrypted || (*osp)->os_key_mapped))
 		dmu_objset_userobjspace_upgrade(*osp);
 
 	return (0);
@@ -683,11 +698,11 @@ dmu_objset_own(const char *name, dmu_objset_type_t type,
 
 int
 dmu_objset_own_obj(dsl_pool_t *dp, uint64_t obj, dmu_objset_type_t type,
-    boolean_t readonly, boolean_t key_required, void *tag, objset_t **osp)
+    boolean_t readonly, boolean_t decrypt, void *tag, objset_t **osp)
 {
 	dsl_dataset_t *ds;
 	int err;
-	int flags = (key_required) ? DS_HOLD_FLAG_DECRYPT: 0;
+	ds_hold_flags_t flags = (decrypt) ? DS_HOLD_FLAG_DECRYPT : 0;
 
 	err = dsl_dataset_own_obj(dp, obj, flags, tag, &ds);
 	if (err != 0)
@@ -703,11 +718,19 @@ dmu_objset_own_obj(dsl_pool_t *dp, uint64_t obj, dmu_objset_type_t type,
 }
 
 void
+dmu_objset_rele_flags(objset_t *os, boolean_t decrypt, void *tag)
+{
+	ds_hold_flags_t flags = (decrypt) ? DS_HOLD_FLAG_DECRYPT : 0;
+
+	dsl_pool_t *dp = dmu_objset_pool(os);
+	dsl_dataset_rele_flags(os->os_dsl_dataset, flags, tag);
+	dsl_pool_rele(dp, tag);
+}
+
+void
 dmu_objset_rele(objset_t *os, void *tag)
 {
-	dsl_pool_t *dp = dmu_objset_pool(os);
-	dsl_dataset_rele(os->os_dsl_dataset, tag);
-	dsl_pool_rele(dp, tag);
+	dmu_objset_rele_flags(os, B_FALSE, tag);
 }
 
 /*
@@ -722,7 +745,7 @@ dmu_objset_rele(objset_t *os, void *tag)
  * same name so that it can be partially torn down and reconstructed.
  */
 void
-dmu_objset_refresh_ownership(objset_t *os, boolean_t key_needed, void *tag)
+dmu_objset_refresh_ownership(objset_t *os, boolean_t decrypt, void *tag)
 {
 	dsl_pool_t *dp;
 	dsl_dataset_t *ds, *newds;
@@ -736,22 +759,22 @@ dmu_objset_refresh_ownership(objset_t *os, boolean_t key_needed, void *tag)
 	dsl_dataset_name(ds, name);
 	dp = dmu_objset_pool(os);
 	dsl_pool_config_enter(dp, FTAG);
-	dmu_objset_disown(os, key_needed, tag);
+	dmu_objset_disown(os, decrypt, tag);
 	VERIFY0(dsl_dataset_own(dp, name,
-	    (key_needed) ? DS_HOLD_FLAG_DECRYPT : 0, tag, &newds));
+	    (decrypt) ? DS_HOLD_FLAG_DECRYPT : 0, tag, &newds));
 	VERIFY3P(newds, ==, os->os_dsl_dataset);
 	dsl_pool_config_exit(dp, FTAG);
 }
 
 void
-dmu_objset_disown(objset_t *os, boolean_t key_needed, void *tag)
+dmu_objset_disown(objset_t *os, boolean_t decrypt, void *tag)
 {
 	/*
 	 * Stop upgrading thread
 	 */
 	dmu_objset_upgrade_stop(os);
 	dsl_dataset_disown(os->os_dsl_dataset,
-	    (key_needed) ? DS_HOLD_FLAG_DECRYPT : 0, tag);
+	    (decrypt) ? DS_HOLD_FLAG_DECRYPT : 0, tag);
 }
 
 void
@@ -937,9 +960,8 @@ dmu_objset_create_impl(spa_t *spa, dsl_dataset_t *ds, blkptr_t *bp,
 	os->os_phys->os_type = type;
 
 	/* enable user accounting if it is enabled and this is not a raw recv */
-	if (dmu_objset_userused_enabled(os) && (!os->os_encrypted ||
-	    spa_keystore_lookup_key(os->os_spa, dmu_objset_id(os),
-	    NULL, NULL) == 0)) {
+	if (dmu_objset_userused_enabled(os) &&
+	    (!os->os_encrypted || os->os_key_mapped)) {
 		os->os_phys->os_flags |= OBJSET_FLAG_USERACCOUNTING_COMPLETE;
 		if (dmu_objset_userobjused_enabled(os)) {
 			ds->ds_feature_activation_needed[
@@ -1267,8 +1289,7 @@ static void
 dmu_objset_sync_dnodes(objset_t *os, multilist_sublist_t *list, dmu_tx_t *tx)
 {
 	dnode_t *dn;
-	boolean_t raw = (os->os_encrypted && spa_keystore_lookup_key(os->os_spa,
-	    dmu_objset_id(os), NULL, NULL) != 0);
+	boolean_t raw = (os->os_encrypted && !os->os_key_mapped);
 
 	while ((dn = multilist_sublist_head(list)) != NULL) {
 		ASSERT(dn->dn_object != DMU_META_DNODE_OBJECT);
@@ -1804,8 +1825,7 @@ dmu_objset_userquota_get_ids(dnode_t *dn, boolean_t before, dmu_tx_t *tx)
 	 * as part of the send anyway so we can simply rely on that without
 	 * redoing the work.
 	 */
-	if (os->os_encrypted && spa_keystore_lookup_key(os->os_spa,
-	    dmu_objset_id(os), NULL, NULL) != 0)
+	if (os->os_encrypted && !os->os_key_mapped)
 		return;
 
 	if (before && (flags & (DN_ID_CHKED_BONUS|DN_ID_OLD_EXIST|
@@ -2585,8 +2605,10 @@ EXPORT_SYMBOL(dmu_objset_ds);
 EXPORT_SYMBOL(dmu_objset_type);
 EXPORT_SYMBOL(dmu_objset_name);
 EXPORT_SYMBOL(dmu_objset_hold);
+EXPORT_SYMBOL(dmu_objset_hold_flags);
 EXPORT_SYMBOL(dmu_objset_own);
 EXPORT_SYMBOL(dmu_objset_rele);
+EXPORT_SYMBOL(dmu_objset_rele_flags);
 EXPORT_SYMBOL(dmu_objset_disown);
 EXPORT_SYMBOL(dmu_objset_from_ds);
 EXPORT_SYMBOL(dmu_objset_create);

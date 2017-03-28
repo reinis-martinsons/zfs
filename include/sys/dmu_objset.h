@@ -106,6 +106,9 @@ struct objset {
 	zfs_redundant_metadata_type_t os_redundant_metadata;
 	int os_recordsize;
 
+	/* protected by pool config lock */
+	boolean_t os_key_mapped;
+
 	/*
 	 * Pointer is constant; the blkptr it points to is protected by
 	 * os_dsl_dataset->ds_bp_rwlock
@@ -159,15 +162,18 @@ struct objset {
 
 /* called from zpl */
 int dmu_objset_hold(const char *name, void *tag, objset_t **osp);
+int dmu_objset_hold_flags(const char *name, boolean_t decrypt, void *tag,
+    objset_t **osp);
 int dmu_objset_own(const char *name, dmu_objset_type_t type,
-    boolean_t readonly, boolean_t key_required, void *tag, objset_t **osp);
+    boolean_t readonly, boolean_t decrypt, void *tag, objset_t **osp);
 int dmu_objset_own_obj(struct dsl_pool *dp, uint64_t obj,
-    dmu_objset_type_t type, boolean_t readonly, boolean_t key_required,
+    dmu_objset_type_t type, boolean_t readonly, boolean_t decrypt,
     void *tag, objset_t **osp);
 void dmu_objset_refresh_ownership(objset_t *os, boolean_t key_needed,
     void *tag);
 void dmu_objset_rele(objset_t *os, void *tag);
-void dmu_objset_disown(objset_t *os, boolean_t key_required, void *tag);
+void dmu_objset_rele_flags(objset_t *os, boolean_t decrypt, void *tag);
+void dmu_objset_disown(objset_t *os, boolean_t decrypt, void *tag);
 int dmu_objset_from_ds(struct dsl_dataset *ds, objset_t **osp);
 
 void dmu_objset_stats(objset_t *os, nvlist_t *nv);

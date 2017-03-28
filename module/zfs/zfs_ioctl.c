@@ -1819,15 +1819,16 @@ zfs_ioc_obj_to_path(zfs_cmd_t *zc)
 	int error;
 
 	/* XXX reading from objset not owned */
-	if ((error = dmu_objset_hold(zc->zc_name, FTAG, &os)) != 0)
+	if ((error = dmu_objset_hold_flags(zc->zc_name, B_TRUE,
+	    FTAG, &os)) != 0)
 		return (error);
 	if (dmu_objset_type(os) != DMU_OST_ZFS) {
-		dmu_objset_rele(os, FTAG);
+		dmu_objset_rele_flags(os, B_TRUE, FTAG);
 		return (SET_ERROR(EINVAL));
 	}
 	error = zfs_obj_to_path(os, zc->zc_obj, zc->zc_value,
 	    sizeof (zc->zc_value));
-	dmu_objset_rele(os, FTAG);
+	dmu_objset_rele_flags(os, B_TRUE, FTAG);
 
 	return (error);
 }
@@ -1848,15 +1849,16 @@ zfs_ioc_obj_to_stats(zfs_cmd_t *zc)
 	int error;
 
 	/* XXX reading from objset not owned */
-	if ((error = dmu_objset_hold(zc->zc_name, FTAG, &os)) != 0)
+	if ((error = dmu_objset_hold_flags(zc->zc_name, B_TRUE,
+	    FTAG, &os)) != 0)
 		return (error);
 	if (dmu_objset_type(os) != DMU_OST_ZFS) {
-		dmu_objset_rele(os, FTAG);
+		dmu_objset_rele_flags(os, B_TRUE, FTAG);
 		return (SET_ERROR(EINVAL));
 	}
 	error = zfs_obj_to_stats(os, zc->zc_obj, &zc->zc_stat, zc->zc_value,
 	    sizeof (zc->zc_value));
-	dmu_objset_rele(os, FTAG);
+	dmu_objset_rele_flags(os, B_TRUE, FTAG);
 
 	return (error);
 }
@@ -5049,12 +5051,12 @@ zfs_ioc_userspace_upgrade(zfs_cmd_t *zc)
 		deactivate_super(zfsvfs->z_sb);
 	} else {
 		/* XXX kind of reading contents without owning */
-		error = dmu_objset_hold(zc->zc_name, FTAG, &os);
+		error = dmu_objset_hold_flags(zc->zc_name, B_TRUE, FTAG, &os);
 		if (error != 0)
 			return (error);
 
 		error = dmu_objset_userspace_upgrade(os);
-		dmu_objset_rele(os, FTAG);
+		dmu_objset_rele_flags(os, B_TRUE, FTAG);
 	}
 
 	return (error);
@@ -5073,7 +5075,7 @@ zfs_ioc_userobjspace_upgrade(zfs_cmd_t *zc)
 	objset_t *os;
 	int error;
 
-	error = dmu_objset_hold(zc->zc_name, FTAG, &os);
+	error = dmu_objset_hold_flags(zc->zc_name, B_TRUE, FTAG, &os);
 	if (error != 0)
 		return (error);
 
@@ -5097,7 +5099,7 @@ zfs_ioc_userobjspace_upgrade(zfs_cmd_t *zc)
 	}
 
 	dsl_dataset_long_rele(dmu_objset_ds(os), FTAG);
-	dsl_dataset_rele(dmu_objset_ds(os), FTAG);
+	dsl_dataset_rele_flags(dmu_objset_ds(os), DS_HOLD_FLAG_DECRYPT, FTAG);
 
 	return (error);
 }

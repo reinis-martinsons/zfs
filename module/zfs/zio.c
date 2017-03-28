@@ -410,15 +410,19 @@ zio_decrypt(zio_t *zio, abd_t *data, uint64_t size)
 	/*
 	 * If this is an authenticated block, just check the MAC. It would be
 	 * nice to separate this out into its own flag, but for the moment
-	 * enum zio_flag is out of space.
+	 * enum zio_flag is out of space. Authentication is best effort. We do
+	 * it whenever we have the key available.
 	 */
 	if (BP_IS_AUTHENTICATED(bp)) {
 		zio_crypt_decode_mac_bp(bp, mac);
 		ret = spa_do_crypt_mac_abd(B_FALSE, zio->io_spa,
 		    zio->io_bookmark.zb_objset, zio->io_abd, size, mac);
 		abd_copy(data, zio->io_abd, size);
-		if (ret != 0)
-			goto error;
+
+		if (ret != 0 && ret != ENOENT)
+			zio->io_error = ret;
+
+		return;
 	}
 
 	zio_crypt_decode_params_bp(bp, salt, iv);

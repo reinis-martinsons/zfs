@@ -872,6 +872,10 @@ static taskq_t *arc_prune_taskq;
 #define	HDR_HAS_RABD(hdr)	\
 	(HDR_HAS_L1HDR(hdr) && HDR_PROTECTED(hdr) &&	\
 	(hdr)->b_crypt_hdr.b_rabd != NULL)
+#define	HDR_ENCRYPTED(hdr)	\
+	(HDR_PROTECTED(hdr) && DMU_OT_IS_ENCRYPTED((hdr)->b_crypt_hdr.b_ot))
+#define	HDR_AUTHENTICATED(hdr)	\
+	(HDR_PROTECTED(hdr) && !DMU_OT_IS_ENCRYPTED((hdr)->b_crypt_hdr.b_ot))
 
 /* For storing compression mode in b_flags */
 #define	HDR_COMPRESS_OFFSET	(highbit64(ARC_FLAG_COMPRESS_0) - 1)
@@ -1398,6 +1402,16 @@ arc_is_encrypted(arc_buf_t *buf)
 	return (ARC_BUF_ENCRYPTED(buf) != 0);
 }
 
+/*
+ * Returns B_TRUE if the buffer represents data that has not had its MAC
+ * verified yet.
+ */
+boolean_t
+arc_is_unauthenticated(arc_buf_t *buf)
+{
+	return (HDR_NOAUTH(buf->b_hdr) != 0);
+}
+
 void
 arc_get_raw_params(arc_buf_t *buf, boolean_t *byteorder, uint8_t *salt,
     uint8_t *iv, uint8_t *mac)
@@ -1798,9 +1812,8 @@ arc_hdr_authenticate(arc_buf_hdr_t *hdr, kmutex_t *hash_lock, spa_t *spa,
 	if (hash_lock != NULL)
 		mutex_enter(hash_lock);
 
-	ASSERT(HDR_PROTECTED(hdr));
+	ASSERT(HDR_AUTHENTICATED(hdr));
 	ASSERT3P(hdr->b_l1hdr.b_pabd, !=, NULL);
-	ASSERT0(DMU_OT_IS_ENCRYPTED(hdr->b_crypt_hdr.b_ot));
 
 	/*
 	 * Check that we only have an encrypted copy of the data. This was
@@ -1831,12 +1844,16 @@ arc_hdr_authenticate(arc_buf_hdr_t *hdr, kmutex_t *hash_lock, spa_t *spa,
 		abd_zero_off(abd, csize, psize - csize);
 	}
 
+	/*
+	 * Authentication is best effort. We authenticate whenever the key is
+	 * available.
+	 */
 	ret = spa_do_crypt_mac_abd(B_FALSE, spa, dsobj, abd, psize,
 	    hdr->b_crypt_hdr.b_mac);
-	if (ret != 0)
+	if (ret != 0 && ret != ENOENT)
 		goto error;
-
-	arc_hdr_clear_flags(hdr, ARC_FLAG_NOAUTH);
+	else if (ret == 0)
+		arc_hdr_clear_flags(hdr, ARC_FLAG_NOAUTH);
 
 out_unlock:
 	if (tmpbuf != NULL)
@@ -1873,6 +1890,8 @@ arc_hdr_decrypt(arc_buf_hdr_t *hdr, kmutex_t *hash_lock, spa_t *spa,
 
 	if (hash_lock != NULL)
 		mutex_enter(hash_lock);
+
+	ASSERT(HDR_ENCRYPTED(hdr));
 
 	/*
 	 * Check that we only have an encrypted copy of the data. This was
@@ -2029,7 +2048,7 @@ arc_buf_fill(arc_buf_t *buf, spa_t *spa, uint64_t dsobj, arc_fill_flags_t flags)
 	ASSERT3P(buf->b_data, !=, NULL);
 	IMPLY(compressed, hdr_compressed || ARC_BUF_ENCRYPTED(buf));
 	IMPLY(compressed, ARC_BUF_COMPRESSED(buf));
-	IMPLY(encrypted, HDR_PROTECTED(hdr));
+	IMPLY(encrypted, HDR_ENCRYPTED(hdr));
 	IMPLY(encrypted, ARC_BUF_ENCRYPTED(buf));
 	IMPLY(encrypted, ARC_BUF_COMPRESSED(buf));
 	IMPLY(encrypted, !ARC_BUF_SHARED(buf));
@@ -2049,13 +2068,11 @@ arc_buf_fill(arc_buf_t *buf, spa_t *spa, uint64_t dsobj, arc_fill_flags_t flags)
 	if (HDR_NOAUTH(hdr) && (flags & ARC_FILL_NOAUTH) == 0) {
 		/*
 		 * The caller requested authenicated data but our data has
-		 * not been authenticated yet. Verify the MAC now.
+		 * not been authenticated yet. Verify the MAC now if we can.
 		 */
 		error = arc_hdr_authenticate(hdr, hash_lock, spa, dsobj);
 		if (error != 0)
 			return (error);
-
-		ASSERT0(HDR_NOAUTH(hdr));
 	} else if (HDR_HAS_RABD(hdr) && hdr->b_l1hdr.b_pabd == NULL) {
 		/*
 		 * If we only have the encrypted version of the data, but the
@@ -2085,7 +2102,7 @@ arc_buf_fill(arc_buf_t *buf, spa_t *spa, uint64_t dsobj, arc_fill_flags_t flags)
 		ASSERT(!compressed);
 		ASSERT(!encrypted);
 
-		if (HDR_PROTECTED(hdr) && ARC_BUF_ENCRYPTED(buf)) {
+		if (HDR_ENCRYPTED(hdr) && ARC_BUF_ENCRYPTED(buf)) {
 			ASSERT3U(hdr->b_crypt_hdr.b_ot, ==, DMU_OT_DNODE);
 			error = arc_buf_untransform_in_place(buf, hash_lock);
 			if (error != 0)
@@ -2189,15 +2206,12 @@ byteswap:
  * callers.
  */
 int
-arc_untransform(arc_buf_t *buf, spa_t *spa, uint64_t dsobj, boolean_t in_place,
-    boolean_t noauth)
+arc_untransform(arc_buf_t *buf, spa_t *spa, uint64_t dsobj, boolean_t in_place)
 {
 	arc_fill_flags_t flags = 0;
 
 	if (in_place)
 		flags |= ARC_FILL_IN_PLACE;
-	if (noauth)
-		flags |= ARC_FILL_NOAUTH;
 
 	return (arc_buf_fill(buf, spa, dsobj, flags));
 }
@@ -2772,7 +2786,7 @@ arc_buf_alloc_impl(arc_buf_hdr_t *hdr, spa_t *spa, uint64_t dsobj, void *tag,
 	 * compressed. This must be overriden if the buffer is encrypted since
 	 * encrypted buffers cannot be decompressed.
 	 */
-	if (encrypted && HDR_PROTECTED(hdr)) {
+	if (encrypted && HDR_ENCRYPTED(hdr)) {
 		buf->b_flags |= ARC_BUF_FLAG_COMPRESSED;
 		buf->b_flags |= ARC_BUF_FLAG_ENCRYPTED;
 		flags |= ARC_FILL_COMPRESSED | ARC_FILL_ENCRYPTED;
@@ -6309,7 +6323,7 @@ arc_release(arc_buf_t *buf, void *tag)
 		uint64_t spa = hdr->b_spa;
 		uint64_t psize = HDR_GET_PSIZE(hdr);
 		uint64_t lsize = HDR_GET_LSIZE(hdr);
-		boolean_t encrypted = HDR_PROTECTED(hdr);
+		boolean_t protected = HDR_PROTECTED(hdr);
 		enum zio_compress compress = arc_hdr_get_compress(hdr);
 		arc_buf_contents_t type = arc_buf_type(hdr);
 		arc_buf_t *lastbuf = NULL;
@@ -6400,7 +6414,7 @@ arc_release(arc_buf_t *buf, void *tag)
 		 * Allocate a new hdr. The new hdr will contain a b_pabd
 		 * buffer which will be freed in arc_write().
 		 */
-		nhdr = arc_hdr_alloc(spa, psize, lsize, encrypted,
+		nhdr = arc_hdr_alloc(spa, psize, lsize, protected,
 		    compress, type, HDR_HAS_RABD(hdr));
 		ASSERT3P(nhdr->b_l1hdr.b_buf, ==, NULL);
 		ASSERT0(nhdr->b_l1hdr.b_bufcnt);
@@ -7777,7 +7791,7 @@ l2arc_untransform(zio_t *zio, l2arc_read_callback_t *cb)
 	ASSERT(MUTEX_HELD(HDR_LOCK(hdr)));
 
 	/* If the data was encrypted, decrypt it now */
-	if (HDR_PROTECTED(hdr) && DMU_OT_IS_ENCRYPTED(BP_GET_TYPE(bp))) {
+	if (HDR_ENCRYPTED(hdr)) {
 		abd_t *eabd = arc_get_data_abd(hdr,
 		    arc_hdr_size(hdr), hdr);
 
@@ -8116,7 +8130,7 @@ l2arc_apply_transforms(spa_t *spa, arc_buf_hdr_t *hdr, abd_t **abd_out,
 
 	ASSERT((HDR_GET_COMPRESS(hdr) != ZIO_COMPRESS_OFF &&
 	    !HDR_COMPRESSION_ENABLED(hdr)) ||
-	    HDR_PROTECTED(hdr) || HDR_SHARED_DATA(hdr));
+	    HDR_ENCRYPTED(hdr) || HDR_SHARED_DATA(hdr));
 
 	/*
 	 * If this is just a shared buffer, we simply copy the data. Otherwise
@@ -8124,7 +8138,7 @@ l2arc_apply_transforms(spa_t *spa, arc_buf_hdr_t *hdr, abd_t **abd_out,
 	 * on disk.
 	 */
 	if ((compress == ZIO_COMPRESS_OFF || HDR_COMPRESSION_ENABLED(hdr)) &&
-	    !HDR_PROTECTED(hdr)) {
+	    !HDR_ENCRYPTED(hdr)) {
 		to_write = abd_alloc_for_io(bsize, ismd);
 		abd_copy(to_write, hdr->b_l1hdr.b_pabd, bsize);
 		goto out;
@@ -8145,7 +8159,7 @@ l2arc_apply_transforms(spa_t *spa, arc_buf_hdr_t *hdr, abd_t **abd_out,
 		to_write = cabd;
 	}
 
-	if (HDR_PROTECTED(hdr) && DMU_OT_IS_ENCRYPTED(hdr->b_crypt_hdr.b_ot)) {
+	if (HDR_ENCRYPTED(hdr)) {
 		eabd = abd_alloc_for_io(csize, ismd);
 
 		/*
@@ -8184,6 +8198,7 @@ l2arc_apply_transforms(spa_t *spa, arc_buf_hdr_t *hdr, abd_t **abd_out,
 	}
 
 out:
+	ASSERT3P(to_write, !=, hdr->b_l1hdr.b_pabd);
 	*bsize_out = bsize;
 	*csize_out = csize;
 	*abd_out = to_write;
@@ -8329,7 +8344,7 @@ l2arc_write_buffers(spa_t *spa, l2arc_dev_t *dev, uint64_t target_sz)
 				to_write = hdr->b_crypt_hdr.b_rabd;
 			} else if ((HDR_COMPRESSION_ENABLED(hdr) ||
 			    HDR_GET_COMPRESS(hdr) == ZIO_COMPRESS_OFF) &&
-			    !HDR_PROTECTED(hdr) && !HDR_SHARED_DATA(hdr)) {
+			    !HDR_ENCRYPTED(hdr) && !HDR_SHARED_DATA(hdr)) {
 				bsize = arc_hdr_size(hdr);
 				csize = bsize;
 				to_write = hdr->b_l1hdr.b_pabd;
