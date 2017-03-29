@@ -219,6 +219,10 @@ typedef struct dmu_replay_record {
 			uint8_t drr_flags;
 			uint32_t drr_raw_bonuslen;
 			uint64_t drr_toguid;
+			/* only nonzero if DRR_RAW_ENCRYPTED flag is set */
+			uint8_t drr_indblkshift;
+			uint8_t drr_nlevels;
+			uint8_t drr_nblkptr;
 			/* bonus content follows */
 		} drr_object;
 		struct drr_freeobjects {

@@ -2069,7 +2069,7 @@ dmu_write_policy(objset_t *os, dnode_t *dn, int level, int wp, zio_prop_t *zp)
 	 * not subject to nopwrite since writing the same data will still
 	 * result in a new ciphertext.
 	 */
-	if (os->os_encrypted && level <= 0 && (wp & WP_NOFILL) == 0 &&
+	if (os->os_encrypted && (wp & WP_NOFILL) == 0 &&
 	    type != DMU_OT_OBJSET) {
 		encrypt = B_TRUE;
 
@@ -2077,7 +2077,7 @@ dmu_write_policy(objset_t *os, dnode_t *dn, int level, int wp, zio_prop_t *zp)
 			copies = MIN(copies, SPA_DVAS_PER_BP - 1);
 			nopwrite = B_FALSE;
 
-			if (type == DMU_OT_DNODE)
+			if (type == DMU_OT_DNODE || level > 0)
 				compress = ZIO_COMPRESS_EMPTY;
 		}
 	}

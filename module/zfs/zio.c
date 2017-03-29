@@ -401,11 +401,29 @@ zio_decrypt(zio_t *zio, abd_t *data, uint64_t size)
 	uint8_t mac[ZIO_DATA_MAC_LEN];
 	boolean_t no_crypt = B_FALSE;
 
-	ASSERT(BP_IS_PROTECTED(bp));
+	ASSERT(BP_USES_CRYPT(bp));
 	ASSERT3U(size, !=, 0);
 
 	if (zio->io_error != 0)
 		return;
+
+	/*
+	 * Verify the cksum of MACs stored in an indirect bp. It will always
+	 * be possible to verify this since it does not require an encryption
+	 * key.
+	 */
+	if (BP_HAS_INDIRECT_MAC_CKSUM(bp)) {
+		ASSERT3U(BP_GET_COMPRESS(bp), ==, ZIO_COMPRESS_OFF);
+		zio_crypt_decode_mac_bp(bp, mac);
+		ret = zio_crypt_do_indirect_mac_checksum_abd(B_FALSE,
+		    zio->io_abd, size, mac);
+		abd_copy(data, zio->io_abd, size);
+
+		if (ret != 0)
+			zio->io_error = ret;
+
+		return;
+	}
 
 	/*
 	 * If this is an authenticated block, just check the MAC. It would be
@@ -1256,8 +1274,9 @@ zio_read_bp_init(zio_t *zio)
 		    psize, psize, zio_decompress);
 	}
 
-	if (BP_IS_PROTECTED(bp) && zio->io_child_type == ZIO_CHILD_LOGICAL &&
-	    !(zio->io_flags & ZIO_FLAG_RAW_ENCRYPT)) {
+	if (((BP_IS_PROTECTED(bp) && !(zio->io_flags & ZIO_FLAG_RAW_ENCRYPT)) ||
+	    BP_HAS_INDIRECT_MAC_CKSUM(bp)) &&
+	    zio->io_child_type == ZIO_CHILD_LOGICAL) {
 		zio_push_transform(zio, abd_alloc_sametype(zio->io_abd, psize),
 		    psize, psize, zio_decrypt);
 	}
@@ -3609,7 +3628,17 @@ zio_encrypt(zio_t *zio)
 		return (ZIO_PIPELINE_CONTINUE);
 	}
 
-	/* Unencrypted object types are only authenticated with a MAC */
+	/* indirect blocks only maintain a cksum of the lower level MACs */
+	if (BP_GET_LEVEL(bp) > 0) {
+		ASSERT3U(BP_GET_COMPRESS(bp), ==, ZIO_COMPRESS_OFF);
+		BP_SET_CRYPT(bp, B_TRUE);
+		VERIFY0(zio_crypt_do_indirect_mac_checksum_abd(B_TRUE,
+		    zio->io_orig_abd, BP_GET_LSIZE(bp), mac));
+		zio_crypt_encode_mac_bp(bp, mac);
+		return (ZIO_PIPELINE_CONTINUE);
+	}
+
+	/* unencrypted object types are only authenticated with a MAC */
 	if (!DMU_OT_IS_ENCRYPTED(ot)) {
 		BP_SET_CRYPT(bp, B_TRUE);
 		VERIFY0(spa_do_crypt_mac_abd(B_TRUE, spa,
@@ -3653,19 +3682,20 @@ zio_encrypt(zio_t *zio)
 	/* encode encryption metadata into the bp */
 	if (ot == DMU_OT_INTENT_LOG) {
 		/*
-		 * ZIL blocks store the MAC in the embedde checksum, so the
+		 * ZIL blocks store the MAC in the embedded checksum, so the
 		 * transform must always be applied.
 		 */
 		zio_crypt_encode_mac_zil(enc_buf, mac);
 		zio_push_transform(zio, eabd, psize, psize, NULL);
 	} else {
+		BP_SET_CRYPT(bp, B_TRUE);
+		zio_crypt_encode_params_bp(bp, salt, iv);
+		zio_crypt_encode_mac_bp(bp, mac);
+
 		if (no_crypt) {
 			ASSERT3U(ot, ==, DMU_OT_DNODE);
-			BP_SET_CRYPT(bp, B_FALSE);
 			abd_free(eabd);
 		} else {
-			zio_crypt_encode_params_bp(bp, salt, iv);
-			zio_crypt_encode_mac_bp(bp, mac);
 			zio_push_transform(zio, eabd, psize, psize, NULL);
 		}
 	}

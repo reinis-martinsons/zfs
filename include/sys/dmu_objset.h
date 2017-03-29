@@ -106,7 +106,7 @@ struct objset {
 	zfs_redundant_metadata_type_t os_redundant_metadata;
 	int os_recordsize;
 
-	/* protected by pool config lock */
+	/* protected by pool config lock / dataset lifetime */
 	boolean_t os_key_mapped;
 
 	/*

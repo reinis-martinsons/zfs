@@ -549,6 +549,11 @@ dump_dnode(dmu_sendarg_t *dsp, const blkptr_t *bp, uint64_t object,
 		if (BP_SHOULD_BYTESWAP(bp))
 			drro->drr_flags |= DRR_RAW_BYTESWAP;
 
+		/* needed for reconstructing dnp on recv side */
+		drro->drr_indblkshift = dnp->dn_indblkshift;
+		drro->drr_nlevels = dnp->dn_nlevels;
+		drro->drr_nblkptr = dnp->dn_nblkptr;
+
 		/* raw bonus buffers extend to the end of the dnp */
 		if (bonuslen != 0) {
 			drro->drr_raw_bonuslen = DN_MAX_BONUS_LEN(dnp);
@@ -2354,11 +2359,16 @@ receive_object(struct receive_writer_arg *rwa, struct drr_object *drro,
 
 	if (DRR_IS_RAW_ENCRYPTED(drro->drr_flags)) {
 		if (drro->drr_raw_bonuslen < drro->drr_bonuslen ||
+		    drro->drr_indblkshift > SPA_MAXBLOCKSHIFT ||
+		    drro->drr_nlevels > DN_MAX_LEVELS ||
+		    drro->drr_nblkptr > DN_MAX_NBLKPTR ||
 		    DN_SLOTS_TO_BONUSLEN(drro->drr_dn_slots) <
 		    drro->drr_raw_bonuslen)
 			return (SET_ERROR(EINVAL));
 	} else {
-		if (drro->drr_flags != 0 && drro->drr_raw_bonuslen != 0)
+		if (drro->drr_flags != 0 || drro->drr_raw_bonuslen != 0 ||
+		    drro->drr_indblkshift != 0 || drro->drr_nlevels != 0 ||
+		    drro->drr_nblkptr != 0)
 			return (SET_ERROR(EINVAL));
 	}
 
@@ -2372,15 +2382,21 @@ receive_object(struct receive_writer_arg *rwa, struct drr_object *drro,
 	 * If we are losing blkptrs or changing the block size this must
 	 * be a new file instance.  We must clear out the previous file
 	 * contents before we can change this type of metadata in the dnode.
+	 * Raw receives will also check that the indirect structure of the
+	 * dnode hasn't changed.
 	 */
 	if (err == 0) {
-		int nblkptr;
-
-		nblkptr = deduce_nblkptr(drro->drr_bonustype,
+		uint32_t indblksz = drro->drr_indblkshift ?
+		    1ULL << drro->drr_indblkshift : 0;
+		int nblkptr = deduce_nblkptr(drro->drr_bonustype,
 		    drro->drr_bonuslen);
 
 		if (drro->drr_blksz != doi.doi_data_block_size ||
-		    nblkptr < doi.doi_nblkptr) {
+		    nblkptr < doi.doi_nblkptr ||
+		    (DRR_IS_RAW_ENCRYPTED(drro->drr_flags) &&
+		    (indblksz != doi.doi_metadata_block_size ||
+		    drro->drr_nlevels < doi.doi_indirection ||
+		    drro->drr_nblkptr < doi.doi_nblkptr))) {
 			err = dmu_free_long_range(rwa->os, drro->drr_object,
 			    0, DMU_OBJECT_END);
 			if (err != 0)
@@ -2395,6 +2411,8 @@ receive_object(struct receive_writer_arg *rwa, struct drr_object *drro,
 		dmu_tx_abort(tx);
 		return (err);
 	}
+
+	//TODO: ensure object has correct nblkptrs, nlevels, indblkshift
 
 	if (object == DMU_NEW_OBJECT) {
 		/* currently free, want to be allocated */
@@ -2412,7 +2430,7 @@ receive_object(struct receive_writer_arg *rwa, struct drr_object *drro,
 		    drro->drr_bonustype, drro->drr_bonuslen, tx);
 	}
 	if (err != 0) {
-		dmu_tx_commit(tx);
+		dmu_tx_abort(tx);
 		return (SET_ERROR(EINVAL));
 	}
 

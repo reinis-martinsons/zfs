@@ -23,6 +23,7 @@
 #include <sys/fs/zfs.h>
 #include <sys/zio.h>
 #include <sys/zil.h>
+#include <sys/sha2.h>
 
 /*
  * This file is responsible for handling all of the details of generating
@@ -818,7 +819,7 @@ zio_crypt_decode_params_bp(const blkptr_t *bp, uint8_t *salt, uint8_t *iv)
 void
 zio_crypt_encode_mac_bp(blkptr_t *bp, uint8_t *mac)
 {
-	ASSERT(BP_IS_PROTECTED(bp));
+	ASSERT(BP_USES_CRYPT(bp));
 
 	bcopy(mac, &bp->blk_cksum.zc_word[2], sizeof (uint64_t));
 	bcopy(mac + sizeof (uint64_t), &bp->blk_cksum.zc_word[3],
@@ -830,7 +831,7 @@ zio_crypt_decode_mac_bp(const blkptr_t *bp, uint8_t *mac)
 {
 	uint64_t val64;
 
-	ASSERT(BP_IS_PROTECTED(bp));
+	ASSERT(BP_USES_CRYPT(bp));
 
 	if (!BP_SHOULD_BYTESWAP(bp)) {
 		bcopy(&bp->blk_cksum.zc_word[2], mac, sizeof (uint64_t));
@@ -904,6 +905,54 @@ zio_crypt_destroy_uio(uio_t *uio)
 {
 	if (uio->uio_iov)
 		kmem_free(uio->uio_iov, uio->uio_iovcnt * sizeof (iovec_t));
+}
+
+int
+zio_crypt_do_indirect_mac_checksum_abd(boolean_t generate, abd_t *abd,
+    uint_t datalen, uint8_t *cksum)
+{
+	blkptr_t *bp;
+	int i, epb = datalen >> SPA_BLKPTRSHIFT;
+	void *buf = abd_borrow_buf_copy(abd, datalen);
+	uint64_t blkprop;
+	SHA2_CTX ctx;
+	uint8_t digestbuf[SHA_256_DIGEST_LEN];
+
+	/* checksum all of the MACs from the layer below */
+	SHA2Init(SHA256, &ctx);
+	for (i = 0, bp = buf; i < epb; i++, bp++) {
+		if (BP_IS_HOLE(bp))
+			continue;
+
+		ASSERT(BP_USES_CRYPT(bp));
+		ASSERT0(BP_IS_EMBEDDED(bp));
+
+		/*
+		 * The top level MAC protects all the checksum of all MACs
+		 * below. It also protects everything in blk_prop ex cept for
+		 * the checksum and dedup bits. We force blk_prop to be LE
+		 * to make it easy to keep byte order consistent.
+		 */
+		blkprop = bp->blk_prop;
+		BF64_SET(blkprop, 62, 1, 0);
+		BF64_SET(blkprop, 40, 8, 0);
+		blkprop = LE_64(blkprop);
+		SHA2Update(&ctx, &blkprop, sizeof (uint64_t));
+		SHA2Update(&ctx, &bp->blk_cksum.zc_word[2], ZIO_DATA_MAC_LEN);
+	}
+	SHA2Final(digestbuf, &ctx);
+
+	abd_return_buf(abd, buf, datalen);
+
+	if (generate) {
+		bcopy(digestbuf, cksum, ZIO_DATA_MAC_LEN);
+		return (0);
+	}
+
+	if (bcmp(digestbuf, cksum, ZIO_DATA_MAC_LEN) != 0)
+		return (SET_ERROR(ECKSUM));
+
+	return (0);
 }
 
 /*
@@ -1114,9 +1163,11 @@ zio_crypt_init_uios_dnode(boolean_t encrypt, uint8_t *plainbuf,
     uint_t *enc_len, uint8_t **authbuf, uint_t *auth_len, boolean_t *no_crypt)
 {
 	int ret;
+	blkptr_t *bp;
+	uint64_t blkprop;
 	uint_t nr_src, nr_dst, crypt_len;
 	uint_t aad_len = 0, nr_iovecs = 0, total_len = 0;
-	uint_t i, max_dnp = datalen >> DNODE_SHIFT;
+	uint_t i, j, max_dnp = datalen >> DNODE_SHIFT;
 	iovec_t *src_iovecs = NULL, *dst_iovecs = NULL;
 	uint8_t *src, *dst, *bonus, *bonus_end, *dn_end, *aadp;
 	dnode_phys_t *dnp, *sdnp, *ddnp;
@@ -1171,19 +1222,19 @@ zio_crypt_init_uios_dnode(boolean_t encrypt, uint8_t *plainbuf,
 		}
 	}
 
-	if (nr_iovecs == 0) {
-		/* XXX placeholder until full dnode authentication is added */
-		uint64_t placeholder = 0x2f52f52f5ULL;
-		bcopy(&placeholder, aadp, sizeof (uint64_t));
-		aad_len += sizeof (uint64_t);
-		goto out;
-	}
-
 	nr_iovecs = 0;
 
 	for (i = 0; i < max_dnp; i += sdnp[i].dn_extra_slots + 1) {
 		dnp = &sdnp[i];
 		dn_end = (uint8_t *)(dnp + (dnp->dn_extra_slots + 1));
+
+		/*
+		 * Copy everything from the dource to the destination.
+		 * Wherever we find an encrypted bonus buffer type, we prepare
+		 * an iovec_t instead. The encryption / decryption functions
+		 * will replace fill this in for us with the encrypted or
+		 * decrypted data
+		 */
 		if (dnp->dn_type != DMU_OT_NONE &&
 		    DMU_OT_IS_ENCRYPTED(dnp->dn_bonustype) &&
 		    dnp->dn_bonuslen != 0) {
@@ -1201,18 +1252,79 @@ zio_crypt_init_uios_dnode(boolean_t encrypt, uint8_t *plainbuf,
 			dst_iovecs[nr_iovecs].iov_base = DN_BONUS(&ddnp[i]);
 			dst_iovecs[nr_iovecs].iov_len = crypt_len;
 
-			if (dnp->dn_flags & DNODE_FLAG_SPILL_BLKPTR)
+			if (dnp->dn_flags & DNODE_FLAG_SPILL_BLKPTR) {
 				bcopy(bonus_end, DN_SPILL_BLKPTR(&ddnp[i]),
 				    sizeof (blkptr_t));
+			}
 
 			nr_iovecs++;
 			total_len += crypt_len;
 		} else {
 			bcopy(dnp, &ddnp[i], dn_end - (uint8_t *)dnp);
 		}
+
+		/*
+		 * Handle authenticated data. We authenticate everything in
+		 * the dnode that can be brought over when we do a raw send.
+		 * This includes all of the core fields except for dn_flags
+		 * as well as the MACs stored in the bp checksums. We also
+		 * include the padding here in case it ever gets used in the
+		 * future.
+		 */
+		crypt_len = (uint8_t *)&dnp->dn_flags - (uint8_t *)dnp;
+		bcopy(dnp, aadp, crypt_len);
+		aadp += crypt_len;
+		aad_len += crypt_len;
+
+		crypt_len = (uint8_t *)&dnp->dn_blkptr -
+		    (uint8_t *)&dnp->dn_datablkszsec;
+		bcopy(&dnp->dn_datablkszsec, aadp, crypt_len);
+		aadp += crypt_len;
+		aad_len += crypt_len;
+
+		for (j = 0; j < dnp->dn_nblkptr; j++) {
+			bp = &dnp->dn_blkptr[j];
+			if (BP_IS_HOLE(bp))
+				continue;
+
+			ASSERT(BP_USES_CRYPT(bp));
+			blkprop = bp->blk_prop;
+			BF64_SET(blkprop, 62, 1, 0);
+			BF64_SET(blkprop, 40, 8, 0);
+
+			crypt_len = sizeof (uint64_t);
+			bcopy(&blkprop, aadp, crypt_len);
+			aadp += crypt_len;
+			aad_len += crypt_len;
+
+			crypt_len = ZIO_DATA_MAC_LEN;
+			bcopy(&bp->blk_cksum.zc_word[2], aadp, crypt_len);
+			aadp += crypt_len;
+			aad_len += crypt_len;
+		}
+
+		if (dnp->dn_flags & DNODE_FLAG_SPILL_BLKPTR) {
+			bp = DN_SPILL_BLKPTR(dnp);
+			if (BP_IS_HOLE(bp))
+				continue;
+
+			ASSERT(BP_USES_CRYPT(bp));
+			blkprop = bp->blk_prop;
+			BF64_SET(blkprop, 62, 1, 0);
+			BF64_SET(blkprop, 40, 8, 0);
+
+			crypt_len = sizeof (uint64_t);
+			bcopy(&blkprop, aadp, crypt_len);
+			aadp += crypt_len;
+			aad_len += crypt_len;
+
+			crypt_len = ZIO_DATA_MAC_LEN;
+			bcopy(&bp->blk_cksum.zc_word[2], aadp, crypt_len);
+			aadp += crypt_len;
+			aad_len += crypt_len;
+		}
 	}
 
-out:
 	*no_crypt = (nr_iovecs == 0);
 	*enc_len = total_len;
 	*authbuf = aadbuf;
