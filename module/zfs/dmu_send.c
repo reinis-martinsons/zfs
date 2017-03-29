@@ -281,11 +281,11 @@ dump_free(dmu_sendarg_t *dsp, uint64_t object, uint64_t offset,
 }
 
 static int
-dump_write(dmu_sendarg_t *dsp, dmu_object_type_t type,
-    uint64_t object, uint64_t offset, boolean_t raw, int lsize, int psize,
-    const blkptr_t *bp, void *data)
+dump_write(dmu_sendarg_t *dsp, dmu_object_type_t type, uint64_t object,
+    uint64_t offset, int lsize, int psize, const blkptr_t *bp, void *data)
 {
 	uint64_t payload_size;
+	boolean_t raw = (dsp->dsa_featureflags & DMU_BACKUP_FEATURE_RAW);
 	struct drr_write *drrw = &(dsp->dsa_drr->drr_u.drr_write);
 
 	/*
@@ -747,8 +747,8 @@ do_dump(dmu_sendarg_t *dsa, struct send_block_record *data)
 		enum zio_flag zioflags = ZIO_FLAG_CANFAIL;
 		int i;
 
-		if ((dsa->dsa_featureflags & DMU_BACKUP_FEATURE_RAW) &&
-		    BP_IS_PROTECTED(bp)) {
+		if (dsa->dsa_featureflags & DMU_BACKUP_FEATURE_RAW) {
+			ASSERT(BP_IS_ENCRYPTED(bp));
 			ASSERT3U(BP_GET_COMPRESS(bp), ==, ZIO_COMPRESS_OFF);
 			zioflags |= ZIO_FLAG_RAW;
 		}
@@ -767,8 +767,10 @@ do_dump(dmu_sendarg_t *dsa, struct send_block_record *data)
 		 * block of dnodes. Regular sends do not need to send this
 		 * info.
 		 */
-		if (arc_is_encrypted(abuf))
+		if (dsa->dsa_featureflags & DMU_BACKUP_FEATURE_RAW) {
+			ASSERT(arc_is_encrypted(abuf));
 			err = dump_object_range(dsa, bp, dnobj, epb);
+		}
 
 		if (err == 0) {
 			for (i = 0; i < epb; i += blk[i].dn_extra_slots + 1) {
@@ -783,9 +785,10 @@ do_dump(dmu_sendarg_t *dsa, struct send_block_record *data)
 		arc_buf_t *abuf;
 		enum zio_flag zioflags = ZIO_FLAG_CANFAIL;
 
-		if ((dsa->dsa_featureflags & DMU_BACKUP_FEATURE_RAW) &&
-		    BP_IS_PROTECTED(bp))
+		if (dsa->dsa_featureflags & DMU_BACKUP_FEATURE_RAW) {
+			ASSERT(BP_IS_PROTECTED(bp));
 			zioflags |= ZIO_FLAG_RAW;
+		}
 
 		if (arc_read(NULL, spa, bp, arc_getbuf_func, &abuf,
 		    ZIO_PRIORITY_ASYNC_READ, zioflags, &aflags, zb) != 0)
@@ -837,12 +840,11 @@ do_dump(dmu_sendarg_t *dsa, struct send_block_record *data)
 		 * sends, so we assert that here.
 		 */
 		boolean_t request_raw =
-		    (dsa->dsa_featureflags & DMU_BACKUP_FEATURE_RAW) &&
-		    BP_IS_PROTECTED(bp);
+		    (dsa->dsa_featureflags & DMU_BACKUP_FEATURE_RAW) != 0;
 
 		IMPLY(request_raw, !request_compressed);
 		IMPLY(request_raw, !split_large_blocks);
-		IMPLY(request_raw, !BP_IS_EMBEDDED(bp));
+		IMPLY(request_raw, BP_IS_PROTECTED(bp));
 		ASSERT0(zb->zb_level);
 		ASSERT(zb->zb_object > dsa->dsa_resume_object ||
 		    (zb->zb_object == dsa->dsa_resume_object &&
@@ -880,15 +882,14 @@ do_dump(dmu_sendarg_t *dsa, struct send_block_record *data)
 			while (blksz > 0 && err == 0) {
 				int n = MIN(blksz, SPA_OLD_MAXBLOCKSIZE);
 				err = dump_write(dsa, type, zb->zb_object,
-				    offset, B_FALSE, n, n, NULL, buf);
+				    offset, n, n, NULL, buf);
 				offset += n;
 				buf += n;
 				blksz -= n;
 			}
 		} else {
 			err = dump_write(dsa, type, zb->zb_object, offset,
-			    arc_is_encrypted(abuf), blksz, arc_buf_size(abuf),
-			    bp, abuf->b_data);
+			    blksz, arc_buf_size(abuf), bp, abuf->b_data);
 		}
 		arc_buf_destroy(abuf, &abuf);
 	}
@@ -2391,12 +2392,16 @@ receive_object(struct receive_writer_arg *rwa, struct drr_object *drro,
 		int nblkptr = deduce_nblkptr(drro->drr_bonustype,
 		    drro->drr_bonuslen);
 
+		/* nblkptr will be bounded by the bonus size and type */
+		if (DRR_IS_RAW_ENCRYPTED(drro->drr_flags) &&
+		    nblkptr != drro->drr_nblkptr)
+			return (SET_ERROR(EINVAL));
+
 		if (drro->drr_blksz != doi.doi_data_block_size ||
 		    nblkptr < doi.doi_nblkptr ||
 		    (DRR_IS_RAW_ENCRYPTED(drro->drr_flags) &&
 		    (indblksz != doi.doi_metadata_block_size ||
-		    drro->drr_nlevels < doi.doi_indirection ||
-		    drro->drr_nblkptr < doi.doi_nblkptr))) {
+		    drro->drr_nlevels < doi.doi_indirection))) {
 			err = dmu_free_long_range(rwa->os, drro->drr_object,
 			    0, DMU_OBJECT_END);
 			if (err != 0)
@@ -2411,8 +2416,6 @@ receive_object(struct receive_writer_arg *rwa, struct drr_object *drro,
 		dmu_tx_abort(tx);
 		return (err);
 	}
-
-	//TODO: ensure object has correct nblkptrs, nlevels, indblkshift
 
 	if (object == DMU_NEW_OBJECT) {
 		/* currently free, want to be allocated */
@@ -2438,6 +2441,19 @@ receive_object(struct receive_writer_arg *rwa, struct drr_object *drro,
 	    drro->drr_checksumtype, tx);
 	dmu_object_set_compress(rwa->os, drro->drr_object,
 	    drro->drr_compress, tx);
+
+	/* handle more restrictive dnode structuring for raw recvs */
+	if (drro->drr_flags & DRR_RAW_ENCRYPTED) {
+		/*
+		 * Set the indirect block shift and nlevels. This will not fail
+		 * because we ensured all of the blocks were free earlier if
+		 * this is a new object.
+		 */
+		VERIFY0(dmu_object_set_blocksize(rwa->os, drro->drr_object,
+		    drro->drr_blksz, drro->drr_indblkshift, tx));
+		VERIFY0(dmu_object_set_nlevels(rwa->os, drro->drr_object,
+		    drro->drr_nlevels, tx));
+	}
 
 	if (data != NULL) {
 		dmu_buf_t *db;

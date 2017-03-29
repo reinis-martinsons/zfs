@@ -415,6 +415,13 @@ int dmu_object_next(objset_t *os, uint64_t *objectp,
     boolean_t hole, uint64_t txg);
 
 /*
+ * Set the number of levels on a dnode. nlevels must be greater than the
+ * current number of levels or an EINVAL will be returned.
+ */
+int dmu_object_set_nlevels(objset_t *os, uint64_t object, int nlevels,
+    dmu_tx_t *tx);
+
+/*
  * Set the data blocksize for an object.
  *
  * The object cannot have any blocks allcated beyond the first.  If

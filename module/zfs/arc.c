@@ -2786,7 +2786,7 @@ arc_buf_alloc_impl(arc_buf_hdr_t *hdr, spa_t *spa, uint64_t dsobj, void *tag,
 	 * compressed. This must be overriden if the buffer is encrypted since
 	 * encrypted buffers cannot be decompressed.
 	 */
-	if (encrypted && HDR_ENCRYPTED(hdr)) {
+	if (encrypted) {
 		buf->b_flags |= ARC_BUF_FLAG_COMPRESSED;
 		buf->b_flags |= ARC_BUF_FLAG_ENCRYPTED;
 		flags |= ARC_FILL_COMPRESSED | ARC_FILL_ENCRYPTED;
@@ -3592,6 +3592,10 @@ arc_alloc_raw_buf(spa_t *spa, void *tag, uint64_t dsobj, boolean_t byteorder,
 	bcopy(iv, hdr->b_crypt_hdr.b_iv, ZIO_DATA_IV_LEN);
 	bcopy(mac, hdr->b_crypt_hdr.b_mac, ZIO_DATA_MAC_LEN);
 
+	/*
+	 * This buffer will be considered encrypted even if the ot is not an
+	 * encrypted type. It will become unencrypted in arc_write_ready().
+	 */
 	buf = NULL;
 	VERIFY0(arc_buf_alloc_impl(hdr, spa, dsobj, tag, B_TRUE, B_TRUE,
 	    B_FALSE, B_FALSE, &buf));
@@ -6549,7 +6553,6 @@ arc_write_ready(zio_t *zio)
 	 * ended up only authenticating it, adjust the buffer flags now.
 	 */
 	if (BP_IS_AUTHENTICATED(bp) && ARC_BUF_ENCRYPTED(buf)) {
-		ASSERT(DMU_OT_IS_ENCRYPTED(BP_GET_TYPE(bp)));
 		buf->b_flags &= ~ARC_BUF_FLAG_ENCRYPTED;
 		arc_hdr_set_flags(hdr, ARC_FLAG_NOAUTH);
 	}

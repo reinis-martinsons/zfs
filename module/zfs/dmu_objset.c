@@ -1286,10 +1286,9 @@ dmu_objset_upgrade_stop(objset_t *os)
 }
 
 static void
-dmu_objset_sync_dnodes(objset_t *os, multilist_sublist_t *list, dmu_tx_t *tx)
+dmu_objset_sync_dnodes(multilist_sublist_t *list, dmu_tx_t *tx)
 {
 	dnode_t *dn;
-	boolean_t raw = (os->os_encrypted && !os->os_key_mapped);
 
 	while ((dn = multilist_sublist_head(list)) != NULL) {
 		ASSERT(dn->dn_object != DMU_META_DNODE_OBJECT);
@@ -1305,7 +1304,7 @@ dmu_objset_sync_dnodes(objset_t *os, multilist_sublist_t *list, dmu_tx_t *tx)
 		multilist_sublist_remove(list, dn);
 
 		multilist_t *newlist = dn->dn_objset->os_synced_dnodes;
-		if (newlist != NULL && !raw) {
+		if (newlist != NULL) {
 			(void) dnode_add_ref(dn, newlist);
 			multilist_insert(newlist, dn);
 		}
@@ -1369,7 +1368,6 @@ dmu_objset_write_done(zio_t *zio, arc_buf_t *abuf, void *arg)
 }
 
 typedef struct sync_dnodes_arg {
-	objset_t *sda_os;
 	multilist_t *sda_list;
 	int sda_sublist_idx;
 	multilist_t *sda_newlist;
@@ -1384,7 +1382,7 @@ sync_dnodes_task(void *arg)
 	multilist_sublist_t *ms =
 	    multilist_sublist_lock(sda->sda_list, sda->sda_sublist_idx);
 
-	dmu_objset_sync_dnodes(sda->sda_os, ms, sda->sda_tx);
+	dmu_objset_sync_dnodes(ms, sda->sda_tx);
 
 	multilist_sublist_unlock(ms);
 
@@ -1453,7 +1451,8 @@ dmu_objset_sync(objset_t *os, zio_t *pio, dmu_tx_t *tx)
 
 	txgoff = tx->tx_txg & TXG_MASK;
 
-	if (dmu_objset_userused_enabled(os)) {
+	if (dmu_objset_userused_enabled(os) &&
+	    (!os->os_encrypted || os->os_key_mapped)) {
 		/*
 		 * We must create the list here because it uses the
 		 * dn_dirty_link[] of this txg.  But it may already
@@ -1473,7 +1472,6 @@ dmu_objset_sync(objset_t *os, zio_t *pio, dmu_tx_t *tx)
 	for (int i = 0;
 	    i < multilist_get_num_sublists(os->os_dirty_dnodes[txgoff]); i++) {
 		sync_dnodes_arg_t *sda = kmem_alloc(sizeof (*sda), KM_SLEEP);
-		sda->sda_os = os;
 		sda->sda_list = os->os_dirty_dnodes[txgoff];
 		sda->sda_sublist_idx = i;
 		sda->sda_tx = tx;
@@ -1734,8 +1732,8 @@ dmu_objset_do_userquota_updates(objset_t *os, dmu_tx_t *tx)
 	if (!dmu_objset_userused_enabled(os))
 		return;
 
-	if (os->os_encrypted && spa_keystore_lookup_key(os->os_spa,
-	    dmu_objset_id(os), NULL, NULL) != 0)
+	/* if this is a raw receive just return and handle accounting later */
+	if (os->os_encrypted && !os->os_key_mapped)
 		return;
 
 	/* Allocate the user/groupused objects if necessary. */

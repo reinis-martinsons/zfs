@@ -3623,8 +3623,9 @@ zio_encrypt(zio_t *zio)
 	if (zio->io_flags & ZIO_FLAG_RAW_ENCRYPT) {
 		BP_SET_CRYPT(bp, B_TRUE);
 		BP_SET_BYTEORDER(bp, zp->zp_byteorder);
-		zio_crypt_encode_params_bp(bp, zp->zp_salt, zp->zp_iv);
 		zio_crypt_encode_mac_bp(bp, zp->zp_mac);
+		if (DMU_OT_IS_ENCRYPTED(ot))
+			zio_crypt_encode_params_bp(bp, zp->zp_salt, zp->zp_iv);
 		return (ZIO_PIPELINE_CONTINUE);
 	}
 
