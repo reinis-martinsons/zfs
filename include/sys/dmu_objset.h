@@ -190,6 +190,9 @@ timestruc_t dmu_objset_snap_cmtime(objset_t *os);
 /* called from dsl */
 void dmu_objset_sync(objset_t *os, zio_t *zio, dmu_tx_t *tx);
 boolean_t dmu_objset_is_dirty(objset_t *os, uint64_t txg);
+objset_t *dmu_objset_create_impl_dnstats(spa_t *spa, struct dsl_dataset *ds,
+    blkptr_t *bp, dmu_objset_type_t type, int levels, int blksz, int ibs,
+    dmu_tx_t *tx);
 objset_t *dmu_objset_create_impl(spa_t *spa, struct dsl_dataset *ds,
     blkptr_t *bp, dmu_objset_type_t type, dmu_tx_t *tx);
 int dmu_objset_open_impl(spa_t *spa, struct dsl_dataset *ds, blkptr_t *bp,

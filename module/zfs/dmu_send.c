@@ -1825,11 +1825,14 @@ dmu_recv_begin_sync(void *arg, dmu_tx_t *tx)
 	dsl_dataset_phys(newds)->ds_flags |= DS_FLAG_INCONSISTENT;
 
 	/*
-	 * If we actually created a non-clone, we need to create the
-	 * objset in our new dataset.
+	 * If we actually created a non-clone, we need to create the objset
+	 * in our new dataset. If this is a raw send we postpone this until
+	 * dmu_recv_stream() so that we can allocate the metadnode with the
+	 * properties from the DRR_BEGIN payload.
 	 */
 	rrw_enter(&newds->ds_bp_rwlock, RW_READER, FTAG);
-	if (BP_IS_HOLE(dsl_dataset_get_blkptr(newds))) {
+	if (BP_IS_HOLE(dsl_dataset_get_blkptr(newds)) &&
+	    (featureflags & DMU_BACKUP_FEATURE_RAW) == 0) {
 		(void) dmu_objset_create_impl(dp->dp_spa,
 		    newds, dsl_dataset_get_blkptr(newds), drrb->drr_type, tx);
 	}
@@ -3444,7 +3447,8 @@ dmu_recv_stream(dmu_recv_cookie_t *drc, vnode_t *vp, offset_t *voffp,
 			goto out;
 
 		err = dsl_crypto_recv_key(spa_name(ra->os->os_spa),
-		    drc->drc_ds->ds_object, keynvl);
+		    drc->drc_ds->ds_object, drc->drc_drrb->drr_type,
+		    keynvl);
 		if (err != 0)
 			goto out;
 	}

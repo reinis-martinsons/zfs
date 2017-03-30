@@ -901,15 +901,19 @@ dmu_objset_snap_cmtime(objset_t *os)
 	return (dsl_dir_snap_cmtime(os->os_dsl_dataset->ds_dir));
 }
 
-/* called from dsl for meta-objset */
 objset_t *
-dmu_objset_create_impl(spa_t *spa, dsl_dataset_t *ds, blkptr_t *bp,
-    dmu_objset_type_t type, dmu_tx_t *tx)
+dmu_objset_create_impl_dnstats(spa_t *spa, dsl_dataset_t *ds, blkptr_t *bp,
+    dmu_objset_type_t type, int levels, int blksz, int ibs, dmu_tx_t *tx)
 {
 	objset_t *os;
 	dnode_t *mdn;
 
 	ASSERT(dmu_tx_is_syncing(tx));
+
+	if (blksz == 0)
+		blksz = DNODE_BLOCK_SIZE;
+	if (blksz == 0)
+		ibs = DN_MAX_INDBLKSHIFT;
 
 	if (ds != NULL)
 		VERIFY0(dmu_objset_from_ds(ds, &os));
@@ -918,8 +922,8 @@ dmu_objset_create_impl(spa_t *spa, dsl_dataset_t *ds, blkptr_t *bp,
 
 	mdn = DMU_META_DNODE(os);
 
-	dnode_allocate(mdn, DMU_OT_DNODE, DNODE_BLOCK_SIZE, DN_MAX_INDBLKSHIFT,
-	    DMU_OT_NONE, 0, DNODE_MIN_SLOTS, tx);
+	dnode_allocate(mdn, DMU_OT_DNODE, blksz, ibs, DMU_OT_NONE, 0,
+	    DNODE_MIN_SLOTS, tx);
 
 	/*
 	 * We don't want to have to increase the meta-dnode's nlevels
@@ -933,22 +937,25 @@ dmu_objset_create_impl(spa_t *spa, dsl_dataset_t *ds, blkptr_t *bp,
 	 * to convergence, so minimizing its dn_nlevels matters.
 	 */
 	if (ds != NULL) {
-		int levels = 1;
+		if (levels == 0) {
+			levels = 1;
 
-		/*
-		 * Determine the number of levels necessary for the meta-dnode
-		 * to contain DN_MAX_OBJECT dnodes.  Note that in order to
-		 * ensure that we do not overflow 64 bits, there has to be
-		 * a nlevels that gives us a number of blocks > DN_MAX_OBJECT
-		 * but < 2^64.  Therefore,
-		 * (mdn->dn_indblkshift - SPA_BLKPTRSHIFT) (10) must be
-		 * less than (64 - log2(DN_MAX_OBJECT)) (16).
-		 */
-		while ((uint64_t)mdn->dn_nblkptr <<
-		    (mdn->dn_datablkshift - DNODE_SHIFT +
-		    (levels - 1) * (mdn->dn_indblkshift - SPA_BLKPTRSHIFT)) <
-		    DN_MAX_OBJECT)
-			levels++;
+			/*
+			 * Determine the number of levels necessary for the
+			 * meta-dnode to contain DN_MAX_OBJECT dnodes.  Note
+			 * that in order to ensure that we do not overflow
+			 * 64 bits, there has to be a nlevels that gives us a
+			 * number of blocks > DN_MAX_OBJECT but < 2^64.
+			 * Therefore, (mdn->dn_indblkshift - SPA_BLKPTRSHIFT)
+			 * (10) must be less than (64 - log2(DN_MAX_OBJECT))
+			 * (16).
+			 */
+			while ((uint64_t)mdn->dn_nblkptr <<
+			    (mdn->dn_datablkshift - DNODE_SHIFT + (levels - 1) *
+			    (mdn->dn_indblkshift - SPA_BLKPTRSHIFT)) <
+			    DN_MAX_OBJECT)
+				levels++;
+		}
 
 		mdn->dn_next_nlevels[tx->tx_txg & TXG_MASK] =
 		    mdn->dn_nlevels = levels;
@@ -975,6 +982,14 @@ dmu_objset_create_impl(spa_t *spa, dsl_dataset_t *ds, blkptr_t *bp,
 	dsl_dataset_dirty(ds, tx);
 
 	return (os);
+}
+
+/* called from dsl for meta-objset */
+objset_t *
+dmu_objset_create_impl(spa_t *spa, dsl_dataset_t *ds, blkptr_t *bp,
+    dmu_objset_type_t type, dmu_tx_t *tx)
+{
+	return (dmu_objset_create_impl_dnstats(spa, ds, bp, type, 0, 0, 0, tx));
 }
 
 typedef struct dmu_objset_create_arg {
@@ -2624,6 +2639,7 @@ EXPORT_SYMBOL(dmu_objset_dnodesize);
 
 EXPORT_SYMBOL(dmu_objset_sync);
 EXPORT_SYMBOL(dmu_objset_is_dirty);
+EXPORT_SYMBOL(dmu_objset_create_impl_dnstats);
 EXPORT_SYMBOL(dmu_objset_create_impl);
 EXPORT_SYMBOL(dmu_objset_open_impl);
 EXPORT_SYMBOL(dmu_objset_evict);

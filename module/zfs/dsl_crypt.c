@@ -24,6 +24,7 @@
 #include <sys/dsl_dir.h>
 #include <sys/dsl_prop.h>
 #include <sys/spa_impl.h>
+#include <sys/dmu_objset.h>
 #include <sys/zvol.h>
 
 /*
@@ -1772,18 +1773,21 @@ dsl_dataset_create_crypt_sync(uint64_t dsobj, dsl_dir_t *dd,
 typedef struct dsl_crypto_recv_key_arg {
 	uint64_t dcrka_dsobj;
 	nvlist_t *dcrka_nvl;
+	dmu_objset_type_t dcrka_ostype;
 } dsl_crypto_recv_key_arg_t;
 
 int
 dsl_crypto_recv_key_check(void *arg, dmu_tx_t *tx)
 {
 	int ret;
+	objset_t *os;
+	dnode_t *mdn;
 	dsl_crypto_recv_key_arg_t *dcrka = arg;
 	nvlist_t *nvl = dcrka->dcrka_nvl;
 	dsl_dataset_t *ds = NULL;
 	uint8_t *buf = NULL;
 	uint_t len;
-	uint64_t intval;
+	uint64_t intval, nlevels, blksz, ibs, nblkptr;
 	boolean_t is_passphrase = B_FALSE;
 
 	/*
@@ -1863,6 +1867,54 @@ dsl_crypto_recv_key_check(void *arg, dmu_tx_t *tx)
 		goto error;
 	}
 
+	/* raw receives also need info about the structure of the metadnode */
+	ret = nvlist_lookup_uint64(nvl, "mdn_nlevels", &nlevels);
+	if (ret != 0 || nlevels > DN_MAX_LEVELS) {
+		ret = SET_ERROR(EINVAL);
+		goto error;
+	}
+
+	ret = nvlist_lookup_uint64(nvl, "mdn_blksz", &blksz);
+	if (ret != 0 || blksz < SPA_MINBLOCKSIZE) {
+		ret = SET_ERROR(EINVAL);
+		goto error;
+	} else if (blksz > spa_maxblocksize(tx->tx_pool->dp_spa)) {
+		ret = SET_ERROR(ENOTSUP);
+		goto error;
+	}
+
+	ret = nvlist_lookup_uint64(nvl, "mdn_indblkshift", &ibs);
+	if (ret != 0 || ibs < DN_MIN_INDBLKSHIFT ||
+	    ibs > DN_MAX_INDBLKSHIFT) {
+		ret = SET_ERROR(ENOTSUP);
+		goto error;
+	}
+
+	ret = nvlist_lookup_uint64(nvl, "mdn_nblkptr", &nblkptr);
+	if (ret != 0 || nblkptr != DN_MAX_NBLKPTR) {
+		ret = SET_ERROR(ENOTSUP);
+		goto error;
+	}
+
+	ret = dmu_objset_from_ds(ds, &os);
+	if (ret != 0)
+		goto error;
+
+	mdn = DMU_META_DNODE(os);
+
+	/*
+	 * If we already created the objset, make sure its properties match
+	 * the ones received in the nvlist.
+	 */
+	rrw_enter(&ds->ds_bp_rwlock, RW_READER, FTAG);
+	if (!BP_IS_HOLE(dsl_dataset_get_blkptr(ds)) &&
+	    (mdn->dn_nlevels != nlevels || mdn->dn_datablksz != blksz ||
+	    mdn->dn_indblkshift != ibs || mdn->dn_nblkptr != nblkptr)) {
+		ret = SET_ERROR(EINVAL);
+		goto error;
+	}
+	rrw_exit(&ds->ds_bp_rwlock, FTAG);
+
 	dsl_dataset_rele(ds, FTAG);
 	return (0);
 
@@ -1883,11 +1935,11 @@ dsl_crypto_recv_key_sync(void *arg, dmu_tx_t *tx)
 	dsl_dataset_t *ds;
 	uint8_t *keydata, *hmac_keydata, *iv, *mac;
 	uint_t len;
-	uint64_t crypt, keyformat, iters, salt;
+	uint64_t crypt, keyformat, iters, salt, nlevels, blksz, ibs;
 
 	VERIFY0(dsl_dataset_hold_obj(dp, dsobj, FTAG, &ds));
 
-	/* lookup the values we need to create the DSL Crypto Key */
+	/* lookup the values we need to create the DSL Crypto Key and objset */
 	crypt = fnvlist_lookup_uint64(nvl, DSL_CRYPTO_KEY_CRYPTO_SUITE);
 	keyformat = fnvlist_lookup_uint64(nvl,
 	    zfs_prop_to_name(ZFS_PROP_KEYFORMAT));
@@ -1901,6 +1953,18 @@ dsl_crypto_recv_key_sync(void *arg, dmu_tx_t *tx)
 	    &hmac_keydata, &len));
 	VERIFY0(nvlist_lookup_uint8_array(nvl, DSL_CRYPTO_KEY_IV, &iv, &len));
 	VERIFY0(nvlist_lookup_uint8_array(nvl, DSL_CRYPTO_KEY_MAC, &mac, &len));
+	nlevels = fnvlist_lookup_uint64(nvl, "mdn_nlevels");
+	blksz = fnvlist_lookup_uint64(nvl, "mdn_blksz");
+	ibs = fnvlist_lookup_uint64(nvl, "mdn_indblkshift");
+
+	/* if we haven't created an objset for the ds yet, do that now */
+	rrw_enter(&ds->ds_bp_rwlock, RW_READER, FTAG);
+	if (BP_IS_HOLE(dsl_dataset_get_blkptr(ds))) {
+		(void) dmu_objset_create_impl_dnstats(dp->dp_spa, ds,
+		    dsl_dataset_get_blkptr(ds), dcrka->dcrka_ostype, nlevels,
+		    blksz, ibs, tx);
+	}
+	rrw_exit(&ds->ds_bp_rwlock, FTAG);
 
 	/* zapify the dsl dir so we can add the key object to it */
 	dmu_buf_will_dirty(ds->ds_dir->dd_dbuf, tx);
@@ -1935,12 +1999,14 @@ dsl_crypto_recv_key_sync(void *arg, dmu_tx_t *tx)
  * without wrapping it.
  */
 int
-dsl_crypto_recv_key(const char *poolname, uint64_t dsobj, nvlist_t *nvl)
+dsl_crypto_recv_key(const char *poolname, uint64_t dsobj,
+    dmu_objset_type_t ostype, nvlist_t *nvl)
 {
 	dsl_crypto_recv_key_arg_t dcrka;
 
 	dcrka.dcrka_dsobj = dsobj;
 	dcrka.dcrka_nvl = nvl;
+	dcrka.dcrka_ostype = ostype;
 
 	return (dsl_sync_task(poolname, dsl_crypto_recv_key_check,
 	    dsl_crypto_recv_key_sync, &dcrka, 5, ZFS_SPACE_CHECK_NORMAL));
@@ -1950,6 +2016,8 @@ int
 dsl_crypto_populate_key_nvlist(dsl_dataset_t *ds, nvlist_t **nvl_out)
 {
 	int ret;
+	objset_t *os;
+	dnode_t *mdn;
 	nvlist_t *nvl = NULL;
 	uint64_t dckobj = ds->ds_dir->dd_crypto_obj;
 	objset_t *mos = ds->ds_dir->dd_pool->dp_meta_objset;
@@ -1960,6 +2028,9 @@ dsl_crypto_populate_key_nvlist(dsl_dataset_t *ds, nvlist_t **nvl_out)
 	uint8_t mac[WRAPPING_MAC_LEN];
 
 	ASSERT(dckobj != 0);
+
+	VERIFY0(dmu_objset_from_ds(ds, &os));
+	mdn = DMU_META_DNODE(os);
 
 	ret = nvlist_alloc(&nvl, NV_UNIQUE_NAME, KM_SLEEP);
 	if (ret != 0)
@@ -2027,6 +2098,10 @@ dsl_crypto_populate_key_nvlist(dsl_dataset_t *ds, nvlist_t **nvl_out)
 	fnvlist_add_uint64(nvl, zfs_prop_to_name(ZFS_PROP_KEYFORMAT), format);
 	fnvlist_add_uint64(nvl, zfs_prop_to_name(ZFS_PROP_PBKDF2_ITERS), iters);
 	fnvlist_add_uint64(nvl, zfs_prop_to_name(ZFS_PROP_PBKDF2_SALT), salt);
+	fnvlist_add_uint64(nvl, "mdn_nlevels", mdn->dn_nlevels);
+	fnvlist_add_uint64(nvl, "mdn_blksz", mdn->dn_datablksz);
+	fnvlist_add_uint64(nvl, "mdn_indblkshift", mdn->dn_indblkshift);
+	fnvlist_add_uint64(nvl, "mdn_nblkptr", mdn->dn_nblkptr);
 
 	*nvl_out = nvl;
 	return (0);
