@@ -5828,7 +5828,7 @@ zfs_ioc_load_key(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl)
 	if (ret != 0)
 		goto error;
 
-	dsl_crypto_params_free(dcp, B_FALSE);
+	dsl_crypto_params_free(dcp, noop);
 
 	return (0);
 
