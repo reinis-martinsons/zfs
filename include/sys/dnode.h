@@ -143,6 +143,9 @@ enum dnode_dirtycontext {
 /* User/Group dnode accounting */
 #define	DNODE_FLAG_USEROBJUSED_ACCOUNTED	(1 << 3)
 
+#define	DNODE_CRYPT_PORTABLE_FLAGS_MASK		\
+	(DNODE_FLAG_USED_BYTES | DNODE_FLAG_SPILL_BLKPTR)
+
 typedef struct dnode_phys {
 	uint8_t dn_type;		/* dmu_object_type_t */
 	uint8_t dn_indblkshift;		/* ln2(indirect block size) */

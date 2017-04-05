@@ -57,14 +57,21 @@ struct dmu_tx;
 
 #define	OBJSET_FLAG_USERACCOUNTING_COMPLETE	(1ULL<<0)
 #define	OBJSET_FLAG_USEROBJACCOUNTING_COMPLETE	(1ULL<<1)
+#define	OBJSET_FLAG_LOCAL_MAC_VALID		(1ULL<<2)
+
+/* all flags are currently non-portable */
+#define	OBJSET_CRYPT_PORTABLE_FLAGS_MASK	(0)
 
 typedef struct objset_phys {
 	dnode_phys_t os_meta_dnode;
 	zil_header_t os_zil_header;
 	uint64_t os_type;
 	uint64_t os_flags;
+	uint8_t os_portable_mac[ZIO_OBJSET_MAC_LEN];
+	uint8_t os_local_mac[ZIO_OBJSET_MAC_LEN];
 	char os_pad[OBJSET_PHYS_SIZE - sizeof (dnode_phys_t)*3 -
-	    sizeof (zil_header_t) - sizeof (uint64_t)*2];
+	    sizeof (zil_header_t) - sizeof (uint64_t)*2 -
+	    2*ZIO_OBJSET_MAC_LEN];
 	dnode_phys_t os_userused_dnode;
 	dnode_phys_t os_groupused_dnode;
 } objset_phys_t;

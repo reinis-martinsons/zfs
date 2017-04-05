@@ -120,10 +120,11 @@ enum zio_encrypt {
 #define	ZIO_CRYPT_DEFAULT	ZIO_CRYPT_OFF
 
 /* macros defining encryption lengths */
-#define	MAX_MASTER_KEY_LEN 32
-#define	ZIO_DATA_IV_LEN 12
-#define	ZIO_DATA_SALT_LEN 8
-#define	ZIO_DATA_MAC_LEN 16
+#define	MAX_MASTER_KEY_LEN		32
+#define	ZIO_OBJSET_MAC_LEN		32
+#define	ZIO_DATA_IV_LEN			12
+#define	ZIO_DATA_SALT_LEN		8
+#define	ZIO_DATA_MAC_LEN		16
 
 /*
  * The number of "legacy" compression functions which can be set on individual

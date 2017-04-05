@@ -2975,8 +2975,6 @@ spa_load_impl(spa_t *spa, uint64_t pool_guid, nvlist_t *config,
 		    zil_claim, tx, DS_FIND_CHILDREN);
 		dmu_tx_commit(tx);
 
-		spa->spa_claiming = B_FALSE;
-
 		spa_set_log_state(spa, SPA_LOG_GOOD);
 		spa->spa_sync_on = B_TRUE;
 		txg_sync_start(spa->spa_dsl_pool);
@@ -2989,6 +2987,8 @@ spa_load_impl(spa_t *spa, uint64_t pool_guid, nvlist_t *config,
 		 * (invoked from spa_check_logs()) or zil_claim() above.
 		 */
 		txg_wait_synced(spa->spa_dsl_pool, spa->spa_claim_max_txg);
+
+		spa->spa_claiming = B_FALSE;
 
 		/*
 		 * If the config cache is stale, or we have uninitialized

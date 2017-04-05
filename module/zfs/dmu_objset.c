@@ -1081,20 +1081,32 @@ dmu_objset_create_sync(void *arg, dmu_tx_t *tx)
 	 * dsl_pool_sync().
 	 */
 	if (os->os_encrypted) {
+		dsl_dataset_t *tmpds = NULL;
+		boolean_t need_sync_done = B_FALSE;
+
 		rzio = zio_root(dp->dp_spa, NULL, NULL, ZIO_FLAG_MUSTSUCCEED);
-		dsl_dataset_sync(ds, rzio, tx);
+		tmpds = txg_list_remove(&dp->dp_dirty_datasets, tx->tx_txg);
+		if (tmpds != NULL) {
+			ASSERT3P(ds, ==, tmpds);
+			dsl_dataset_sync(ds, rzio, tx);
+			need_sync_done = B_TRUE;
+		}
 		VERIFY0(zio_wait(rzio));
 
 		dmu_objset_do_userquota_updates(os, tx);
 		taskq_wait(dp->dp_sync_taskq);
 
 		rzio = zio_root(dp->dp_spa, NULL, NULL, ZIO_FLAG_MUSTSUCCEED);
-		dsl_dataset_sync(ds, rzio, tx);
+		tmpds = txg_list_remove(&dp->dp_dirty_datasets, tx->tx_txg);
+		if (tmpds != NULL) {
+			ASSERT3P(ds, ==, tmpds);
+			dmu_buf_rele(ds->ds_dbuf, ds);
+			dsl_dataset_sync(ds, rzio, tx);
+		}
 		VERIFY0(zio_wait(rzio));
 
-		/* dsl_dataset_sync_done will drop this reference. */
-		dmu_buf_add_ref(ds->ds_dbuf, ds);
-		dsl_dataset_sync_done(ds, tx);
+		if (need_sync_done)
+			dsl_dataset_sync_done(ds, tx);
 	}
 
 	spa_history_log_internal_ds(ds, "create", tx, "");
@@ -1340,7 +1352,6 @@ dmu_objset_write_ready(zio_t *zio, arc_buf_t *abuf, void *arg)
 	uint64_t fill = 0;
 
 	ASSERT(!BP_IS_EMBEDDED(bp));
-	ASSERT(!BP_IS_PROTECTED(bp));
 	ASSERT3U(BP_GET_TYPE(bp), ==, DMU_OT_OBJSET);
 	ASSERT0(BP_GET_LEVEL(bp));
 

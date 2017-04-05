@@ -1868,6 +1868,18 @@ dsl_crypto_recv_key_check(void *arg, dmu_tx_t *tx)
 	}
 
 	/* raw receives also need info about the structure of the metadnode */
+	ret = nvlist_lookup_uint64(nvl, "mdn_checksum", &intval);
+	if (ret != 0 || intval >= ZIO_CHECKSUM_LEGACY_FUNCTIONS) {
+		ret = SET_ERROR(EINVAL);
+		goto error;
+	}
+
+	ret = nvlist_lookup_uint64(nvl, "mdn_compress", &intval);
+	if (ret != 0 || intval >= ZIO_COMPRESS_LEGACY_FUNCTIONS) {
+		ret = SET_ERROR(EINVAL);
+		goto error;
+	}
+
 	ret = nvlist_lookup_uint64(nvl, "mdn_nlevels", &nlevels);
 	if (ret != 0 || nlevels > DN_MAX_LEVELS) {
 		ret = SET_ERROR(EINVAL);
@@ -1903,8 +1915,8 @@ dsl_crypto_recv_key_check(void *arg, dmu_tx_t *tx)
 	mdn = DMU_META_DNODE(os);
 
 	/*
-	 * If we already created the objset, make sure its properties match
-	 * the ones received in the nvlist.
+	 * If we already created the objset, make sure its unchangable
+	 * properties match the ones received in the nvlist.
 	 */
 	rrw_enter(&ds->ds_bp_rwlock, RW_READER, FTAG);
 	if (!BP_IS_HOLE(dsl_dataset_get_blkptr(ds)) &&
@@ -1933,11 +1945,16 @@ dsl_crypto_recv_key_sync(void *arg, dmu_tx_t *tx)
 	dsl_pool_t *dp = tx->tx_pool;
 	objset_t *mos = dp->dp_meta_objset;
 	dsl_dataset_t *ds;
+	objset_t *os;
+	dnode_t *mdn;
 	uint8_t *keydata, *hmac_keydata, *iv, *mac;
 	uint_t len;
-	uint64_t crypt, keyformat, iters, salt, nlevels, blksz, ibs;
+	uint64_t crypt, keyformat, iters, salt;
+	uint64_t compress, checksum, nlevels, blksz, ibs;
 
 	VERIFY0(dsl_dataset_hold_obj(dp, dsobj, FTAG, &ds));
+	VERIFY0(dmu_objset_from_ds(ds, &os));
+	mdn = DMU_META_DNODE(os);
 
 	/* lookup the values we need to create the DSL Crypto Key and objset */
 	crypt = fnvlist_lookup_uint64(nvl, DSL_CRYPTO_KEY_CRYPTO_SUITE);
@@ -1953,6 +1970,8 @@ dsl_crypto_recv_key_sync(void *arg, dmu_tx_t *tx)
 	    &hmac_keydata, &len));
 	VERIFY0(nvlist_lookup_uint8_array(nvl, DSL_CRYPTO_KEY_IV, &iv, &len));
 	VERIFY0(nvlist_lookup_uint8_array(nvl, DSL_CRYPTO_KEY_MAC, &mac, &len));
+	compress = fnvlist_lookup_uint64(nvl, "mdn_compress");
+	checksum = fnvlist_lookup_uint64(nvl, "mdn_checksum");
 	nlevels = fnvlist_lookup_uint64(nvl, "mdn_nlevels");
 	blksz = fnvlist_lookup_uint64(nvl, "mdn_blksz");
 	ibs = fnvlist_lookup_uint64(nvl, "mdn_indblkshift");
@@ -1965,6 +1984,11 @@ dsl_crypto_recv_key_sync(void *arg, dmu_tx_t *tx)
 		    blksz, ibs, tx);
 	}
 	rrw_exit(&ds->ds_bp_rwlock, FTAG);
+
+	/* set metadnode compression and checksum */
+	mdn->dn_compress = compress;
+	mdn->dn_checksum = checksum;
+	dnode_setdirty(mdn, tx);
 
 	/* zapify the dsl dir so we can add the key object to it */
 	dmu_buf_will_dirty(ds->ds_dir->dd_dbuf, tx);
@@ -2098,6 +2122,8 @@ dsl_crypto_populate_key_nvlist(dsl_dataset_t *ds, nvlist_t **nvl_out)
 	fnvlist_add_uint64(nvl, zfs_prop_to_name(ZFS_PROP_KEYFORMAT), format);
 	fnvlist_add_uint64(nvl, zfs_prop_to_name(ZFS_PROP_PBKDF2_ITERS), iters);
 	fnvlist_add_uint64(nvl, zfs_prop_to_name(ZFS_PROP_PBKDF2_SALT), salt);
+	fnvlist_add_uint64(nvl, "mdn_checksum", mdn->dn_checksum);
+	fnvlist_add_uint64(nvl, "mdn_compress", mdn->dn_compress);
 	fnvlist_add_uint64(nvl, "mdn_nlevels", mdn->dn_nlevels);
 	fnvlist_add_uint64(nvl, "mdn_blksz", mdn->dn_datablksz);
 	fnvlist_add_uint64(nvl, "mdn_indblkshift", mdn->dn_indblkshift);
@@ -2247,6 +2273,59 @@ error:
 	return (ret);
 }
 
+/*
+ * Objset blocks are a special case for MAC generation. These blocks have 2
+ * 256-bit MACs which are embedded within the block itself, rather than a
+ * single 128 bit MAC. As a result, this function handles encoding and decoding
+ * the MACs on its own, unlike other functions in this file.
+ */
+int
+spa_do_crypt_objset_mac_abd(boolean_t generate, spa_t *spa, uint64_t dsobj,
+    abd_t *abd, uint_t datalen, boolean_t byteswap)
+{
+	int ret;
+	dsl_crypto_key_t *dck = NULL;
+	void *buf = abd_borrow_buf(abd, datalen);
+	objset_phys_t *osp = buf;
+	uint8_t portable_mac[SHA_256_DIGEST_LEN];
+	uint8_t local_mac[SHA_256_DIGEST_LEN];
+
+	/* look up the key from the spa's keystore */
+	ret = spa_keystore_lookup_key(spa, dsobj, FTAG, &dck);
+	if (ret != 0)
+		goto error;
+
+	/* calculate both HMACs */
+	ret = zio_crypt_do_objset_hmacs(&dck->dck_key, buf, datalen,
+	    byteswap, portable_mac, local_mac);
+	if (ret != 0)
+		goto error;
+
+	spa_keystore_dsl_key_rele(spa, dck, FTAG);
+
+	/* if we are generating encode the HMACs in the objset_phys_t */
+	if (generate) {
+		bcopy(portable_mac, osp->os_portable_mac, ZIO_OBJSET_MAC_LEN);
+		bcopy(local_mac, osp->os_local_mac, ZIO_OBJSET_MAC_LEN);
+		abd_return_buf_copy(abd, buf, datalen);
+		return (0);
+	}
+
+	abd_return_buf(abd, buf, datalen);
+
+	if (bcmp(portable_mac, osp->os_portable_mac, ZIO_OBJSET_MAC_LEN) != 0 ||
+	    bcmp(local_mac, osp->os_local_mac, ZIO_OBJSET_MAC_LEN) != 0) {
+		return (SET_ERROR(EIO));
+	}
+
+	return (0);
+
+error:
+	if (dck != NULL)
+		spa_keystore_dsl_key_rele(spa, dck, FTAG);
+	return (ret);
+}
+
 int
 spa_do_crypt_mac_abd(boolean_t generate, spa_t *spa, uint64_t dsobj, abd_t *abd,
     uint_t datalen, uint8_t *mac)
@@ -2297,7 +2376,7 @@ error:
  * these fields to populate pabd (the plaintext).
  */
 int
-spa_do_crypt_abd(boolean_t encrypt, spa_t *spa, zbookmark_phys_t *zb,
+spa_do_crypt_abd(boolean_t encrypt, spa_t *spa, uint64_t dsobj,
     const blkptr_t *bp, uint64_t txgid, uint_t datalen, abd_t *pabd,
     abd_t *cabd, uint8_t *iv, uint8_t *mac, uint8_t *salt, boolean_t *no_crypt)
 {
@@ -2311,7 +2390,7 @@ spa_do_crypt_abd(boolean_t encrypt, spa_t *spa, zbookmark_phys_t *zb,
 	ASSERT(BP_IS_ENCRYPTED(bp));
 
 	/* look up the key from the spa's keystore */
-	ret = spa_keystore_lookup_key(spa, zb->zb_objset, FTAG, &dck);
+	ret = spa_keystore_lookup_key(spa, dsobj, FTAG, &dck);
 	if (ret != 0)
 		return (ret);
 

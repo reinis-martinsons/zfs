@@ -453,8 +453,9 @@ zio_decrypt(zio_t *zio, abd_t *data, uint64_t size)
 		zio_crypt_decode_mac_bp(bp, mac);
 	}
 
-	ret = spa_do_crypt_abd(B_FALSE, zio->io_spa, &zio->io_bookmark, bp,
-	    bp->blk_birth, size, data, zio->io_abd, iv, mac, salt, &no_crypt);
+	ret = spa_do_crypt_abd(B_FALSE, zio->io_spa, zio->io_bookmark.zb_objset,
+	    bp, bp->blk_birth, size, data, zio->io_abd, iv, mac, salt,
+	    &no_crypt);
 	if (no_crypt)
 		abd_copy(data, zio->io_abd, size);
 
@@ -3639,6 +3640,25 @@ zio_encrypt(zio_t *zio)
 		return (ZIO_PIPELINE_CONTINUE);
 	}
 
+	/*
+	 * Objset blocks are a special case since they have 2 256-bit MACs
+	 * embedded within them. These blocks can be written out during
+	 * claiming without the keys loaded. This is OK because claiming
+	 * won't touch any fields that are protected by the internal MACs.
+	 */
+	if (ot == DMU_OT_OBJSET) {
+		ASSERT0(DMU_OT_IS_ENCRYPTED(ot));
+		ASSERT3U(BP_GET_COMPRESS(bp), ==, ZIO_COMPRESS_OFF);
+		BP_SET_CRYPT(bp, B_TRUE);
+
+		if (!spa->spa_claiming) {
+			VERIFY0(spa_do_crypt_objset_mac_abd(B_TRUE, spa,
+			    zio->io_bookmark.zb_objset, zio->io_abd, psize,
+			    BP_SHOULD_BYTESWAP(bp)));
+		}
+		return (ZIO_PIPELINE_CONTINUE);
+	}
+
 	/* unencrypted object types are only authenticated with a MAC */
 	if (!DMU_OT_IS_ENCRYPTED(ot)) {
 		BP_SET_CRYPT(bp, B_TRUE);
@@ -3677,7 +3697,7 @@ zio_encrypt(zio_t *zio)
 	}
 
 	/* Perform the encryption. This should not fail */
-	VERIFY0(spa_do_crypt_abd(B_TRUE, spa, &zio->io_bookmark, bp,
+	VERIFY0(spa_do_crypt_abd(B_TRUE, spa, zio->io_bookmark.zb_objset, bp,
 	    zio->io_txg, psize, zio->io_abd, eabd, iv, mac, salt, &no_crypt));
 
 	/* encode encryption metadata into the bp */

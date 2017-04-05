@@ -187,7 +187,9 @@ void dsl_crypto_key_destroy_sync(uint64_t dckobj, dmu_tx_t *tx);
 int spa_crypt_get_salt(spa_t *spa, uint64_t dsobj, uint8_t *salt);
 int spa_do_crypt_mac_abd(boolean_t generate, spa_t *spa, uint64_t dsobj,
     abd_t *abd, uint_t datalen, uint8_t *mac);
-int spa_do_crypt_abd(boolean_t encrypt, spa_t *spa, zbookmark_phys_t *zb,
+int spa_do_crypt_objset_mac_abd(boolean_t generate, spa_t *spa, uint64_t dsobj,
+    abd_t *abd, uint_t datalen, boolean_t byteswap);
+int spa_do_crypt_abd(boolean_t encrypt, spa_t *spa, uint64_t dsobj,
     const blkptr_t *bp, uint64_t txgid, uint_t datalen, abd_t *pabd,
     abd_t *cabd, uint8_t *iv, uint8_t *mac, uint8_t *salt, boolean_t *no_crypt);
 

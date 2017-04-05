@@ -365,8 +365,6 @@ traverse_visitbp(traverse_data_t *td, const dnode_phys_t *dnp,
 		arc_flags_t flags = ARC_FLAG_WAIT;
 		objset_phys_t *osp;
 
-		ASSERT(!BP_IS_PROTECTED(bp));
-
 		err = arc_read(NULL, td->td_spa, bp, arc_getbuf_func, &buf,
 		    ZIO_PRIORITY_ASYNC_READ, ZIO_FLAG_CANFAIL, &flags, zb);
 		if (err != 0)

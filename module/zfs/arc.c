@@ -1846,10 +1846,18 @@ arc_hdr_authenticate(arc_buf_hdr_t *hdr, kmutex_t *hash_lock, spa_t *spa,
 
 	/*
 	 * Authentication is best effort. We authenticate whenever the key is
-	 * available.
+	 * available. If we succeed we clear ARC_FLAG_NOAUTH.
 	 */
-	ret = spa_do_crypt_mac_abd(B_FALSE, spa, dsobj, abd, psize,
-	    hdr->b_crypt_hdr.b_mac);
+	if (hdr->b_crypt_hdr.b_ot == DMU_OT_OBJSET) {
+		ASSERT3U(HDR_GET_COMPRESS(hdr), ==, ZIO_COMPRESS_OFF);
+		ASSERT3U(lsize, ==, psize);
+		ret = spa_do_crypt_objset_mac_abd(B_FALSE, spa, dsobj, abd,
+		    psize, hdr->b_l1hdr.b_byteswap != DMU_BSWAP_NUMFUNCS);
+	} else {
+		ret = spa_do_crypt_mac_abd(B_FALSE, spa, dsobj, abd, psize,
+		    hdr->b_crypt_hdr.b_mac);
+	}
+
 	if (ret != 0 && ret != ENOENT)
 		goto error;
 	else if (ret == 0)

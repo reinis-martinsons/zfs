@@ -472,7 +472,7 @@ pbkdf2(uint8_t *passphrase, size_t passphraselen, uint8_t *salt,
 	out_data.cd_offset = 0;
 	out_data.cd_length = SHA1_DIGEST_LEN;
 	out_data.cd_raw.iov_base = (char *)hmacresult;
-	out_data.cd_raw.iov_len = SHA1_DIGEST_LEN;
+	out_data.cd_raw.iov_len = out_data.cd_length;
 
 	/* initialize the context template */
 	ret = crypto_create_ctx_template(&mech, &key, &tmpl, KM_SLEEP);
@@ -498,11 +498,10 @@ pbkdf2(uint8_t *passphrase, size_t passphraselen, uint8_t *salt,
 		for (iter = 0; iter < iterations; iter++) {
 			if (iter > 0) {
 				in_data.cd_length = SHA1_DIGEST_LEN;
-				in_data.cd_raw.iov_len = SHA1_DIGEST_LEN;
+				in_data.cd_raw.iov_len = in_data.cd_length;
 			} else {
 				in_data.cd_length = saltlen + sizeof (uint32_t);
-				in_data.cd_raw.iov_len =
-				    saltlen + sizeof (uint32_t);
+				in_data.cd_raw.iov_len = in_data.cd_length;
 			}
 
 			ret = crypto_mac(&mech, &in_data, &key, tmpl,
