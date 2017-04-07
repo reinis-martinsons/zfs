@@ -1839,6 +1839,12 @@ dsl_crypto_recv_key_check(void *arg, dmu_tx_t *tx)
 		goto error;
 	}
 
+	ret = nvlist_lookup_uint8_array(nvl, "portable_mac", &buf, &len);
+	if (ret != 0 || len != ZIO_OBJSET_MAC_LEN) {
+		ret = SET_ERROR(EINVAL);
+		goto error;
+	}
+
 	ret = nvlist_lookup_uint64(nvl, zfs_prop_to_name(ZFS_PROP_KEYFORMAT),
 	    &intval);
 	if (ret != 0 || intval >= ZFS_KEYFORMAT_FORMATS ||
@@ -1947,7 +1953,7 @@ dsl_crypto_recv_key_sync(void *arg, dmu_tx_t *tx)
 	dsl_dataset_t *ds;
 	objset_t *os;
 	dnode_t *mdn;
-	uint8_t *keydata, *hmac_keydata, *iv, *mac;
+	uint8_t *keydata, *hmac_keydata, *iv, *mac, *portable_mac;
 	uint_t len;
 	uint64_t crypt, keyformat, iters, salt;
 	uint64_t compress, checksum, nlevels, blksz, ibs;
@@ -1968,6 +1974,8 @@ dsl_crypto_recv_key_sync(void *arg, dmu_tx_t *tx)
 	    &keydata, &len));
 	VERIFY0(nvlist_lookup_uint8_array(nvl, DSL_CRYPTO_KEY_HMAC_KEY,
 	    &hmac_keydata, &len));
+	VERIFY0(nvlist_lookup_uint8_array(nvl, "portable_mac", &portable_mac,
+	    &len));
 	VERIFY0(nvlist_lookup_uint8_array(nvl, DSL_CRYPTO_KEY_IV, &iv, &len));
 	VERIFY0(nvlist_lookup_uint8_array(nvl, DSL_CRYPTO_KEY_MAC, &mac, &len));
 	compress = fnvlist_lookup_uint64(nvl, "mdn_compress");
@@ -1984,6 +1992,14 @@ dsl_crypto_recv_key_sync(void *arg, dmu_tx_t *tx)
 		    blksz, ibs, tx);
 	}
 	rrw_exit(&ds->ds_bp_rwlock, FTAG);
+
+	/* set the portable MAC */
+	bcopy(portable_mac, os->os_phys->os_portable_mac, ZIO_OBJSET_MAC_LEN);
+	bzero(os->os_phys->os_local_mac, ZIO_OBJSET_MAC_LEN);
+	arc_convert_to_raw(os->os_phys_buf, dsobj, ZFS_HOST_BYTEORDER,
+	    DMU_OT_OBJSET, NULL, NULL, NULL);
+
+	dsl_dataset_dirty(ds, tx);
 
 	/* set metadnode compression and checksum */
 	mdn->dn_compress = compress;
@@ -2119,6 +2135,8 @@ dsl_crypto_populate_key_nvlist(dsl_dataset_t *ds, nvlist_t **nvl_out)
 	    WRAPPING_IV_LEN));
 	VERIFY0(nvlist_add_uint8_array(nvl, DSL_CRYPTO_KEY_MAC, mac,
 	    WRAPPING_MAC_LEN));
+	VERIFY0(nvlist_add_uint8_array(nvl, "portable_mac",
+	    os->os_phys->os_portable_mac, ZIO_OBJSET_MAC_LEN));
 	fnvlist_add_uint64(nvl, zfs_prop_to_name(ZFS_PROP_KEYFORMAT), format);
 	fnvlist_add_uint64(nvl, zfs_prop_to_name(ZFS_PROP_PBKDF2_ITERS), iters);
 	fnvlist_add_uint64(nvl, zfs_prop_to_name(ZFS_PROP_PBKDF2_SALT), salt);
@@ -2285,7 +2303,7 @@ spa_do_crypt_objset_mac_abd(boolean_t generate, spa_t *spa, uint64_t dsobj,
 {
 	int ret;
 	dsl_crypto_key_t *dck = NULL;
-	void *buf = abd_borrow_buf(abd, datalen);
+	void *buf = abd_borrow_buf_copy(abd, datalen);
 	objset_phys_t *osp = buf;
 	uint8_t portable_mac[SHA_256_DIGEST_LEN];
 	uint8_t local_mac[SHA_256_DIGEST_LEN];
@@ -2323,6 +2341,7 @@ spa_do_crypt_objset_mac_abd(boolean_t generate, spa_t *spa, uint64_t dsobj,
 error:
 	if (dck != NULL)
 		spa_keystore_dsl_key_rele(spa, dck, FTAG);
+	abd_return_buf(abd, buf, datalen);
 	return (ret);
 }
 
@@ -2332,7 +2351,7 @@ spa_do_crypt_mac_abd(boolean_t generate, spa_t *spa, uint64_t dsobj, abd_t *abd,
 {
 	int ret;
 	dsl_crypto_key_t *dck = NULL;
-	uint8_t *buf = abd_borrow_buf(abd, datalen);
+	uint8_t *buf = abd_borrow_buf_copy(abd, datalen);
 	uint8_t digestbuf[SHA_256_DIGEST_LEN];
 
 	/* look up the key from the spa's keystore */
@@ -2428,7 +2447,7 @@ spa_do_crypt_abd(boolean_t encrypt, spa_t *spa, uint64_t dsobj,
 
 	/* call lower level function to perform encryption / decryption */
 	ret = zio_do_crypt_data(encrypt, &dck->dck_key, salt, ot, iv, mac,
-	    datalen, plainbuf, cipherbuf, no_crypt);
+	    datalen, BP_SHOULD_BYTESWAP(bp), plainbuf, cipherbuf, no_crypt);
 	if (ret != 0)
 		goto error;
 

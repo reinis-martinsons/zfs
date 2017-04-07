@@ -1816,10 +1816,10 @@ arc_hdr_authenticate(arc_buf_hdr_t *hdr, kmutex_t *hash_lock, spa_t *spa,
 	ASSERT3P(hdr->b_l1hdr.b_pabd, !=, NULL);
 
 	/*
-	 * Check that we only have an encrypted copy of the data. This was
-	 * already checked in arc_buf_fill() as a quick check, but we do it
-	 * again now under the hash_lock to make sure nothing has changed.
-	 * If this isn't true there is no work to do so we can simply return.
+	 * Check that we have not yet authenticted the data. This was already
+	 * checked in arc_buf_fill() as a quick check, but we do it again now
+	 * under the hash_lock to make sure nothing has changed. If we have
+	 * there is no work to do so we can simply return.
 	 */
 	if (!HDR_NOAUTH(hdr))
 		goto out_unlock;
@@ -1858,10 +1858,10 @@ arc_hdr_authenticate(arc_buf_hdr_t *hdr, kmutex_t *hash_lock, spa_t *spa,
 		    hdr->b_crypt_hdr.b_mac);
 	}
 
-	if (ret != 0 && ret != ENOENT)
-		goto error;
-	else if (ret == 0)
+	if (ret == 0)
 		arc_hdr_clear_flags(hdr, ARC_FLAG_NOAUTH);
+	else if (ret != ENOENT)
+		goto error;
 
 out_unlock:
 	if (tmpbuf != NULL)
@@ -1895,6 +1895,7 @@ arc_hdr_decrypt(arc_buf_hdr_t *hdr, kmutex_t *hash_lock, spa_t *spa,
 	abd_t *cabd = NULL;
 	void *tmp = NULL;
 	boolean_t no_crypt = B_FALSE;
+	boolean_t bswap = (hdr->b_l1hdr.b_byteswap != DMU_BSWAP_NUMFUNCS);
 
 	if (hash_lock != NULL)
 		mutex_enter(hash_lock);
@@ -1930,7 +1931,7 @@ arc_hdr_decrypt(arc_buf_hdr_t *hdr, kmutex_t *hash_lock, spa_t *spa,
 	ret = zio_do_crypt_abd(B_FALSE, &dck->dck_key,
 	    hdr->b_crypt_hdr.b_salt, hdr->b_crypt_hdr.b_ot,
 	    hdr->b_crypt_hdr.b_iv, hdr->b_crypt_hdr.b_mac,
-	    HDR_GET_PSIZE(hdr), hdr->b_l1hdr.b_pabd,
+	    HDR_GET_PSIZE(hdr), bswap, hdr->b_l1hdr.b_pabd,
 	    hdr->b_crypt_hdr.b_rabd, &no_crypt);
 	if (ret != 0)
 		goto error;
@@ -3471,11 +3472,10 @@ arc_hdr_realloc_crypt(arc_buf_hdr_t *hdr, boolean_t need_crypt)
 
 /*
  * This function is used by the send / receive code to convert a newly
- * allocated arc_buf_t to one that is suitable for a raw encrypted write.
- * Currently we only need support for L0 dnode buffers since other object
- * types can simply allocated a raw buffer to begin with. Encrypted dnode
- * blocks will always be uncompressed so we do not have to worry about
- * compression type or psize.
+ * allocated arc_buf_t to one that is suitable for a raw encrypted write. It
+ * is also used to allow the root objset block to be uupdated without altering
+ * its embedded MACs. Both block types will always be uncompressed so we do not
+ * have to worry about compression type or psize.
  */
 void
 arc_convert_to_raw(arc_buf_t *buf, uint64_t dsobj, boolean_t byteorder,
@@ -3484,22 +3484,26 @@ arc_convert_to_raw(arc_buf_t *buf, uint64_t dsobj, boolean_t byteorder,
 {
 	arc_buf_hdr_t *hdr = buf->b_hdr;
 
-	ASSERT3U(ot, ==, DMU_OT_DNODE);
+	ASSERT(ot == DMU_OT_DNODE || ot == DMU_OT_OBJSET);
 	ASSERT(HDR_HAS_L1HDR(hdr));
-	ASSERT0(HDR_PROTECTED(hdr));
 	ASSERT3P(hdr->b_l1hdr.b_state, ==, arc_anon);
 	ASSERT0(ARC_BUF_COMPRESSED(buf));
 	ASSERT0(ARC_BUF_ENCRYPTED(buf));
 
 	buf->b_flags |= (ARC_BUF_FLAG_COMPRESSED | ARC_BUF_FLAG_ENCRYPTED);
-	hdr = arc_hdr_realloc_crypt(hdr, B_TRUE);
+	if (!HDR_PROTECTED(hdr))
+		hdr = arc_hdr_realloc_crypt(hdr, B_TRUE);
 	hdr->b_crypt_hdr.b_dsobj = dsobj;
 	hdr->b_crypt_hdr.b_ot = ot;
 	hdr->b_l1hdr.b_byteswap = (byteorder == ZFS_HOST_BYTEORDER) ?
 	    DMU_BSWAP_NUMFUNCS : DMU_OT_BYTESWAP(ot);
-	bcopy(salt, hdr->b_crypt_hdr.b_salt, ZIO_DATA_SALT_LEN);
-	bcopy(iv, hdr->b_crypt_hdr.b_iv, ZIO_DATA_IV_LEN);
-	bcopy(mac, hdr->b_crypt_hdr.b_mac, ZIO_DATA_MAC_LEN);
+
+	if (salt != NULL)
+		bcopy(salt, hdr->b_crypt_hdr.b_salt, ZIO_DATA_SALT_LEN);
+	if (iv != NULL)
+		bcopy(iv, hdr->b_crypt_hdr.b_iv, ZIO_DATA_IV_LEN);
+	if (mac != NULL)
+		bcopy(mac, hdr->b_crypt_hdr.b_mac, ZIO_DATA_MAC_LEN);
 
 	/* free the non-raw header data */
 	if (hdr->b_l1hdr.b_pabd != NULL) {
@@ -6003,13 +6007,23 @@ top:
 			if (arc_hdr_get_compress(hdr) != ZIO_COMPRESS_OFF) {
 				zio_flags |= ZIO_FLAG_RAW_COMPRESS;
 			}
+
+			/*
+			 * For authenticated bp's, we do not ask the ZIO layer
+			 * to authenticate them since this will cause the entire
+			 * IO to fail if the key isn't loaded. Instead, we
+			 * defer authentication until arc_buf_fill(), which will
+			 * verify the data when the key is available.
+			 */
+			if (BP_IS_AUTHENTICATED(bp))
+				zio_flags |= ZIO_FLAG_RAW_ENCRYPT;
 		}
 
 		if (*arc_flags & ARC_FLAG_PREFETCH)
 			arc_hdr_set_flags(hdr, ARC_FLAG_PREFETCH);
 		if (*arc_flags & ARC_FLAG_L2CACHE)
 			arc_hdr_set_flags(hdr, ARC_FLAG_L2CACHE);
-		if (noauth_read)
+		if (BP_IS_AUTHENTICATED(bp))
 			arc_hdr_set_flags(hdr, ARC_FLAG_NOAUTH);
 		if (BP_GET_LEVEL(bp) > 0)
 			arc_hdr_set_flags(hdr, ARC_FLAG_INDIRECT);
@@ -6561,8 +6575,12 @@ arc_write_ready(zio_t *zio)
 	 * ended up only authenticating it, adjust the buffer flags now.
 	 */
 	if (BP_IS_AUTHENTICATED(bp) && ARC_BUF_ENCRYPTED(buf)) {
-		buf->b_flags &= ~ARC_BUF_FLAG_ENCRYPTED;
 		arc_hdr_set_flags(hdr, ARC_FLAG_NOAUTH);
+		buf->b_flags &= ~ARC_BUF_FLAG_ENCRYPTED;
+		if (BP_GET_COMPRESS(bp) == ZIO_COMPRESS_OFF) {
+			buf->b_flags &= ~ARC_BUF_FLAG_COMPRESSED;
+			arc_cksum_compute(buf);
+		}
 	}
 
 	if (BP_IS_HOLE(bp) || BP_IS_EMBEDDED(bp)) {
@@ -7818,7 +7836,8 @@ l2arc_untransform(zio_t *zio, l2arc_read_callback_t *cb)
 
 		ret = zio_do_crypt_abd(B_FALSE, &dck->dck_key,
 		    salt, BP_GET_TYPE(bp), iv, mac, HDR_GET_PSIZE(hdr),
-		    eabd, hdr->b_l1hdr.b_pabd, &no_crypt);
+		    BP_SHOULD_BYTESWAP(bp), eabd, hdr->b_l1hdr.b_pabd,
+		    &no_crypt);
 		if (ret != 0) {
 			arc_free_data_abd(hdr, eabd, arc_hdr_size(hdr), hdr);
 			spa_keystore_dsl_key_rele(spa, dck, FTAG);
@@ -8135,6 +8154,7 @@ l2arc_apply_transforms(spa_t *spa, arc_buf_hdr_t *hdr, abd_t **abd_out,
 	uint64_t bsize = arc_hdr_size(hdr);
 	uint64_t csize = bsize;
 	boolean_t ismd = HDR_ISTYPE_METADATA(hdr);
+	boolean_t bswap = (hdr->b_l1hdr.b_byteswap != DMU_BSWAP_NUMFUNCS);
 	dsl_crypto_key_t *dck = NULL;
 	uint8_t mac[ZIO_DATA_MAC_LEN] = { 0 };
 	boolean_t no_crypt;
@@ -8186,7 +8206,7 @@ l2arc_apply_transforms(spa_t *spa, arc_buf_hdr_t *hdr, abd_t **abd_out,
 
 		ret = zio_do_crypt_abd(B_TRUE, &dck->dck_key,
 		    hdr->b_crypt_hdr.b_salt, hdr->b_crypt_hdr.b_ot,
-		    hdr->b_crypt_hdr.b_iv, mac, csize, to_write,
+		    hdr->b_crypt_hdr.b_iv, mac, csize, bswap, to_write,
 		    eabd, &no_crypt);
 		if (ret != 0)
 			goto error;

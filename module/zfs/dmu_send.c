@@ -3720,6 +3720,7 @@ dmu_recv_end_sync(void *arg, dmu_tx_t *tx)
 	 * pointer.
 	 */
 	if (!drc->drc_raw) {
+		atomic_dec_32(&drc->drc_ds->ds_key_mappings);
 		(void) spa_keystore_remove_mapping(dmu_tx_pool(tx)->dp_spa,
 		    drc->drc_ds->ds_object, drc->drc_ds);
 	}

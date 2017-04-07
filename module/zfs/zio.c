@@ -416,7 +416,7 @@ zio_decrypt(zio_t *zio, abd_t *data, uint64_t size)
 		ASSERT3U(BP_GET_COMPRESS(bp), ==, ZIO_COMPRESS_OFF);
 		zio_crypt_decode_mac_bp(bp, mac);
 		ret = zio_crypt_do_indirect_mac_checksum_abd(B_FALSE,
-		    zio->io_abd, size, mac);
+		    zio->io_abd, size, BP_SHOULD_BYTESWAP(bp), mac);
 		abd_copy(data, zio->io_abd, size);
 
 		if (ret != 0)
@@ -428,16 +428,21 @@ zio_decrypt(zio_t *zio, abd_t *data, uint64_t size)
 	/*
 	 * If this is an authenticated block, just check the MAC. It would be
 	 * nice to separate this out into its own flag, but for the moment
-	 * enum zio_flag is out of space. Authentication is best effort. We do
-	 * it whenever we have the key available.
+	 * enum zio_flag is out of bits.
 	 */
 	if (BP_IS_AUTHENTICATED(bp)) {
-		zio_crypt_decode_mac_bp(bp, mac);
-		ret = spa_do_crypt_mac_abd(B_FALSE, zio->io_spa,
-		    zio->io_bookmark.zb_objset, zio->io_abd, size, mac);
+		if (ot == DMU_OT_OBJSET) {
+			ret = spa_do_crypt_objset_mac_abd(B_FALSE, zio->io_spa,
+			    zio->io_bookmark.zb_objset, zio->io_abd, size,
+			    BP_SHOULD_BYTESWAP(bp));
+		} else {
+			zio_crypt_decode_mac_bp(bp, mac);
+			ret = spa_do_crypt_mac_abd(B_FALSE, zio->io_spa,
+			    zio->io_bookmark.zb_objset, zio->io_abd, size, mac);
+		}
 		abd_copy(data, zio->io_abd, size);
 
-		if (ret != 0 && ret != ENOENT)
+		if (ret != 0)
 			zio->io_error = ret;
 
 		return;
@@ -3624,7 +3629,8 @@ zio_encrypt(zio_t *zio)
 	if (zio->io_flags & ZIO_FLAG_RAW_ENCRYPT) {
 		BP_SET_CRYPT(bp, B_TRUE);
 		BP_SET_BYTEORDER(bp, zp->zp_byteorder);
-		zio_crypt_encode_mac_bp(bp, zp->zp_mac);
+		if (ot != DMU_OT_OBJSET)
+			zio_crypt_encode_mac_bp(bp, zp->zp_mac);
 		if (DMU_OT_IS_ENCRYPTED(ot))
 			zio_crypt_encode_params_bp(bp, zp->zp_salt, zp->zp_iv);
 		return (ZIO_PIPELINE_CONTINUE);
@@ -3635,27 +3641,23 @@ zio_encrypt(zio_t *zio)
 		ASSERT3U(BP_GET_COMPRESS(bp), ==, ZIO_COMPRESS_OFF);
 		BP_SET_CRYPT(bp, B_TRUE);
 		VERIFY0(zio_crypt_do_indirect_mac_checksum_abd(B_TRUE,
-		    zio->io_orig_abd, BP_GET_LSIZE(bp), mac));
+		    zio->io_orig_abd, BP_GET_LSIZE(bp), BP_SHOULD_BYTESWAP(bp),
+		    mac));
 		zio_crypt_encode_mac_bp(bp, mac);
 		return (ZIO_PIPELINE_CONTINUE);
 	}
 
 	/*
 	 * Objset blocks are a special case since they have 2 256-bit MACs
-	 * embedded within them. These blocks can be written out during
-	 * claiming without the keys loaded. This is OK because claiming
-	 * won't touch any fields that are protected by the internal MACs.
+	 * embedded within them.
 	 */
 	if (ot == DMU_OT_OBJSET) {
 		ASSERT0(DMU_OT_IS_ENCRYPTED(ot));
 		ASSERT3U(BP_GET_COMPRESS(bp), ==, ZIO_COMPRESS_OFF);
 		BP_SET_CRYPT(bp, B_TRUE);
-
-		if (!spa->spa_claiming) {
-			VERIFY0(spa_do_crypt_objset_mac_abd(B_TRUE, spa,
-			    zio->io_bookmark.zb_objset, zio->io_abd, psize,
-			    BP_SHOULD_BYTESWAP(bp)));
-		}
+		VERIFY0(spa_do_crypt_objset_mac_abd(B_TRUE, spa,
+		    zio->io_bookmark.zb_objset, zio->io_abd, psize,
+		    BP_SHOULD_BYTESWAP(bp)));
 		return (ZIO_PIPELINE_CONTINUE);
 	}
 

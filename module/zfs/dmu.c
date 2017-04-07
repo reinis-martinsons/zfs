@@ -2140,9 +2140,13 @@ dmu_write_policy_override_encrypt(zio_prop_t *zp, boolean_t byteorder,
 	zp->zp_compress = compress;
 	zp->zp_nopwrite = B_FALSE;
 	zp->zp_encrypt = B_TRUE;
-	bcopy(salt, zp->zp_salt, ZIO_DATA_SALT_LEN);
-	bcopy(iv, zp->zp_iv, ZIO_DATA_IV_LEN);
-	bcopy(mac, zp->zp_mac, ZIO_DATA_MAC_LEN);
+
+	if (salt != NULL)
+		bcopy(salt, zp->zp_salt, ZIO_DATA_SALT_LEN);
+	if (iv != NULL)
+		bcopy(iv, zp->zp_iv, ZIO_DATA_IV_LEN);
+	if (mac != NULL)
+		bcopy(mac, zp->zp_mac, ZIO_DATA_MAC_LEN);
 
 	if (zp->zp_copies >= SPA_DVAS_PER_BP)
 		zp->zp_copies = SPA_DVAS_PER_BP - 1;

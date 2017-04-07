@@ -937,6 +937,7 @@ extern struct spa *dmu_objset_spa(objset_t *os);
 extern struct zilog *dmu_objset_zil(objset_t *os);
 extern struct dsl_pool *dmu_objset_pool(objset_t *os);
 extern struct dsl_dataset *dmu_objset_ds(objset_t *os);
+extern boolean_t dmu_objset_key_mapped(objset_t *os);
 extern void dmu_objset_name(objset_t *os, char *buf);
 extern dmu_objset_type_t dmu_objset_type(objset_t *os);
 extern uint64_t dmu_objset_id(objset_t *os);

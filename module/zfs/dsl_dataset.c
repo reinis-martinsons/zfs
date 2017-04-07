@@ -282,6 +282,7 @@ dsl_dataset_evict_async(void *dbu)
 		dsl_dir_async_rele(ds->ds_dir, ds);
 
 	ASSERT(!list_link_active(&ds->ds_synced_link));
+	ASSERT0(ds->ds_key_mappings);
 
 	list_destroy(&ds->ds_prop_cbs);
 	mutex_destroy(&ds->ds_lock);
@@ -555,9 +556,7 @@ dsl_dataset_hold_obj_flags(dsl_pool_t *dp, uint64_t dsobj,
 			dsl_dataset_rele(ds, tag);
 			return (SET_ERROR(EACCES));
 		}
-
-		if (ds->ds_objset != NULL)
-			ds->ds_objset->os_key_mapped = B_TRUE;
+		atomic_inc_32(&ds->ds_key_mappings);
 	}
 
 	return (0);
@@ -739,11 +738,9 @@ dsl_dataset_rele_flags(dsl_dataset_t *ds, ds_hold_flags_t flags, void *tag)
 {
 	if (ds->ds_dir != NULL && ds->ds_dir->dd_crypto_obj != 0 &&
 	    (flags & DS_HOLD_FLAG_DECRYPT)) {
+		atomic_dec_32(&ds->ds_key_mappings);
 		(void) spa_keystore_remove_mapping(ds->ds_dir->dd_pool->dp_spa,
 		    ds->ds_object, ds);
-
-		if (ds->ds_objset != NULL)
-			ds->ds_objset->os_key_mapped = B_FALSE;
 	}
 
 	dmu_buf_rele(ds->ds_dbuf, tag);

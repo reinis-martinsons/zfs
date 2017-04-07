@@ -107,6 +107,13 @@ dmu_objset_zil(objset_t *os)
 	return (os->os_zil);
 }
 
+boolean_t
+dmu_objset_key_mapped(objset_t *os)
+{
+	return ((os->os_dsl_dataset) ?
+	    os->os_dsl_dataset->ds_key_mappings != 0 : B_FALSE);
+}
+
 dsl_pool_t *
 dmu_objset_pool(objset_t *os)
 {
@@ -391,16 +398,24 @@ dmu_objset_open_impl(spa_t *spa, dsl_dataset_t *ds, blkptr_t *bp,
 	if (!BP_IS_HOLE(os->os_rootbp)) {
 		arc_flags_t aflags = ARC_FLAG_WAIT;
 		zbookmark_phys_t zb;
+		enum zio_flag zio_flags = ZIO_FLAG_CANFAIL;
 		SET_BOOKMARK(&zb, ds ? ds->ds_object : DMU_META_OBJSET,
 		    ZB_ROOT_OBJECT, ZB_ROOT_LEVEL, ZB_ROOT_BLKID);
 
 		if (DMU_OS_IS_L2CACHEABLE(os))
 			aflags |= ARC_FLAG_L2CACHE;
 
+		if (ds != NULL && ds->ds_dir->dd_crypto_obj != 0 &&
+		    ds->ds_key_mappings == 0) {
+			ASSERT3U(BP_GET_COMPRESS(bp), ==, ZIO_COMPRESS_OFF);
+			ASSERT(BP_IS_AUTHENTICATED(bp));
+			zio_flags |= ZIO_FLAG_RAW;
+		}
+
 		dprintf_bp(os->os_rootbp, "reading %s", "");
 		err = arc_read(NULL, spa, os->os_rootbp,
 		    arc_getbuf_func, &os->os_phys_buf,
-		    ZIO_PRIORITY_SYNC_READ, ZIO_FLAG_CANFAIL, &aflags, &zb);
+		    ZIO_PRIORITY_SYNC_READ, zio_flags, &aflags, &zb);
 		if (err != 0) {
 			kmem_free(os, sizeof (objset_t));
 			/* convert checksum errors into IO errors */
@@ -452,10 +467,6 @@ dmu_objset_open_impl(spa_t *spa, dsl_dataset_t *ds, blkptr_t *bp,
 			needlock = B_TRUE;
 			dsl_pool_config_enter(dmu_objset_pool(os), FTAG);
 		}
-
-		/* os_key_mapped is protected by the pool_config lock */
-		os->os_key_mapped = (spa_keystore_lookup_key(spa,
-		    ds->ds_object, NULL, NULL) == 0);
 
 		err = dsl_prop_register(ds,
 		    zfs_prop_to_name(ZFS_PROP_PRIMARYCACHE),
@@ -525,7 +536,6 @@ dmu_objset_open_impl(spa_t *spa, dsl_dataset_t *ds, blkptr_t *bp,
 		os->os_checksum = ZIO_CHECKSUM_FLETCHER_4;
 		os->os_compress = ZIO_COMPRESS_ON;
 		os->os_encrypted = B_FALSE;
-		os->os_key_mapped = B_FALSE;
 		os->os_copies = spa_max_replication(spa);
 		os->os_dedup_checksum = ZIO_CHECKSUM_OFF;
 		os->os_dedup_verify = B_FALSE;
@@ -643,7 +653,7 @@ dmu_objset_hold(const char *name, void *tag, objset_t **osp)
 
 static int
 dmu_objset_own_impl(dsl_dataset_t *ds, dmu_objset_type_t type,
-    boolean_t readonly, void *tag, objset_t **osp)
+    boolean_t readonly, boolean_t decrypt, void *tag, objset_t **osp)
 {
 	int err;
 
@@ -655,6 +665,17 @@ dmu_objset_own_impl(dsl_dataset_t *ds, dmu_objset_type_t type,
 	} else if (!readonly && dsl_dataset_is_snapshot(ds)) {
 		return (SET_ERROR(EROFS));
 	}
+
+	/* if we are decrypting, we can now check MACs in os->os_phys_buf */
+	if (decrypt && arc_is_unauthenticated((*osp)->os_phys_buf)) {
+		err = arc_untransform((*osp)->os_phys_buf, (*osp)->os_spa,
+		    ds->ds_object, B_FALSE);
+		if (err != 0)
+			return (err);
+
+		ASSERT0(arc_is_unauthenticated((*osp)->os_phys_buf));
+	}
+
 	return (0);
 }
 
@@ -680,7 +701,7 @@ dmu_objset_own(const char *name, dmu_objset_type_t type,
 		dsl_pool_rele(dp, FTAG);
 		return (err);
 	}
-	err = dmu_objset_own_impl(ds, type, readonly, tag, osp);
+	err = dmu_objset_own_impl(ds, type, readonly, decrypt, tag, osp);
 	if (err != 0) {
 		dsl_dataset_disown(ds, flags, tag);
 		dsl_pool_rele(dp, FTAG);
@@ -690,7 +711,7 @@ dmu_objset_own(const char *name, dmu_objset_type_t type,
 	dsl_pool_rele(dp, FTAG);
 
 	if (dmu_objset_userobjspace_upgradable(*osp) &&
-	    (!(*osp)->os_encrypted || (*osp)->os_key_mapped))
+	    (!(*osp)->os_encrypted || dmu_objset_key_mapped(*osp)))
 		dmu_objset_userobjspace_upgrade(*osp);
 
 	return (0);
@@ -708,7 +729,7 @@ dmu_objset_own_obj(dsl_pool_t *dp, uint64_t obj, dmu_objset_type_t type,
 	if (err != 0)
 		return (err);
 
-	err = dmu_objset_own_impl(ds, type, readonly, tag, osp);
+	err = dmu_objset_own_impl(ds, type, readonly, decrypt, tag, osp);
 	if (err != 0) {
 		dsl_dataset_disown(ds, flags, tag);
 		return (err);
@@ -968,7 +989,7 @@ dmu_objset_create_impl_dnstats(spa_t *spa, dsl_dataset_t *ds, blkptr_t *bp,
 
 	/* enable user accounting if it is enabled and this is not a raw recv */
 	if (dmu_objset_userused_enabled(os) &&
-	    (!os->os_encrypted || os->os_key_mapped)) {
+	    (!os->os_encrypted || dmu_objset_key_mapped(os))) {
 		os->os_phys->os_flags |= OBJSET_FLAG_USERACCOUNTING_COMPLETE;
 		if (dmu_objset_userobjused_enabled(os)) {
 			ds->ds_feature_activation_needed[
@@ -1454,6 +1475,24 @@ dmu_objset_sync(objset_t *os, zio_t *pio, dmu_tx_t *tx)
 
 	dmu_write_policy(os, NULL, 0, 0, &zp);
 
+	/*
+	 * If we are either claiming the ZIL (unauthenticated) or doing a raw
+	 * receive (encrypted) do a raw write. It would be nice to assert that
+	 * we haven't mdofied any fields protected by the objset's MACs, but
+	 * there is currently no mechanism to do so.
+	 */
+	if (arc_is_unauthenticated(os->os_phys_buf) ||
+	    arc_is_encrypted(os->os_phys_buf)) {
+		if (arc_is_unauthenticated(os->os_phys_buf)) {
+			arc_convert_to_raw(os->os_phys_buf,
+			    os->os_dsl_dataset->ds_object, ZFS_HOST_BYTEORDER,
+			    DMU_OT_OBJSET, NULL, NULL, NULL);
+		}
+
+		dmu_write_policy_override_encrypt(&zp, ZFS_HOST_BYTEORDER,
+		    ZIO_COMPRESS_OFF, NULL, NULL, NULL);
+	}
+
 	zio = arc_write(pio, os->os_spa, tx->tx_txg,
 	    blkptr_copy, os->os_phys_buf, DMU_OS_IS_L2CACHEABLE(os),
 	    &zp, dmu_objset_write_ready, NULL, NULL, dmu_objset_write_done,
@@ -1478,7 +1517,7 @@ dmu_objset_sync(objset_t *os, zio_t *pio, dmu_tx_t *tx)
 	txgoff = tx->tx_txg & TXG_MASK;
 
 	if (dmu_objset_userused_enabled(os) &&
-	    (!os->os_encrypted || os->os_key_mapped)) {
+	    (!os->os_encrypted || dmu_objset_key_mapped(os))) {
 		/*
 		 * We must create the list here because it uses the
 		 * dn_dirty_link[] of this txg.  But it may already
@@ -1759,7 +1798,7 @@ dmu_objset_do_userquota_updates(objset_t *os, dmu_tx_t *tx)
 		return;
 
 	/* if this is a raw receive just return and handle accounting later */
-	if (os->os_encrypted && !os->os_key_mapped)
+	if (os->os_encrypted && !dmu_objset_key_mapped(os))
 		return;
 
 	/* Allocate the user/groupused objects if necessary. */
@@ -1849,7 +1888,7 @@ dmu_objset_userquota_get_ids(dnode_t *dn, boolean_t before, dmu_tx_t *tx)
 	 * as part of the send anyway so we can simply rely on that without
 	 * redoing the work.
 	 */
-	if (os->os_encrypted && !os->os_key_mapped)
+	if (os->os_encrypted && !dmu_objset_key_mapped(os))
 		return;
 
 	if (before && (flags & (DN_ID_CHKED_BONUS|DN_ID_OLD_EXIST|
@@ -2625,6 +2664,7 @@ dmu_objset_willuse_space(objset_t *os, int64_t space, dmu_tx_t *tx)
 #if defined(_KERNEL) && defined(HAVE_SPL)
 EXPORT_SYMBOL(dmu_objset_zil);
 EXPORT_SYMBOL(dmu_objset_pool);
+EXPORT_SYMBOL(dmu_objset_key_mapped);
 EXPORT_SYMBOL(dmu_objset_ds);
 EXPORT_SYMBOL(dmu_objset_type);
 EXPORT_SYMBOL(dmu_objset_name);

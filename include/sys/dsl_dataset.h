@@ -191,6 +191,9 @@ typedef struct dsl_dataset {
 	 */
 	refcount_t ds_longholds;
 
+	/* refcount on our encryption key mapping */
+	uint32_t ds_key_mappings;
+
 	/* no locking; only for making guesses */
 	uint64_t ds_trysnap_txg;
 

@@ -148,16 +148,17 @@ void zio_crypt_decode_mac_zil(const void *data, uint8_t *mac);
 void zio_crypt_copy_dnode_bonus(abd_t *src_abd, uint8_t *dst, uint_t datalen);
 
 int zio_crypt_do_indirect_mac_checksum_abd(boolean_t generate, abd_t *abd,
-    uint_t datalen, uint8_t *cksum);
+    uint_t datalen, boolean_t byteswap, uint8_t *cksum);
 int zio_crypt_do_hmac(zio_crypt_key_t *key, uint8_t *data, uint_t datalen,
     uint8_t *digestbuf);
 int zio_crypt_do_objset_hmacs(zio_crypt_key_t *key, void *data, uint_t datalen,
     boolean_t byteswap, uint8_t *portable_mac, uint8_t *local_mac);
 int zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key, uint8_t *salt,
     dmu_object_type_t ot, uint8_t *iv, uint8_t *mac, uint_t datalen,
-    uint8_t *plainbuf, uint8_t *cipherbuf, boolean_t *no_crypt);
+    boolean_t byteswap, uint8_t *plainbuf, uint8_t *cipherbuf,
+    boolean_t *no_crypt);
 int zio_do_crypt_abd(boolean_t encrypt, zio_crypt_key_t *key, uint8_t *salt,
     dmu_object_type_t ot, uint8_t *iv, uint8_t *mac, uint_t datalen,
-    abd_t *pabd, abd_t *cabd, boolean_t *no_crypt);
+    boolean_t byteswap, abd_t *pabd, abd_t *cabd, boolean_t *no_crypt);
 
 #endif

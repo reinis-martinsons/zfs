@@ -57,7 +57,6 @@ struct dmu_tx;
 
 #define	OBJSET_FLAG_USERACCOUNTING_COMPLETE	(1ULL<<0)
 #define	OBJSET_FLAG_USEROBJACCOUNTING_COMPLETE	(1ULL<<1)
-#define	OBJSET_FLAG_LOCAL_MAC_VALID		(1ULL<<2)
 
 /* all flags are currently non-portable */
 #define	OBJSET_CRYPT_PORTABLE_FLAGS_MASK	(0)
@@ -112,9 +111,6 @@ struct objset {
 	zfs_sync_type_t os_sync;
 	zfs_redundant_metadata_type_t os_redundant_metadata;
 	int os_recordsize;
-
-	/* protected by pool config lock / dataset lifetime */
-	boolean_t os_key_mapped;
 
 	/*
 	 * Pointer is constant; the blkptr it points to is protected by
