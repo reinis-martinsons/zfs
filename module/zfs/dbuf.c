@@ -3795,8 +3795,9 @@ dbuf_write(dbuf_dirty_record_t *dr, arc_buf_t *data, dmu_tx_t *tx)
 			uint8_t mac[ZIO_DATA_MAC_LEN];
 
 			arc_get_raw_params(data, &byteorder, salt, iv, mac);
-			dmu_write_policy_override_encrypt(&zp, byteorder,
-			    arc_get_compression(data), salt, iv, mac);
+			dmu_write_policy_override_encrypt(&zp, dn->dn_type,
+			    byteorder, arc_get_compression(data), salt, iv,
+			    mac);
 		} else if (arc_get_compression(data) != ZIO_COMPRESS_OFF) {
 			dmu_write_policy_override_compress(&zp,
 			    arc_get_compression(data));

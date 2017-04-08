@@ -3504,16 +3504,6 @@ arc_convert_to_raw(arc_buf_t *buf, uint64_t dsobj, boolean_t byteorder,
 		bcopy(iv, hdr->b_crypt_hdr.b_iv, ZIO_DATA_IV_LEN);
 	if (mac != NULL)
 		bcopy(mac, hdr->b_crypt_hdr.b_mac, ZIO_DATA_MAC_LEN);
-
-	/* free the non-raw header data */
-	if (hdr->b_l1hdr.b_pabd != NULL) {
-		if (arc_buf_is_shared(buf)) {
-			arc_unshare_buf(hdr, buf);
-		} else {
-			arc_hdr_free_abd(hdr, B_FALSE);
-		}
-		VERIFY3P(buf->b_data, !=, NULL);
-	}
 }
 
 /*

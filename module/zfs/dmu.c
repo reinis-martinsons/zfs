@@ -2129,17 +2129,16 @@ dmu_write_policy_override_compress(zio_prop_t *zp, enum zio_compress compress)
  * that field here as well.
  */
 void
-dmu_write_policy_override_encrypt(zio_prop_t *zp, boolean_t byteorder,
-    enum zio_compress compress, const uint8_t *salt, const uint8_t *iv,
-    const uint8_t *mac)
+dmu_write_policy_override_encrypt(zio_prop_t *zp, dmu_object_type_t ot,
+    boolean_t byteorder, enum zio_compress compress, const uint8_t *salt,
+    const uint8_t *iv, const uint8_t *mac)
 {
 	ASSERT3U(compress, !=, ZIO_COMPRESS_INHERIT);
 	ASSERT3U(zp->zp_level, <=, 0);
 
+	zp->zp_encrypt = B_TRUE;
 	zp->zp_byteorder = byteorder;
 	zp->zp_compress = compress;
-	zp->zp_nopwrite = B_FALSE;
-	zp->zp_encrypt = B_TRUE;
 
 	if (salt != NULL)
 		bcopy(salt, zp->zp_salt, ZIO_DATA_SALT_LEN);
@@ -2148,8 +2147,10 @@ dmu_write_policy_override_encrypt(zio_prop_t *zp, boolean_t byteorder,
 	if (mac != NULL)
 		bcopy(mac, zp->zp_mac, ZIO_DATA_MAC_LEN);
 
-	if (zp->zp_copies >= SPA_DVAS_PER_BP)
-		zp->zp_copies = SPA_DVAS_PER_BP - 1;
+	if (DMU_OT_IS_ENCRYPTED(ot)) {
+		zp->zp_copies = MIN(zp->zp_copies, SPA_DVAS_PER_BP - 1);
+		zp->zp_nopwrite = B_FALSE;
+	}
 }
 
 int
