@@ -620,7 +620,7 @@ dsl_crypto_key_open(objset_t *mos, dsl_wrapping_key_t *wkey,
 	int ret;
 	uint64_t crypt = 0;
 	uint8_t raw_keydata[MAX_MASTER_KEY_LEN];
-	uint8_t raw_hmac_keydata[HMAC_SHA256_KEYLEN];
+	uint8_t raw_hmac_keydata[SHA512_HMAC_KEYLEN];
 	uint8_t iv[WRAPPING_IV_LEN];
 	uint8_t mac[WRAPPING_MAC_LEN];
 	dsl_crypto_key_t *dck;
@@ -642,7 +642,7 @@ dsl_crypto_key_open(objset_t *mos, dsl_wrapping_key_t *wkey,
 		goto error;
 
 	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_HMAC_KEY, 1,
-	    HMAC_SHA256_KEYLEN, raw_hmac_keydata);
+	    SHA512_HMAC_KEYLEN, raw_hmac_keydata);
 	if (ret != 0)
 		goto error;
 
@@ -1157,7 +1157,7 @@ dsl_crypto_key_sync_impl(objset_t *mos, uint64_t dckobj, uint64_t crypt,
 	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_MASTER_KEY, 1,
 	    MAX_MASTER_KEY_LEN, keydata, tx));
 	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_HMAC_KEY, 1,
-	    HMAC_SHA256_KEYLEN, hmac_keydata, tx));
+	    SHA512_HMAC_KEYLEN, hmac_keydata, tx));
 }
 
 static void
@@ -1165,7 +1165,7 @@ dsl_crypto_key_sync(dsl_crypto_key_t *dck, dmu_tx_t *tx)
 {
 	zio_crypt_key_t *key = &dck->dck_key;
 	uint8_t keydata[MAX_MASTER_KEY_LEN];
-	uint8_t hmac_keydata[HMAC_SHA256_KEYLEN];
+	uint8_t hmac_keydata[SHA512_HMAC_KEYLEN];
 	uint8_t iv[WRAPPING_IV_LEN];
 	uint8_t mac[WRAPPING_MAC_LEN];
 
@@ -1822,7 +1822,7 @@ dsl_crypto_recv_key_check(void *arg, dmu_tx_t *tx)
 
 	ret = nvlist_lookup_uint8_array(nvl, DSL_CRYPTO_KEY_HMAC_KEY,
 	    &buf, &len);
-	if (ret != 0 || len != HMAC_SHA256_KEYLEN) {
+	if (ret != 0 || len != SHA512_HMAC_KEYLEN) {
 		ret = SET_ERROR(EINVAL);
 		goto error;
 	}
@@ -2063,7 +2063,7 @@ dsl_crypto_populate_key_nvlist(dsl_dataset_t *ds, nvlist_t **nvl_out)
 	objset_t *mos = ds->ds_dir->dd_pool->dp_meta_objset;
 	uint64_t crypt = 0, format = 0, iters = 0, salt = 0;
 	uint8_t raw_keydata[MAX_MASTER_KEY_LEN];
-	uint8_t raw_hmac_keydata[HMAC_SHA256_KEYLEN];
+	uint8_t raw_hmac_keydata[SHA512_HMAC_KEYLEN];
 	uint8_t iv[WRAPPING_IV_LEN];
 	uint8_t mac[WRAPPING_MAC_LEN];
 
@@ -2088,7 +2088,7 @@ dsl_crypto_populate_key_nvlist(dsl_dataset_t *ds, nvlist_t **nvl_out)
 		goto error;
 
 	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_HMAC_KEY, 1,
-	    HMAC_SHA256_KEYLEN, raw_hmac_keydata);
+	    SHA512_HMAC_KEYLEN, raw_hmac_keydata);
 	if (ret != 0)
 		goto error;
 
@@ -2130,7 +2130,7 @@ dsl_crypto_populate_key_nvlist(dsl_dataset_t *ds, nvlist_t **nvl_out)
 	VERIFY0(nvlist_add_uint8_array(nvl, DSL_CRYPTO_KEY_MASTER_KEY,
 	    raw_keydata, MAX_MASTER_KEY_LEN));
 	VERIFY0(nvlist_add_uint8_array(nvl, DSL_CRYPTO_KEY_HMAC_KEY,
-	    raw_hmac_keydata, HMAC_SHA256_KEYLEN));
+	    raw_hmac_keydata, SHA512_HMAC_KEYLEN));
 	VERIFY0(nvlist_add_uint8_array(nvl, DSL_CRYPTO_KEY_IV, iv,
 	    WRAPPING_IV_LEN));
 	VERIFY0(nvlist_add_uint8_array(nvl, DSL_CRYPTO_KEY_MAC, mac,
@@ -2214,7 +2214,7 @@ dsl_crypto_key_clone_sync(dsl_dir_t *orig_dd, dsl_wrapping_key_t *wkey,
 	bcopy(&orig_dck->dck_key.zk_master_keydata,
 	    &dck.dck_key.zk_master_keydata, MAX_MASTER_KEY_LEN);
 	bcopy(&orig_dck->dck_key.zk_hmac_keydata,
-	    &dck.dck_key.zk_hmac_keydata, HMAC_SHA256_KEYLEN);
+	    &dck.dck_key.zk_hmac_keydata, SHA512_HMAC_KEYLEN);
 
 	dck.dck_key.zk_crypt = orig_dck->dck_key.zk_crypt;
 
@@ -2305,8 +2305,8 @@ spa_do_crypt_objset_mac_abd(boolean_t generate, spa_t *spa, uint64_t dsobj,
 	dsl_crypto_key_t *dck = NULL;
 	void *buf = abd_borrow_buf_copy(abd, datalen);
 	objset_phys_t *osp = buf;
-	uint8_t portable_mac[SHA_256_DIGEST_LEN];
-	uint8_t local_mac[SHA_256_DIGEST_LEN];
+	uint8_t portable_mac[ZIO_OBJSET_MAC_LEN];
+	uint8_t local_mac[ZIO_OBJSET_MAC_LEN];
 
 	/* look up the key from the spa's keystore */
 	ret = spa_keystore_lookup_key(spa, dsobj, FTAG, &dck);
@@ -2352,7 +2352,7 @@ spa_do_crypt_mac_abd(boolean_t generate, spa_t *spa, uint64_t dsobj, abd_t *abd,
 	int ret;
 	dsl_crypto_key_t *dck = NULL;
 	uint8_t *buf = abd_borrow_buf_copy(abd, datalen);
-	uint8_t digestbuf[SHA_256_DIGEST_LEN];
+	uint8_t digestbuf[ZIO_DATA_MAC_LEN];
 
 	/* look up the key from the spa's keystore */
 	ret = spa_keystore_lookup_key(spa, dsobj, FTAG, &dck);

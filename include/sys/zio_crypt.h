@@ -35,8 +35,8 @@ struct zbookmark_phys;
 #define	WRAPPING_MAC_LEN 16
 
 #define	SHA1_DIGEST_LEN 20
-#define	SHA_256_DIGEST_LEN 32
-#define	HMAC_SHA256_KEYLEN 32
+#define	SHA512_DIGEST_LEN 64
+#define	SHA512_HMAC_KEYLEN 64
 
 #define	L2ARC_DEFAULT_CRYPT ZIO_CRYPT_AES_256_CCM
 
@@ -100,7 +100,7 @@ typedef struct zio_crypt_key {
 	uint8_t zk_master_keydata[MAX_MASTER_KEY_LEN];
 
 	/* buffer for hmac key */
-	uint8_t zk_hmac_keydata[HMAC_SHA256_KEYLEN];
+	uint8_t zk_hmac_keydata[SHA512_HMAC_KEYLEN];
 
 	/* buffer for currrent encryption key derived from master key */
 	uint8_t zk_current_keydata[MAX_MASTER_KEY_LEN];
