@@ -28,10 +28,12 @@
 
 /* ZAP entry keys for DSL Encryption Keys stored on disk */
 #define	DSL_CRYPTO_KEY_CRYPTO_SUITE "DSL_CRYPTO_SUITE"
+#define	DSL_CRYPTO_KEY_GUID "DSL_CRYPTO_GUID"
 #define	DSL_CRYPTO_KEY_IV "DSL_CRYPTO_IV"
 #define	DSL_CRYPTO_KEY_MAC "DSL_CRYPTO_MAC"
 #define	DSL_CRYPTO_KEY_MASTER_KEY "DSL_CRYPTO_MASTER_KEY_1"
 #define	DSL_CRYPTO_KEY_HMAC_KEY "DSL_CRYPTO_HMAC_KEY_1"
+#define	DSL_CRYPTO_KEY_REFCOUNT "DSL_CRYPTO_REFCOUNT"
 
 /* in memory representation of a wrapping key */
 typedef struct dsl_wrapping_key {
@@ -86,7 +88,7 @@ typedef struct dsl_crypto_key {
 	avl_node_t dck_avl_link;
 
 	/* refcount of dsl_key_mapping_t's holding this key */
-	refcount_t dck_refcnt;
+	refcount_t dck_holds;
 
 	/* master key used to derive encryption keys */
 	zio_crypt_key_t dck_key;
@@ -180,8 +182,7 @@ void dsl_dataset_create_crypt_sync(uint64_t dsobj, dsl_dir_t *dd,
     struct dsl_dataset *origin, dsl_crypto_params_t *dcp, dmu_tx_t *tx);
 uint64_t dsl_crypto_key_create_sync(uint64_t crypt, dsl_wrapping_key_t *wkey,
     dmu_tx_t *tx);
-uint64_t dsl_crypto_key_clone_sync(dsl_dir_t *origindd,
-    dsl_wrapping_key_t *wkey, dmu_tx_t *tx);
+uint64_t dsl_crypto_key_clone_sync(dsl_dir_t *origindd, dmu_tx_t *tx);
 void dsl_crypto_key_destroy_sync(uint64_t dckobj, dmu_tx_t *tx);
 
 int spa_crypt_get_salt(spa_t *spa, uint64_t dsobj, uint8_t *salt);

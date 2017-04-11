@@ -282,6 +282,7 @@ const char *zfs_prop_default_string(zfs_prop_t);
 uint64_t zfs_prop_default_numeric(zfs_prop_t);
 boolean_t zfs_prop_readonly(zfs_prop_t);
 boolean_t zfs_prop_inheritable(zfs_prop_t);
+boolean_t zfs_prop_origin_inheritable(zfs_prop_t);
 boolean_t zfs_prop_setonce(zfs_prop_t);
 boolean_t zfs_prop_encryption_key_param(zfs_prop_t);
 boolean_t zfs_prop_valid_keylocation(const char *, boolean_t);
@@ -416,7 +417,7 @@ typedef enum zfs_keyformat {
 } zfs_keyformat_t;
 
 typedef enum zfs_key_location {
-	ZFS_KEYLOCATION_NONE,
+	ZFS_KEYLOCATION_NONE = 0,
 	ZFS_KEYLOCATION_PROMPT,
 	ZFS_KEYLOCATION_URI,
 	ZFS_KEYLOCATION_LOCATIONS

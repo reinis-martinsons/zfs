@@ -1160,7 +1160,6 @@ typedef struct dmu_objset_clone_arg {
 	const char *doca_clone;
 	const char *doca_origin;
 	cred_t *doca_cred;
-	dsl_crypto_params_t *doca_dcp;
 } dmu_objset_clone_arg_t;
 
 /*ARGSUSED*/
@@ -1208,8 +1207,7 @@ dmu_objset_clone_check(void *arg, dmu_tx_t *tx)
 		return (SET_ERROR(EINVAL));
 	}
 
-	error = dmu_objset_create_crypt_check(pdd, origin->ds_dir,
-	    doca->doca_dcp);
+	error = dmu_objset_create_crypt_check(pdd, origin->ds_dir, NULL);
 	if (error != 0) {
 		dsl_dataset_rele(origin, FTAG);
 		dsl_dir_rele(pdd, FTAG);
@@ -1237,7 +1235,7 @@ dmu_objset_clone_sync(void *arg, dmu_tx_t *tx)
 	VERIFY0(dsl_dataset_hold(dp, doca->doca_origin, FTAG, &origin));
 
 	obj = dsl_dataset_create_sync(pdd, tail, origin, 0,
-	    doca->doca_cred, doca->doca_dcp, tx);
+	    doca->doca_cred, NULL, tx);
 
 	VERIFY0(dsl_dataset_hold_obj(pdd->dd_pool, obj, FTAG, &ds));
 	dsl_dataset_name(origin, namebuf);
@@ -1250,15 +1248,13 @@ dmu_objset_clone_sync(void *arg, dmu_tx_t *tx)
 }
 
 int
-dmu_objset_clone(const char *clone, const char *origin,
-    dsl_crypto_params_t *dcp)
+dmu_objset_clone(const char *clone, const char *origin)
 {
 	dmu_objset_clone_arg_t doca;
 
 	doca.doca_clone = clone;
 	doca.doca_origin = origin;
 	doca.doca_cred = CRED();
-	doca.doca_dcp = dcp;
 
 	return (dsl_sync_task(clone,
 	    dmu_objset_clone_check, dmu_objset_clone_sync, &doca,

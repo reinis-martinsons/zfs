@@ -326,6 +326,10 @@ zio_crypt_key_init(uint64_t crypt, zio_crypt_key_t *key)
 	keydata_len = zio_crypt_table[crypt].ci_keylen;
 
 	/* fill keydata buffers and salt with random data */
+	ret = random_get_bytes(key->zk_guid, MASTER_KEY_GUID_LEN);
+	if (ret != 0)
+		goto error;
+
 	ret = random_get_bytes(key->zk_master_keydata, keydata_len);
 	if (ret != 0)
 		goto error;
@@ -594,7 +598,7 @@ zio_crypt_key_wrap(crypto_key_t *cwkey, zio_crypt_key_t *key, uint8_t *iv,
 
 	/* encrypt the keys and store the resulting ciphertext and mac */
 	ret = zio_do_crypt_uio(B_TRUE, crypt, cwkey, NULL, iv, enc_len,
-	    &puio, &cuio, NULL, 0);
+	    &puio, &cuio, key->zk_guid, MASTER_KEY_GUID_LEN);
 	if (ret != 0)
 		goto error;
 
@@ -605,14 +609,14 @@ error:
 }
 
 int
-zio_crypt_key_unwrap(crypto_key_t *cwkey, uint64_t crypt, uint8_t *keydata,
-    uint8_t *hmac_keydata, uint8_t *iv, uint8_t *mac, zio_crypt_key_t *key)
+zio_crypt_key_unwrap(crypto_key_t *cwkey, uint64_t crypt, uint8_t *guid,
+    uint8_t *keydata, uint8_t *hmac_keydata, uint8_t *iv, uint8_t *mac,
+    zio_crypt_key_t *key)
 {
 	int ret;
 	crypto_mechanism_t mech;
 	uio_t puio, cuio;
-	iovec_t plain_iovecs[3], cipher_iovecs[3];
-	uint8_t outmac[WRAPPING_MAC_LEN];
+	iovec_t plain_iovecs[2], cipher_iovecs[3];
 	uint_t enc_len, keydata_len;
 
 	ASSERT3U(crypt, <, ZIO_CRYPT_FUNCTIONS);
@@ -625,8 +629,6 @@ zio_crypt_key_unwrap(crypto_key_t *cwkey, uint64_t crypt, uint8_t *keydata,
 	plain_iovecs[0].iov_len = keydata_len;
 	plain_iovecs[1].iov_base = key->zk_hmac_keydata;
 	plain_iovecs[1].iov_len = SHA512_HMAC_KEYLEN;
-	plain_iovecs[2].iov_base = outmac;
-	plain_iovecs[2].iov_len = WRAPPING_MAC_LEN;
 
 	cipher_iovecs[0].iov_base = keydata;
 	cipher_iovecs[0].iov_len = keydata_len;
@@ -638,16 +640,19 @@ zio_crypt_key_unwrap(crypto_key_t *cwkey, uint64_t crypt, uint8_t *keydata,
 	enc_len = keydata_len + SHA512_HMAC_KEYLEN;
 	puio.uio_iov = plain_iovecs;
 	puio.uio_segflg = UIO_SYSSPACE;
-	puio.uio_iovcnt = 3;
+	puio.uio_iovcnt = 2;
 	cuio.uio_iov = cipher_iovecs;
 	cuio.uio_iovcnt = 3;
 	cuio.uio_segflg = UIO_SYSSPACE;
 
 	/* decrypt the keys and store the result in the output buffers */
 	ret = zio_do_crypt_uio(B_FALSE, crypt, cwkey, NULL, iv, enc_len,
-	    &puio, &cuio, NULL, 0);
+	    &puio, &cuio, guid, MASTER_KEY_GUID_LEN);
 	if (ret != 0)
 		goto error;
+
+	/* copy the (now validated) guid over */
+	bcopy(guid, key->zk_guid, MASTER_KEY_GUID_LEN);
 
 	/* generate a fresh salt */
 	ret = random_get_bytes(key->zk_salt, ZIO_DATA_SALT_LEN);
@@ -1733,7 +1738,7 @@ zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key, uint8_t *salt,
 	uint_t keydata_len = zio_crypt_table[crypt].ci_keylen;
 	uint_t enc_len, auth_len;
 	uio_t puio, cuio;
-	uint8_t enc_keydata[MAX_MASTER_KEY_LEN];
+	uint8_t enc_keydata[MASTER_KEY_MAX_LEN];
 	crypto_key_t tmp_ckey, *ckey = NULL;
 	crypto_ctx_template_t tmpl;
 	uint8_t *authbuf = NULL;

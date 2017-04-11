@@ -204,8 +204,7 @@ lzc_create(const char *fsname, enum lzc_dataset_type type, nvlist_t *props,
 }
 
 int
-lzc_clone(const char *fsname, const char *origin, nvlist_t *props,
-    uint8_t *wkeydata, uint_t wkeylen)
+lzc_clone(const char *fsname, const char *origin, nvlist_t *props)
 {
 	int error;
 	nvlist_t *hidden_args = NULL;
@@ -214,14 +213,6 @@ lzc_clone(const char *fsname, const char *origin, nvlist_t *props,
 	fnvlist_add_string(args, "origin", origin);
 	if (props != NULL)
 		fnvlist_add_nvlist(args, "props", props);
-
-	if (wkeydata != NULL) {
-		hidden_args = fnvlist_alloc();
-		fnvlist_add_uint8_array(hidden_args, "wkeydata", wkeydata,
-		    wkeylen);
-		fnvlist_add_nvlist(args, ZPOOL_HIDDEN_ARGS, hidden_args);
-	}
-
 	error = lzc_ioctl(ZFS_IOC_CLONE, fsname, args, NULL);
 	nvlist_free(hidden_args);
 	nvlist_free(args);

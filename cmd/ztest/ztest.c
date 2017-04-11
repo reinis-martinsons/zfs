@@ -3768,7 +3768,7 @@ ztest_dsl_dataset_promote_busy(ztest_ds_t *zd, uint64_t id)
 		fatal(0, "dmu_take_snapshot(%s) = %d", snap1name, error);
 	}
 
-	error = dmu_objset_clone(clone1name, snap1name, NULL);
+	error = dmu_objset_clone(clone1name, snap1name);
 	if (error) {
 		if (error == ENOSPC) {
 			ztest_record_enospc(FTAG);
@@ -3795,7 +3795,7 @@ ztest_dsl_dataset_promote_busy(ztest_ds_t *zd, uint64_t id)
 		fatal(0, "dmu_open_snapshot(%s) = %d", snap3name, error);
 	}
 
-	error = dmu_objset_clone(clone2name, snap3name, NULL);
+	error = dmu_objset_clone(clone2name, snap3name);
 	if (error) {
 		if (error == ENOSPC) {
 			ztest_record_enospc(FTAG);
@@ -5135,7 +5135,7 @@ ztest_dmu_snapshot_hold(ztest_ds_t *zd, uint64_t id)
 		fatal(0, "dmu_objset_snapshot(%s) = %d", fullname, error);
 	}
 
-	error = dmu_objset_clone(clonename, fullname, NULL);
+	error = dmu_objset_clone(clonename, fullname);
 	if (error) {
 		if (error == ENOSPC) {
 			ztest_record_enospc("dmu_objset_clone");

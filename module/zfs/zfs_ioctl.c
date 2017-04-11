@@ -3320,14 +3320,11 @@ zfs_ioc_clone(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 {
 	int error = 0;
 	nvlist_t *nvprops = NULL;
-	nvlist_t *hidden_args = NULL;
-	dsl_crypto_params_t *dcp = NULL;
 	char *origin_name;
 
 	if (nvlist_lookup_string(innvl, "origin", &origin_name) != 0)
 		return (SET_ERROR(EINVAL));
 	(void) nvlist_lookup_nvlist(innvl, "props", &nvprops);
-	(void) nvlist_lookup_nvlist(innvl, ZPOOL_HIDDEN_ARGS, &hidden_args);
 
 	if (strchr(fsname, '@') ||
 	    strchr(fsname, '%'))
@@ -3336,13 +3333,7 @@ zfs_ioc_clone(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 	if (dataset_namecheck(origin_name, NULL, NULL) != 0)
 		return (SET_ERROR(EINVAL));
 
-	error = dsl_crypto_params_create_nvlist(nvprops, hidden_args, &dcp);
-	if (error != 0)
-		return (error);
-
-	error = dmu_objset_clone(fsname, origin_name, dcp);
-
-	dsl_crypto_params_free(dcp, !!error);
+	error = dmu_objset_clone(fsname, origin_name);
 
 	/*
 	 * It would be nice to do this atomically.

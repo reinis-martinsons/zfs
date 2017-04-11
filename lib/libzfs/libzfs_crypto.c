@@ -947,21 +947,30 @@ out:
 }
 
 int
-zfs_crypto_clone(libzfs_handle_t *hdl, zfs_handle_t *origin_zhp,
-    char *parent_name, nvlist_t *props, uint8_t **wkeydata_out,
-    uint_t *wkeylen_out)
+zfs_crypto_clone_check(libzfs_handle_t *hdl, zfs_handle_t *origin_zhp,
+    char *parent_name, nvlist_t *props)
 {
 	int ret;
 	char errbuf[1024];
-	uint64_t keyformat = ZFS_KEYFORMAT_NONE;
-	char *keylocation = NULL;
-	uint8_t *wkeydata = NULL;
-	uint_t wkeylen = 0;
 	zfs_handle_t *pzhp = NULL;
-	uint64_t crypt, pcrypt, ocrypt, okey_status;
+	uint64_t pcrypt, ocrypt;
 
 	(void) snprintf(errbuf, sizeof (errbuf),
 	    dgettext(TEXT_DOMAIN, "Encryption clone error"));
+
+	/*
+	 * No encryption properties should be specified. They will all be
+	 * inherited from the origin dataset
+	 */
+	if (nvlist_exists(props, zfs_prop_to_name(ZFS_PROP_KEYFORMAT)) ||
+	    nvlist_exists(props, zfs_prop_to_name(ZFS_PROP_KEYLOCATION)) ||
+	    nvlist_exists(props, zfs_prop_to_name(ZFS_PROP_ENCRYPTION)) ||
+	    nvlist_exists(props, zfs_prop_to_name(ZFS_PROP_PBKDF2_ITERS))) {
+		ret = EINVAL;
+		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+		    "Encryption properties must inherit from origin dataset."));
+		goto out;
+	}
 
 	/* get a reference to parent dataset, should never be NULL */
 	pzhp = make_dataset_handle(hdl, parent_name);
@@ -975,114 +984,21 @@ zfs_crypto_clone(libzfs_handle_t *hdl, zfs_handle_t *origin_zhp,
 	pcrypt = zfs_prop_get_int(pzhp, ZFS_PROP_ENCRYPTION);
 	ocrypt = zfs_prop_get_int(origin_zhp, ZFS_PROP_ENCRYPTION);
 
-	/* lookup keylocation from props */
-	(void) nvlist_lookup_uint64(props,
-	    zfs_prop_to_name(ZFS_PROP_KEYFORMAT), &keyformat);
-	(void) nvlist_lookup_string(props,
-	    zfs_prop_to_name(ZFS_PROP_KEYLOCATION), &keylocation);
-
-	/* encryption should not be set since it must match the origin */
-	ret = nvlist_lookup_uint64(props, zfs_prop_to_name(ZFS_PROP_ENCRYPTION),
-	    &crypt);
-	if (ret == 0) {
-		ret = EINVAL;
-		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-		    "Encryption may not be specified during cloning."));
-		goto out;
-	}
-
 	/* all children of encrypted parents must be encrypted */
 	if (pcrypt != ZIO_CRYPT_OFF && ocrypt == ZIO_CRYPT_OFF) {
 		ret = EINVAL;
 		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-		    "Cannot create unencrypted clone as child "
+		    "Cannot create unencrypted clone as a child "
 		    "of encrypted parent."));
 		goto out;
 	}
 
-	/*
-	 * If this dataset won't be encrypted check to ensure no encryption
-	 * params were set and return.
-	 */
-	if (ocrypt == ZIO_CRYPT_OFF) {
-		if (proplist_has_encryption_props(props)) {
-			ret = EINVAL;
-			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			    "Encryption properties may not be set "
-			    "for an unencrypted clone."));
-			goto out;
-		}
-
-		ret = 0;
-		goto out;
-	}
-
-	/*
-	 * Specifying a keylocation implies this will be a new encryption root.
-	 * Check that a keyformat is also specified.
-	 */
-	if (keylocation != NULL && keyformat == ZFS_KEYFORMAT_NONE) {
-		ret = EINVAL;
-		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-		    "Keyformat required for new encryption root."));
-		goto out;
-	}
-
-	/* default to prompt if no keylocation is specified */
-	if (keyformat != ZFS_KEYFORMAT_NONE && keylocation == NULL) {
-		keylocation = "prompt";
-		ret = nvlist_add_string(props,
-		    zfs_prop_to_name(ZFS_PROP_KEYLOCATION), keylocation);
-		if (ret != 0)
-			goto out;
-	}
-
-	/*
-	 * By this point this dataset will be encrypted. The origin's
-	 * wrapping key must be loaded
-	 */
-	okey_status = zfs_prop_get_int(origin_zhp, ZFS_PROP_KEYSTATUS);
-	if (okey_status != ZFS_KEYSTATUS_AVAILABLE) {
-		ret = EACCES;
-		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-		    "Origin wrapping key must be loaded."));
-		goto out;
-	}
-
-	/*
-	 * if the parent doesn't have a key format to inherit we need
-	 * one provided for us
-	 */
-	if (pcrypt == ZIO_CRYPT_OFF && keyformat == ZFS_KEYFORMAT_NONE) {
-		ret = EINVAL;
-		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-		    "Keyformat required."));
-		goto out;
-	}
-
-	/* prepare the key if needed */
-	if (keylocation != NULL) {
-		ret = populate_create_encryption_params_nvlists(hdl, NULL,
-		    B_FALSE, keyformat, keylocation, props, &wkeydata,
-		    &wkeylen);
-		if (ret != 0)
-			goto out;
-	}
-
 	zfs_close(pzhp);
-
-	*wkeydata_out = wkeydata;
-	*wkeylen_out = wkeylen;
 	return (0);
 
 out:
 	if (pzhp != NULL)
 		zfs_close(pzhp);
-	if (wkeydata != NULL)
-		free(wkeydata);
-
-	*wkeydata_out = NULL;
-	*wkeylen_out = 0;
 	return (ret);
 }
 

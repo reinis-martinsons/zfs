@@ -437,8 +437,8 @@ zfs_prop_init(void)
 	    NULL, PROP_READONLY, ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME,
 	    "<string token>", "RESUMETOK");
 	zprop_register_string(ZFS_PROP_KEYLOCATION, "keylocation",
-	    "none", PROP_INHERIT, ZFS_TYPE_DATASET, "prompt | <file URI>",
-	    "KEYLOCATION");
+	    "none", PROP_ORIGIN_INHERIT, ZFS_TYPE_DATASET,
+	    "prompt | <file URI>", "KEYLOCATION");
 
 	/* readonly number properties */
 	zprop_register_number(ZFS_PROP_USED, "used", 0, PROP_READONLY,
@@ -725,7 +725,17 @@ boolean_t
 zfs_prop_inheritable(zfs_prop_t prop)
 {
 	return (zfs_prop_table[prop].pd_attr == PROP_INHERIT ||
-	    zfs_prop_table[prop].pd_attr == PROP_ONETIME);
+	    zfs_prop_table[prop].pd_attr == PROP_ONETIME ||
+	    zfs_prop_table[prop].pd_attr == PROP_ORIGIN_INHERIT);
+}
+
+/*
+ * Returns TRUE if the property is origin inheritable.
+ */
+boolean_t
+zfs_prop_origin_inheritable(zfs_prop_t prop)
+{
+	return (zfs_prop_table[prop].pd_attr == PROP_ORIGIN_INHERIT);
 }
 
 /*
@@ -842,6 +852,7 @@ EXPORT_SYMBOL(zfs_prop_default_string);
 EXPORT_SYMBOL(zfs_prop_default_numeric);
 EXPORT_SYMBOL(zfs_prop_readonly);
 EXPORT_SYMBOL(zfs_prop_inheritable);
+EXPORT_SYMBOL(zfs_prop_origin_inheritable);
 EXPORT_SYMBOL(zfs_prop_encryption_key_param);
 EXPORT_SYMBOL(zfs_prop_valid_keylocation);
 EXPORT_SYMBOL(zfs_prop_setonce);
