@@ -1171,6 +1171,8 @@ dsl_prop_get_all_ds(dsl_dataset_t *ds, nvlist_t **nvp,
 	}
 
 	/* search for properties up the chain of origin snapshots */
+	//TODO: this won't work for children of clones... only continue
+	//this loop if we haven't found keylocation yet
 	dd = ds->ds_dir;
 	origin_dsobj = dsl_dir_is_clone(dd) ?
 	    dsl_dir_phys(dd)->dd_origin_obj : 0;

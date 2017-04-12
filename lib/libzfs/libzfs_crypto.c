@@ -1375,8 +1375,10 @@ zfs_crypto_rewrap(zfs_handle_t *zhp, nvlist_t *raw_props, boolean_t inheritkey)
 	uint64_t crypt, pcrypt, keystatus, pkeystatus;
 	uint64_t keyformat = ZFS_KEYFORMAT_NONE;
 	zfs_handle_t *pzhp = NULL;
+	zprop_source_t keylocation_srctype;
 	char *keylocation = NULL;
 	char prop_keylocation[MAXNAMELEN];
+	char keylocation_src[MAXNAMELEN];
 	char parent_name[ZFS_MAX_DATASET_NAME_LEN];
 
 	(void) snprintf(errbuf, sizeof (errbuf),
@@ -1397,6 +1399,34 @@ zfs_crypto_rewrap(zfs_handle_t *zhp, nvlist_t *raw_props, boolean_t inheritkey)
 		    "Dataset not encrypted."));
 		ret = EINVAL;
 		goto error;
+	}
+
+	/* Clones use their origin's key and cannot rewrap it */
+	ret = zfs_prop_get(zhp, ZFS_PROP_ORIGIN, keylocation_src,
+	    sizeof (keylocation_src), &keylocation_srctype, NULL, 0, B_TRUE);
+	if (ret == 0 && strcmp(keylocation_src, "") != 0) {
+		/*
+		 * When printing an error, it is important that we use the
+		 * setpoint of the keylocation property instead of the origin
+		 * directly so that we can print out the end of a "chain" of
+		 * clones
+		 */
+		ret = zfs_prop_get(zhp, ZFS_PROP_KEYLOCATION, prop_keylocation,
+		    sizeof (prop_keylocation), &keylocation_srctype,
+		    keylocation_src, sizeof (keylocation_src), B_TRUE);
+		if (ret != 0) {
+			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
+			    "Failed to get keylocation for '%s'."),
+			    zfs_get_name(zhp));
+			goto error;
+		} else {
+			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
+			    "Keys must be unloaded for origin"
+			    "encryption root of '%s' (%s)."),
+			    zfs_get_name(zhp), keylocation_src);
+			ret = EINVAL;
+			goto error;
+		}
 	}
 
 	/*
