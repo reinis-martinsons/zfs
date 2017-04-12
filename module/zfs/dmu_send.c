@@ -940,6 +940,24 @@ dmu_send_impl(void *tag, dsl_pool_t *dp, dsl_dataset_t *to_ds,
 		return (err);
 	}
 
+	/*
+	 * If this is a non-raw send of an encrypted ds, we can ensure that
+	 * the objset_phys_t is authenticated. This is safe because this is
+	 * either a snapshot or we have owned the dataset, ensuring that
+	 * it can't be modified.
+	 */
+	if (!rawok && os->os_encrypted &&
+	    arc_is_unauthenticated(os->os_phys_buf)) {
+		err = arc_untransform(os->os_phys_buf, os->os_spa,
+		    to_ds->ds_object, B_FALSE);
+		if (err != 0) {
+			dsl_pool_rele(dp, tag);
+			return (err);
+		}
+
+		ASSERT0(arc_is_unauthenticated(os->os_phys_buf));
+	}
+
 	drr = kmem_zalloc(sizeof (dmu_replay_record_t), KM_SLEEP);
 	drr->drr_type = DRR_BEGIN;
 	drr->drr_u.drr_begin.drr_magic = DMU_BACKUP_MAGIC;
