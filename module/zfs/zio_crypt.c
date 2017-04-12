@@ -1180,12 +1180,11 @@ zio_crypt_destroy_uio(uio_t *uio)
 }
 
 int
-zio_crypt_do_indirect_mac_checksum_abd(boolean_t generate, abd_t *abd,
+zio_crypt_do_indirect_mac_checksum(boolean_t generate, void *buf,
     uint_t datalen, boolean_t byteswap, uint8_t *cksum)
 {
 	blkptr_t *bp, *curr_bp;
 	int i, epb = datalen >> SPA_BLKPTRSHIFT;
-	void *buf = abd_borrow_buf_copy(abd, datalen);
 	uint64_t blkprop;
 	SHA2_CTX ctx;
 	blkptr_t tmpbp;
@@ -1223,8 +1222,6 @@ zio_crypt_do_indirect_mac_checksum_abd(boolean_t generate, abd_t *abd,
 	}
 	SHA2Final(digestbuf, &ctx);
 
-	abd_return_buf(abd, buf, datalen);
-
 	if (generate) {
 		bcopy(digestbuf, cksum, ZIO_DATA_MAC_LEN);
 		return (0);
@@ -1234,6 +1231,22 @@ zio_crypt_do_indirect_mac_checksum_abd(boolean_t generate, abd_t *abd,
 		return (SET_ERROR(ECKSUM));
 
 	return (0);
+}
+
+int
+zio_crypt_do_indirect_mac_checksum_abd(boolean_t generate, abd_t *abd,
+    uint_t datalen, boolean_t byteswap, uint8_t *cksum)
+{
+
+	int ret;
+	void *buf;
+
+	buf = abd_borrow_buf_copy(abd, datalen);
+	ret = zio_crypt_do_indirect_mac_checksum(generate, buf, datalen,
+	    byteswap, cksum);
+	abd_return_buf(abd, buf, datalen);
+
+	return (ret);
 }
 
 /*

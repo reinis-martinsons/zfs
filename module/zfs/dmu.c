@@ -2091,7 +2091,7 @@ dmu_write_policy(objset_t *os, dnode_t *dn, int level, int wp, zio_prop_t *zp)
 			nopwrite = B_FALSE;
 		}
 
-		if (type == DMU_OT_DNODE || type == DMU_OT_OBJSET || level > 0)
+		if (type == DMU_OT_DNODE || type == DMU_OT_OBJSET)
 			compress = ZIO_COMPRESS_EMPTY;
 	}
 

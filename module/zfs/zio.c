@@ -395,6 +395,7 @@ zio_decrypt(zio_t *zio, abd_t *data, uint64_t size)
 	int ret;
 	void *tmp;
 	blkptr_t *bp = zio->io_bp;
+	uint64_t lsize = BP_GET_LSIZE(bp);
 	dmu_object_type_t ot = BP_GET_TYPE(bp);
 	uint8_t salt[ZIO_DATA_SALT_LEN];
 	uint8_t iv[ZIO_DATA_IV_LEN];
@@ -413,14 +414,34 @@ zio_decrypt(zio_t *zio, abd_t *data, uint64_t size)
 	 * key.
 	 */
 	if (BP_HAS_INDIRECT_MAC_CKSUM(bp)) {
-		ASSERT3U(BP_GET_COMPRESS(bp), ==, ZIO_COMPRESS_OFF);
 		zio_crypt_decode_mac_bp(bp, mac);
-		ret = zio_crypt_do_indirect_mac_checksum_abd(B_FALSE,
-		    zio->io_abd, size, BP_SHOULD_BYTESWAP(bp), mac);
+
+		if (BP_GET_COMPRESS(bp) != ZIO_COMPRESS_OFF) {
+			/*
+			 * We haven't decompressed the data yet, but we need
+			 * the zio_crypt_do_indirect_mac_checksum() requires
+			 * decompressed data to be able to parse out the MACs
+			 * from the indirect block. We decompress it now and
+			 * throw away the result after we are finished.
+			 */
+			tmp = zio_buf_alloc(lsize);
+			ret = zio_decompress_data(BP_GET_COMPRESS(bp),
+			    zio->io_abd, tmp, zio->io_size, lsize);
+			if (ret != 0) {
+				ret = SET_ERROR(EIO);
+				goto error;
+			}
+			ret = zio_crypt_do_indirect_mac_checksum(B_FALSE,
+			    tmp, lsize, BP_SHOULD_BYTESWAP(bp), mac);
+			zio_buf_free(tmp, lsize);
+		} else {
+			ret = zio_crypt_do_indirect_mac_checksum_abd(B_FALSE,
+			    zio->io_abd, size, BP_SHOULD_BYTESWAP(bp), mac);
+		}
 		abd_copy(data, zio->io_abd, size);
 
 		if (ret != 0)
-			zio->io_error = ret;
+			goto error;
 
 		return;
 	}
@@ -443,7 +464,7 @@ zio_decrypt(zio_t *zio, abd_t *data, uint64_t size)
 		abd_copy(data, zio->io_abd, size);
 
 		if (ret != 0)
-			zio->io_error = ret;
+			goto error;
 
 		return;
 	}
@@ -3638,7 +3659,6 @@ zio_encrypt(zio_t *zio)
 
 	/* indirect blocks only maintain a cksum of the lower level MACs */
 	if (BP_GET_LEVEL(bp) > 0) {
-		ASSERT3U(BP_GET_COMPRESS(bp), ==, ZIO_COMPRESS_OFF);
 		BP_SET_CRYPT(bp, B_TRUE);
 		VERIFY0(zio_crypt_do_indirect_mac_checksum_abd(B_TRUE,
 		    zio->io_orig_abd, BP_GET_LSIZE(bp), BP_SHOULD_BYTESWAP(bp),

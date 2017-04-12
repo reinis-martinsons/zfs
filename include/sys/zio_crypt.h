@@ -154,6 +154,8 @@ void zio_crypt_encode_mac_zil(void *data, uint8_t *mac);
 void zio_crypt_decode_mac_zil(const void *data, uint8_t *mac);
 void zio_crypt_copy_dnode_bonus(abd_t *src_abd, uint8_t *dst, uint_t datalen);
 
+int zio_crypt_do_indirect_mac_checksum(boolean_t generate, void *buf,
+    uint_t datalen, boolean_t byteswap, uint8_t *cksum);
 int zio_crypt_do_indirect_mac_checksum_abd(boolean_t generate, abd_t *abd,
     uint_t datalen, boolean_t byteswap, uint8_t *cksum);
 int zio_crypt_do_hmac(zio_crypt_key_t *key, uint8_t *data, uint_t datalen,
