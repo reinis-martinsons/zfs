@@ -3635,6 +3635,7 @@ dmu_recv_end_sync(void *arg, dmu_tx_t *tx)
 {
 	dmu_recv_cookie_t *drc = arg;
 	dsl_pool_t *dp = dmu_tx_pool(tx);
+	boolean_t encrypted = drc->drc_ds->ds_dir->dd_crypto_obj != 0;
 
 	spa_history_log_internal_ds(drc->drc_ds, "finish receiving",
 	    tx, "snap=%s", drc->drc_tosnap);
@@ -3735,9 +3736,9 @@ dmu_recv_end_sync(void *arg, dmu_tx_t *tx)
 	 * we can evict its bonus buffer. Since the dataset may be destroyed
 	 * at this point (and therefore won't have a valid pointer to the spa)
 	 * we release the key mapping manually here while we do have a valid
-	 * pointer.
+	 * pointer, if it exists.
 	 */
-	if (!drc->drc_raw) {
+	if (!drc->drc_raw && encrypted) {
 		atomic_dec_32(&drc->drc_ds->ds_key_mappings);
 		(void) spa_keystore_remove_mapping(dmu_tx_pool(tx)->dp_spa,
 		    drc->drc_ds->ds_object, drc->drc_ds);

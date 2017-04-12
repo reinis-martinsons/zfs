@@ -75,9 +75,7 @@ dsl_prop_get_dd(dsl_dir_t *dd, const char *propname,
 {
 	int err = ENOENT;
 	dsl_dir_t *target = dd;
-	dsl_dataset_t *rele_ds = NULL;
-	dsl_pool_t *dp = dd->dd_pool;
-	objset_t *mos = dp->dp_meta_objset;
+	objset_t *mos = dd->dd_pool->dp_meta_objset;
 	zfs_prop_t prop;
 	boolean_t inheritable;
 	boolean_t inheriting = B_FALSE;
@@ -98,7 +96,7 @@ dsl_prop_get_dd(dsl_dir_t *dd, const char *propname,
 	 * Note: dd may become NULL, therefore we shouldn't dereference it
 	 * after this loop.
 	 */
-	while (dd != NULL) {
+	for (; dd != NULL; dd = dd->dd_parent) {
 		if (dd != target || snapshot) {
 			if (!inheritable)
 				break;
@@ -147,30 +145,7 @@ dsl_prop_get_dd(dsl_dir_t *dd, const char *propname,
 		 * that err has a valid post-loop value.
 		 */
 		err = SET_ERROR(ENOENT);
-
-		/*
-		 * Origin inherit properties will iterate into their origin
-		 * instead of their parent.
-		 */
-		if (zfs_prop_origin_inheritable(prop) && dsl_dir_is_clone(dd)) {
-			uint64_t origin_dsobj = dsl_dir_phys(dd)->dd_origin_obj;
-
-			if (rele_ds != NULL)
-				dsl_dataset_rele(rele_ds, FTAG);
-
-			err = dsl_dataset_hold_obj(dp, origin_dsobj, FTAG,
-			    &rele_ds);
-			if (err != 0)
-				break;
-
-			dd = rele_ds->ds_dir;
-		} else {
-			dd = dd->dd_parent;
-		}
 	}
-
-	if (rele_ds != NULL)
-		dsl_dataset_rele(rele_ds, FTAG);
 
 	if (err == ENOENT)
 		err = dodefault(prop, intsz, numints, buf);
@@ -311,13 +286,6 @@ dsl_prop_register(dsl_dataset_t *ds, const char *propname,
 	ASSERTV(dsl_pool_t *dp = dd->dd_pool);
 
 	ASSERT(dsl_pool_config_held(dp));
-
-	/*
-	 * Currently not supported since dsl_prop_changed_notify() is
-	 * recursive and there is no limit on how many clones can be
-	 * chained together.
-	 */
-	ASSERT0(zfs_prop_origin_inheritable(zfs_name_to_prop(propname)));
 
 	err = dsl_prop_get_int_ds(ds, propname, &value);
 	if (err != 0)
@@ -993,10 +961,9 @@ dsl_props_set(const char *dsname, zprop_source_t source, nvlist_t *props)
 
 typedef enum dsl_prop_getflags {
 	DSL_PROP_GET_INHERITING = 0x1,	/* searching parent of target ds */
-	DSL_PROP_GET_SNAPSHOT = 0x2,		/* snapshot dataset */
-	DSL_PROP_GET_LOCAL = 0x4,		/* local properties */
-	DSL_PROP_GET_RECEIVED = 0x8,		/* received properties */
-	DSL_PROP_GET_ORIGIN_INHERITING = 0x10	/* received properties */
+	DSL_PROP_GET_SNAPSHOT = 0x2,	/* snapshot dataset */
+	DSL_PROP_GET_LOCAL = 0x4,	/* local properties */
+	DSL_PROP_GET_RECEIVED = 0x8,	/* received properties */
 } dsl_prop_getflags_t;
 
 static int
@@ -1077,10 +1044,6 @@ dsl_prop_get_all_impl(objset_t *mos, uint64_t propobj,
 		    !zfs_prop_inheritable(prop))
 			continue;
 
-		if ((flags & DSL_PROP_GET_ORIGIN_INHERITING) &&
-		    prop != ZPROP_INVAL && !zfs_prop_origin_inheritable(prop))
-			continue;
-
 		/* Skip properties not valid for this type. */
 		if ((flags & DSL_PROP_GET_SNAPSHOT) && prop != ZPROP_INVAL &&
 		    !zfs_prop_valid_for_type(prop, ZFS_TYPE_SNAPSHOT, B_FALSE))
@@ -1135,7 +1098,6 @@ dsl_prop_get_all_ds(dsl_dataset_t *ds, nvlist_t **nvp,
 	dsl_dir_t *dd = ds->ds_dir;
 	dsl_pool_t *dp = dd->dd_pool;
 	objset_t *mos = dp->dp_meta_objset;
-	uint64_t origin_dsobj;
 	int err = 0;
 	char setpoint[ZFS_MAX_DATASET_NAME_LEN];
 
@@ -1168,33 +1130,6 @@ dsl_prop_get_all_ds(dsl_dataset_t *ds, nvlist_t **nvp,
 		    dsl_dir_phys(dd)->dd_props_zapobj, setpoint, flags, *nvp);
 		if (err)
 			break;
-	}
-
-	/* search for properties up the chain of origin snapshots */
-	//TODO: this won't work for children of clones... only continue
-	//this loop if we haven't found keylocation yet
-	dd = ds->ds_dir;
-	origin_dsobj = dsl_dir_is_clone(dd) ?
-	    dsl_dir_phys(dd)->dd_origin_obj : 0;
-	flags &= ~DSL_PROP_GET_INHERITING;
-	flags |= DSL_PROP_GET_ORIGIN_INHERITING;
-
-	while (origin_dsobj != 0 && err == 0) {
-		dsl_dataset_t *rele_ds;
-
-		err = dsl_dataset_hold_obj(dp, origin_dsobj, FTAG, &rele_ds);
-		if (err != 0)
-			break;
-
-		dd = rele_ds->ds_dir;
-		dsl_dir_name(dd, setpoint);
-		origin_dsobj = dsl_dir_is_clone(dd) ?
-		    dsl_dir_phys(dd)->dd_origin_obj : 0;
-
-		err = dsl_prop_get_all_impl(mos,
-		    dsl_dir_phys(dd)->dd_props_zapobj, setpoint, flags, *nvp);
-
-		dsl_dataset_rele(rele_ds, FTAG);
 	}
 
 out:

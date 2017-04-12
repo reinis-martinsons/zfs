@@ -53,14 +53,7 @@ typedef enum {
 	 * after that they are READONLY.  If not explicitly set during
 	 * creation, they can be inherited.
 	 */
-	PROP_ONETIME,
-
-	/*
-	 * ORIGIN_INHERIT properties are effectively the same as INHERIT
-	 * properties but they can be inheritted from the origins of clones
-	 * as well.
-	 */
-	PROP_ORIGIN_INHERIT
+	PROP_ONETIME
 } zprop_attr_t;
 
 typedef struct zfs_index {
