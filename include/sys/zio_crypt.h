@@ -34,13 +34,11 @@ struct zbookmark_phys;
 #define	WRAPPING_IV_LEN		ZIO_DATA_IV_LEN
 #define	WRAPPING_MAC_LEN	16
 
-#define	MASTER_KEY_MAX_LEN	32
-#define	MASTER_KEY_GUID_LEN	16
-
 #define	SHA1_DIGEST_LEN		20
 #define	SHA512_DIGEST_LEN	64
 #define	SHA512_HMAC_KEYLEN	64
 
+#define	MASTER_KEY_MAX_LEN	32
 #define	L2ARC_DEFAULT_CRYPT ZIO_CRYPT_AES_256_CCM
 
 /*
@@ -100,7 +98,7 @@ typedef struct zio_crypt_key {
 	uint64_t zk_crypt;
 
 	/* GUID for uniquely identifying this key. Not encrypted on disk. */
-	uint8_t zk_guid[MASTER_KEY_GUID_LEN];
+	uint64_t zk_guid;
 
 	/* buffer for master key */
 	uint8_t zk_master_keydata[MASTER_KEY_MAX_LEN];
@@ -139,7 +137,7 @@ int zio_crypt_key_get_salt(zio_crypt_key_t *key, uint8_t *salt_out);
 
 int zio_crypt_key_wrap(crypto_key_t *cwkey, zio_crypt_key_t *key, uint8_t *iv,
     uint8_t *mac, uint8_t *keydata_out, uint8_t *hmac_keydata_out);
-int zio_crypt_key_unwrap(crypto_key_t *cwkey, uint64_t crypt, uint8_t *guid,
+int zio_crypt_key_unwrap(crypto_key_t *cwkey, uint64_t crypt, uint64_t guid,
     uint8_t *keydata, uint8_t *hmac_keydata, uint8_t *iv, uint8_t *mac,
     zio_crypt_key_t *key);
 int zio_crypt_generate_iv(uint8_t *ivbuf);

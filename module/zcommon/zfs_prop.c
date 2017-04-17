@@ -387,7 +387,8 @@ zfs_prop_init(void)
 	    ZFS_TYPE_SNAPSHOT,
 	    "sensitive | insensitive | mixed", "CASE", case_table);
 	zprop_register_index(ZFS_PROP_KEYFORMAT, "keyformat",
-	    ZFS_KEYFORMAT_NONE, PROP_ONETIME, ZFS_TYPE_DATASET,
+	    ZFS_KEYFORMAT_NONE, PROP_ONETIME_DEFAULT,
+	    ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME,
 	    "none | raw | hex | passphrase", "KEYFORMAT", keyformat_table);
 	zprop_register_index(ZFS_PROP_ENCRYPTION, "encryption",
 	    ZIO_CRYPT_DEFAULT, PROP_ONETIME, ZFS_TYPE_DATASET,
@@ -436,9 +437,12 @@ zfs_prop_init(void)
 	    "receive_resume_token",
 	    NULL, PROP_READONLY, ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME,
 	    "<string token>", "RESUMETOK");
+	zprop_register_string(ZFS_PROP_ENCRYPTION_ROOT, "encryptionroot", NULL,
+	    PROP_READONLY, ZFS_TYPE_DATASET, "<filesystem | volume>",
+	    "ENCROOT");
 	zprop_register_string(ZFS_PROP_KEYLOCATION, "keylocation",
-	    "none", PROP_INHERIT, ZFS_TYPE_DATASET, "prompt | <file URI>",
-	    "KEYLOCATION");
+	    NULL, PROP_DEFAULT, ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME,
+	    "prompt | <file URI>", "KEYLOCATION");
 
 	/* readonly number properties */
 	zprop_register_number(ZFS_PROP_USED, "used", 0, PROP_READONLY,
@@ -483,7 +487,8 @@ zfs_prop_init(void)
 	    UINT64_MAX, PROP_READONLY, ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME,
 	    "<count>", "SSCOUNT");
 	zprop_register_number(ZFS_PROP_PBKDF2_ITERS, "pbkdf2iters",
-	    0, PROP_ONETIME, ZFS_TYPE_DATASET, "<iters>", "PBKDF2ITERS");
+	    0, PROP_ONETIME_DEFAULT, ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME,
+	    "<iters>", "PBKDF2ITERS");
 
 	/* default number properties */
 	zprop_register_number(ZFS_PROP_QUOTA, "quota", 0, PROP_DEFAULT,
@@ -536,7 +541,10 @@ zfs_prop_init(void)
 	zprop_register_hidden(ZFS_PROP_PREV_SNAP, "prevsnap", PROP_TYPE_STRING,
 	    PROP_READONLY, ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME, "PREVSNAP");
 	zprop_register_hidden(ZFS_PROP_PBKDF2_SALT, "pbkdf2salt",
-	    PROP_TYPE_NUMBER, PROP_ONETIME, ZFS_TYPE_DATASET, "SALT");
+	    PROP_TYPE_NUMBER, PROP_ONETIME_DEFAULT,
+	    ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME, "PBKDF2SALT");
+	zprop_register_hidden(ZFS_PROP_KEY_GUID, "keyguid", PROP_TYPE_NUMBER,
+	    PROP_READONLY, ZFS_TYPE_DATASET, "KEYGUID");
 
 	/*
 	 * Property to be removed once libbe is integrated
@@ -684,7 +692,8 @@ boolean_t
 zfs_prop_readonly(zfs_prop_t prop)
 {
 	return (zfs_prop_table[prop].pd_attr == PROP_READONLY ||
-	    zfs_prop_table[prop].pd_attr == PROP_ONETIME);
+	    zfs_prop_table[prop].pd_attr == PROP_ONETIME ||
+	    zfs_prop_table[prop].pd_attr == PROP_ONETIME_DEFAULT);
 }
 
 /*
@@ -693,7 +702,8 @@ zfs_prop_readonly(zfs_prop_t prop)
 boolean_t
 zfs_prop_setonce(zfs_prop_t prop)
 {
-	return (zfs_prop_table[prop].pd_attr == PROP_ONETIME);
+	return (zfs_prop_table[prop].pd_attr == PROP_ONETIME ||
+	    zfs_prop_table[prop].pd_attr == PROP_ONETIME_DEFAULT);
 }
 
 const char *

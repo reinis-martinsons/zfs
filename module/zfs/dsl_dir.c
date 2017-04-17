@@ -943,6 +943,8 @@ dsl_dir_is_clone(dsl_dir_t *dd)
 void
 dsl_dir_stats(dsl_dir_t *dd, nvlist_t *nv)
 {
+	uint64_t intval;
+
 	mutex_enter(&dd->dd_lock);
 	dsl_prop_nvlist_add_uint64(nv, ZFS_PROP_USED,
 	    dsl_dir_phys(dd)->dd_used_bytes);
@@ -970,18 +972,17 @@ dsl_dir_stats(dsl_dir_t *dd, nvlist_t *nv)
 	mutex_exit(&dd->dd_lock);
 
 	if (dsl_dir_is_zapified(dd)) {
-		uint64_t count;
 		objset_t *os = dd->dd_pool->dp_meta_objset;
 
 		if (zap_lookup(os, dd->dd_object, DD_FIELD_FILESYSTEM_COUNT,
-		    sizeof (count), 1, &count) == 0) {
+		    sizeof (intval), 1, &intval) == 0) {
 			dsl_prop_nvlist_add_uint64(nv,
-			    ZFS_PROP_FILESYSTEM_COUNT, count);
+			    ZFS_PROP_FILESYSTEM_COUNT, intval);
 		}
 		if (zap_lookup(os, dd->dd_object, DD_FIELD_SNAPSHOT_COUNT,
-		    sizeof (count), 1, &count) == 0) {
+		    sizeof (intval), 1, &intval) == 0) {
 			dsl_prop_nvlist_add_uint64(nv,
-			    ZFS_PROP_SNAPSHOT_COUNT, count);
+			    ZFS_PROP_SNAPSHOT_COUNT, intval);
 		}
 	}
 

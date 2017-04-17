@@ -362,41 +362,14 @@ spa_keystore_fini(spa_keystore_t *sk)
 	rw_destroy(&sk->sk_dk_lock);
 }
 
-static int
-dsl_dir_hold_keylocation_source_dd(dsl_dir_t *dd, void *tag,
-    dsl_dir_t **inherit_dd_out)
+int
+dsl_dir_get_encryption_root_ddobj(dsl_dir_t *dd, uint64_t *rddobj)
 {
-	int ret;
-	dsl_dir_t *inherit_dd = NULL;
-	char keylocation[MAXNAMELEN];
-	char setpoint[MAXNAMELEN];
+	if (dd->dd_crypto_obj == 0)
+		return (SET_ERROR(ENOENT));
 
-	/*
-	 * Lookup dd's keylocation property and find out where it was
-	 * inherited from. dsl_prop_get_dd() might not find anything and
-	 * return the default value. We detect this by checking if setpoint
-	 * is an empty string and return ENOENT.
-	 */
-	ret = dsl_prop_get_dd(dd, zfs_prop_to_name(ZFS_PROP_KEYLOCATION),
-	    1, sizeof (keylocation), keylocation, setpoint, B_FALSE);
-	if (ret != 0) {
-		goto error;
-	} else if (setpoint[0] == '\0') {
-		ret = ENOENT;
-		goto error;
-	}
-
-	/* hold the dsl dir that we inherited the property from */
-	ret = dsl_dir_hold(dd->dd_pool, setpoint, tag, &inherit_dd, NULL);
-	if (ret != 0)
-		goto error;
-
-	*inherit_dd_out = inherit_dd;
-	return (0);
-
-error:
-	*inherit_dd_out = NULL;
-	return (ret);
+	return (zap_lookup(dd->dd_pool->dp_meta_objset, dd->dd_crypto_obj,
+	    DSL_CRYPTO_KEY_ROOT_DDOBJ, 8, 1, rddobj));
 }
 
 static int
@@ -436,8 +409,9 @@ spa_keystore_wkey_hold_ddobj(spa_t *spa, uint64_t ddobj, void *tag,
 {
 	int ret;
 	dsl_pool_t *dp = spa_get_dsl(spa);
-	dsl_dir_t *dd = NULL, *inherit_dd = NULL;
+	dsl_dir_t *dd = NULL;
 	dsl_wrapping_key_t *wkey;
+	uint64_t rddobj;
 	boolean_t locked = B_FALSE;
 
 	if (!RW_WRITE_HELD(&spa->spa_keystore.sk_wkeys_lock)) {
@@ -445,36 +419,18 @@ spa_keystore_wkey_hold_ddobj(spa_t *spa, uint64_t ddobj, void *tag,
 		locked = B_TRUE;
 	}
 
-	/*
-	 * There is a special case for zfs_create_fs() where the wrapping key
-	 * is needed before the filesystem's properties are set. This is
-	 * problematic because dsl_dir_hold_keylocation_source_dd() uses the
-	 * properties to determine where the wrapping key is inherited from.
-	 * As a result, here we try to find a wrapping key for this dd before
-	 * checking for wrapping key inheritance.
-	 */
-	ret = spa_keystore_wkey_hold_ddobj_impl(spa, ddobj, tag, &wkey);
-	if (ret == 0) {
-		if (locked)
-			rw_exit(&spa->spa_keystore.sk_wkeys_lock);
-
-		*wkey_out = wkey;
-		return (0);
-	}
-
 	/* hold the dsl dir */
 	ret = dsl_dir_hold_obj(dp, ddobj, NULL, FTAG, &dd);
 	if (ret != 0)
 		goto error;
 
-	/* get the dd that the keylocation property was inherited from */
-	ret = dsl_dir_hold_keylocation_source_dd(dd, FTAG, &inherit_dd);
+	/* get the ddobj that the keylocation property was inherited from */
+	ret = dsl_dir_get_encryption_root_ddobj(dd, &rddobj);
 	if (ret != 0)
 		goto error;
 
 	/* lookup the wkey in the avl tree */
-	ret = spa_keystore_wkey_hold_ddobj_impl(spa, inherit_dd->dd_object,
-	    tag, &wkey);
+	ret = spa_keystore_wkey_hold_ddobj_impl(spa, rddobj, tag, &wkey);
 	if (ret != 0)
 		goto error;
 
@@ -482,7 +438,6 @@ spa_keystore_wkey_hold_ddobj(spa_t *spa, uint64_t ddobj, void *tag,
 	if (locked)
 		rw_exit(&spa->spa_keystore.sk_wkeys_lock);
 
-	dsl_dir_rele(inherit_dd, FTAG);
 	dsl_dir_rele(dd, FTAG);
 
 	*wkey_out = wkey;
@@ -491,8 +446,6 @@ spa_keystore_wkey_hold_ddobj(spa_t *spa, uint64_t ddobj, void *tag,
 error:
 	if (locked)
 		rw_exit(&spa->spa_keystore.sk_wkeys_lock);
-	if (inherit_dd != NULL)
-		dsl_dir_rele(inherit_dd, FTAG);
 	if (dd != NULL)
 		dsl_dir_rele(dd, FTAG);
 
@@ -506,9 +459,9 @@ dsl_crypto_can_set_keylocation(const char *dsname, zprop_source_t source,
 {
 	int ret = 0;
 	dsl_dir_t *dd = NULL;
-	dsl_dir_t *inherit_dd = NULL;
 	dsl_pool_t *dp = NULL;
 	dsl_wrapping_key_t *wkey = NULL;
+	uint64_t rddobj;
 
 	/* hold the dsl dir */
 	ret = dsl_pool_hold(dsname, FTAG, &dp);
@@ -542,34 +495,18 @@ dsl_crypto_can_set_keylocation(const char *dsname, zprop_source_t source,
 		goto out;
 	}
 
-	/*
-	 * Now we want to check that this dataset is an encryption root since
-	 * keylocation may only be set on encryption roots. Normally this is
-	 * trivial, using dsl_dir_hold_keylocation_source_dd(), but this
-	 * function also gets called during dataset creation when the
-	 * properties have not been setup yet. Fortunately, the wrapping key
-	 * will always be loaded at creation time, so we can check for this
-	 * first.
-	 */
-	rw_enter(&dp->dp_spa->spa_keystore.sk_wkeys_lock, RW_READER);
-	ret = spa_keystore_wkey_hold_ddobj_impl(dp->dp_spa, dd->dd_object,
-	    FTAG, &wkey);
-	rw_exit(&dp->dp_spa->spa_keystore.sk_wkeys_lock);
-	if (ret != 0) {
-		ret = dsl_dir_hold_keylocation_source_dd(dd, FTAG, &inherit_dd);
-		if (ret != 0)
-			goto out;
+	/* check that this is an encryption root */
+	ret = dsl_dir_get_encryption_root_ddobj(dd, &rddobj);
+	if (ret != 0)
+		goto out;
 
-		if (inherit_dd->dd_object != dd->dd_object) {
-			ret = SET_ERROR(EACCES);
-			goto out;
-		}
+	if (rddobj != dd->dd_object) {
+		ret = SET_ERROR(EACCES);
+		goto out;
 	}
 
 	if (wkey != NULL)
 		dsl_wrapping_key_rele(wkey, FTAG);
-	if (inherit_dd != NULL)
-		dsl_dir_rele(inherit_dd, FTAG);
 	dsl_dir_rele(dd, FTAG);
 	dsl_pool_rele(dp, FTAG);
 
@@ -578,8 +515,6 @@ dsl_crypto_can_set_keylocation(const char *dsname, zprop_source_t source,
 out:
 	if (wkey != NULL)
 		dsl_wrapping_key_rele(wkey, FTAG);
-	if (inherit_dd != NULL)
-		dsl_dir_rele(inherit_dd, FTAG);
 	if (dd != NULL)
 		dsl_dir_rele(dd, FTAG);
 	if (dp != NULL)
@@ -617,8 +552,7 @@ dsl_crypto_key_open(objset_t *mos, dsl_wrapping_key_t *wkey,
     uint64_t dckobj, void *tag, dsl_crypto_key_t **dck_out)
 {
 	int ret;
-	uint64_t crypt = 0;
-	uint8_t guid[MASTER_KEY_GUID_LEN];
+	uint64_t crypt = 0, guid = 0;
 	uint8_t raw_keydata[MASTER_KEY_MAX_LEN];
 	uint8_t raw_hmac_keydata[SHA512_HMAC_KEYLEN];
 	uint8_t iv[WRAPPING_IV_LEN];
@@ -636,8 +570,7 @@ dsl_crypto_key_open(objset_t *mos, dsl_wrapping_key_t *wkey,
 	if (ret != 0)
 		goto error;
 
-	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_GUID, 1,
-	    MASTER_KEY_GUID_LEN, guid);
+	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_GUID, 8, 1, &guid);
 	if (ret != 0)
 		goto error;
 
@@ -1148,15 +1081,39 @@ dmu_objset_check_wkey_loaded(dsl_dir_t *dd)
 	return (0);
 }
 
+static zfs_keystatus_t
+dsl_dataset_get_keystatus(dsl_dir_t *dd)
+{
+	/* check if this dd has a has a dsl key */
+	if (dd->dd_crypto_obj == 0)
+		return (ZFS_KEYSTATUS_NONE);
+
+	return (dmu_objset_check_wkey_loaded(dd) == 0 ?
+	    ZFS_KEYSTATUS_AVAILABLE : ZFS_KEYSTATUS_UNAVAILABLE);
+}
+
+static int
+dsl_dir_get_crypt(dsl_dir_t *dd, uint64_t *crypt)
+{
+	if (dd->dd_crypto_obj == 0) {
+		*crypt = ZIO_CRYPT_OFF;
+		return (0);
+	}
+
+	return (zap_lookup(dd->dd_pool->dp_meta_objset, dd->dd_crypto_obj,
+	    DSL_CRYPTO_KEY_CRYPTO_SUITE, 8, 1, crypt));
+}
+
 static void
 dsl_crypto_key_sync_impl(objset_t *mos, uint64_t dckobj, uint64_t crypt,
-    uint8_t *guid, uint8_t *iv, uint8_t *mac, uint8_t *keydata,
-    uint8_t *hmac_keydata, dmu_tx_t *tx)
+    uint64_t root_ddobj, uint64_t guid, uint8_t *iv, uint8_t *mac,
+    uint8_t *keydata, uint8_t *hmac_keydata, dmu_tx_t *tx)
 {
 	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_CRYPTO_SUITE, 8, 1,
 	    &crypt, tx));
-	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_GUID, 1,
-	    MASTER_KEY_GUID_LEN, guid, tx));
+	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_ROOT_DDOBJ, 8, 1,
+	    &root_ddobj, tx));
+	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_GUID, 8, 1, &guid, tx));
 	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_IV, 1, WRAPPING_IV_LEN,
 	    iv, tx));
 	VERIFY0(zap_update(mos, dckobj, DSL_CRYPTO_KEY_MAC, 1, WRAPPING_MAC_LEN,
@@ -1185,7 +1142,8 @@ dsl_crypto_key_sync(dsl_crypto_key_t *dck, dmu_tx_t *tx)
 
 	/* update the ZAP with the obtained values */
 	dsl_crypto_key_sync_impl(tx->tx_pool->dp_meta_objset, dck->dck_obj,
-	    key->zk_crypt, key->zk_guid, iv, mac, keydata, hmac_keydata, tx);
+	    key->zk_crypt, dck->dck_wkey->wk_ddobj, key->zk_guid, iv, mac,
+	    keydata, hmac_keydata, tx);
 }
 
 typedef struct spa_keystore_rewrap_args {
@@ -1198,10 +1156,11 @@ spa_keystore_rewrap_check(void *arg, dmu_tx_t *tx)
 {
 	int ret;
 	uint64_t keyformat = ZFS_KEYFORMAT_NONE;
-	dsl_dir_t *dd = NULL, *inherit_dd = NULL;
+	dsl_dir_t *dd = NULL;
 	dsl_pool_t *dp = dmu_tx_pool(tx);
 	spa_keystore_rewrap_args_t *skra = arg;
 	dsl_crypto_params_t *dcp = skra->skra_cp;
+	uint64_t rddobj;
 
 	/* check for the encryption feature */
 	if (!spa_feature_is_enabled(dp->dp_spa, SPA_FEATURE_ENCRYPTION)) {
@@ -1226,8 +1185,8 @@ spa_keystore_rewrap_check(void *arg, dmu_tx_t *tx)
 		goto error;
 	}
 
-	/* hold the dd where this dd is inheritting its key from */
-	ret = dsl_dir_hold_keylocation_source_dd(dd, FTAG, &inherit_dd);
+	/* lookup the ddobj we are inheriting the keylocation from */
+	ret = dsl_dir_get_encryption_root_ddobj(dd, &rddobj);
 	if (ret != 0)
 		goto error;
 
@@ -1237,7 +1196,7 @@ spa_keystore_rewrap_check(void *arg, dmu_tx_t *tx)
 	 */
 	if (dcp == NULL) {
 		/* check that this is an encryption root */
-		if (dd->dd_object != inherit_dd->dd_object) {
+		if (dd->dd_object != rddobj) {
 			ret = SET_ERROR(EINVAL);
 			goto error;
 		}
@@ -1257,7 +1216,6 @@ spa_keystore_rewrap_check(void *arg, dmu_tx_t *tx)
 			goto error;
 
 		dsl_dir_rele(dd, FTAG);
-		dsl_dir_rele(inherit_dd, FTAG);
 
 		return (0);
 	}
@@ -1266,7 +1224,7 @@ spa_keystore_rewrap_check(void *arg, dmu_tx_t *tx)
 	 * If this dataset is not currently an encryption root we need a fully
 	 * specified key for this dataset to become a new encryption root.
 	 */
-	if (dd->dd_object != inherit_dd->dd_object &&
+	if (dd->dd_object != rddobj &&
 	    (dcp->cp_keyformat == ZFS_KEYFORMAT_NONE ||
 	    dcp->cp_keylocation == NULL)) {
 		ret = SET_ERROR(EINVAL);
@@ -1316,15 +1274,12 @@ spa_keystore_rewrap_check(void *arg, dmu_tx_t *tx)
 		goto error;
 
 	dsl_dir_rele(dd, FTAG);
-	dsl_dir_rele(inherit_dd, FTAG);
 
 	return (0);
 
 error:
 	if (dd != NULL)
 		dsl_dir_rele(dd, FTAG);
-	if (inherit_dd != NULL)
-		dsl_dir_rele(inherit_dd, FTAG);
 
 	return (ret);
 }
@@ -1337,8 +1292,9 @@ spa_keystore_rewrap_sync_impl(uint64_t root_ddobj, uint64_t ddobj,
 	zap_cursor_t *zc;
 	zap_attribute_t *za;
 	dsl_pool_t *dp = dmu_tx_pool(tx);
-	dsl_dir_t *dd = NULL, *inherit_dd = NULL;
+	dsl_dir_t *dd = NULL;
 	dsl_crypto_key_t *dck = NULL;
+	uint64_t curr_rddobj;
 
 	ASSERT(RW_WRITE_HELD(&dp->dp_spa->spa_keystore.sk_wkeys_lock));
 
@@ -1351,12 +1307,10 @@ spa_keystore_rewrap_sync_impl(uint64_t root_ddobj, uint64_t ddobj,
 		return;
 	}
 
-	/* hold the dd we inherited the keylocation from */
-	VERIFY0(dsl_dir_hold_keylocation_source_dd(dd, FTAG, &inherit_dd));
-
 	/* stop recursing if this dsl dir didn't inherit from the root */
-	if (inherit_dd->dd_object != root_ddobj) {
-		dsl_dir_rele(inherit_dd, FTAG);
+	VERIFY0(dsl_dir_get_encryption_root_ddobj(dd, &curr_rddobj));
+
+	if (curr_rddobj != root_ddobj) {
 		dsl_dir_rele(dd, FTAG);
 		return;
 	}
@@ -1393,7 +1347,6 @@ spa_keystore_rewrap_sync_impl(uint64_t root_ddobj, uint64_t ddobj,
 	kmem_free(zc, sizeof (zap_cursor_t));
 
 	spa_keystore_dsl_key_rele(dp->dp_spa, dck, FTAG);
-	dsl_dir_rele(inherit_dd, FTAG);
 	dsl_dir_rele(dd, FTAG);
 }
 
@@ -1519,8 +1472,7 @@ int
 dsl_dir_rename_crypt_check(dsl_dir_t *dd, dsl_dir_t *newparent)
 {
 	int ret;
-	dsl_dir_t *inherit_dd = NULL;
-	dsl_dir_t *pinherit_dd = NULL;
+	uint64_t curr_rddobj, parent_rddobj;
 
 	if (dd->dd_crypto_obj == 0) {
 		/* children of encrypted parents must be encrypted */
@@ -1532,7 +1484,7 @@ dsl_dir_rename_crypt_check(dsl_dir_t *dd, dsl_dir_t *newparent)
 		return (0);
 	}
 
-	ret = dsl_dir_hold_keylocation_source_dd(dd, FTAG, &inherit_dd);
+	ret = dsl_dir_get_encryption_root_ddobj(dd, &curr_rddobj);
 	if (ret != 0)
 		goto error;
 
@@ -1540,31 +1492,97 @@ dsl_dir_rename_crypt_check(dsl_dir_t *dd, dsl_dir_t *newparent)
 	 * if this is not an encryption root, we must make sure we are not
 	 * moving dd to a new encryption root
 	 */
-	if (dd->dd_object != inherit_dd->dd_object) {
-		ret = dsl_dir_hold_keylocation_source_dd(newparent, FTAG,
-		    &pinherit_dd);
+	if (dd->dd_object != curr_rddobj) {
+		ret = dsl_dir_get_encryption_root_ddobj(newparent,
+		    &parent_rddobj);
 		if (ret != 0)
 			goto error;
 
-		if (pinherit_dd->dd_object != inherit_dd->dd_object) {
+		if (parent_rddobj != curr_rddobj) {
 			ret = SET_ERROR(EACCES);
 			goto error;
 		}
 	}
 
-	if (inherit_dd != NULL)
-		dsl_dir_rele(inherit_dd, FTAG);
-	if (pinherit_dd != NULL)
-		dsl_dir_rele(pinherit_dd, FTAG);
 	return (0);
 
 error:
-	if (inherit_dd != NULL)
-		dsl_dir_rele(inherit_dd, FTAG);
-	if (pinherit_dd != NULL)
-		dsl_dir_rele(pinherit_dd, FTAG);
 	return (ret);
 }
+
+/*
+ * Check to make sure that a promote from targetdd to origindd will not require
+ * any key rewraps.
+ */
+int
+dsl_dataset_promote_crypt_check(dsl_dir_t *target, dsl_dir_t *origin)
+{
+	int ret;
+	uint64_t rddobj, op_rddobj, tp_rddobj;
+
+	/* If the dataset is not encrypted we don't need to check anything */
+	if (origin->dd_crypto_obj == 0)
+		return (0);
+
+	/*
+	 * If we are not changing the first origin snapshot in a chain
+	 * the encryption root won't change either.
+	 */
+	if (dsl_dir_is_clone(origin))
+		return (0);
+
+	/*
+	 * If the origin is the encryption root we will simply update
+	 * the DSL Crypto Key to point to the target instead.
+	 */
+	ret = dsl_dir_get_encryption_root_ddobj(origin, &rddobj);
+	if (ret != 0)
+		return (ret);
+
+	if (rddobj == origin->dd_object)
+		return (0);
+
+	/*
+	 * The origin is inheriting its encryption root from its parent.
+	 * Check that the parent of the target has the same encryption root
+	 */
+	ret = dsl_dir_get_encryption_root_ddobj(origin->dd_parent, &op_rddobj);
+	if (ret != 0)
+		return (ret);
+
+	ret = dsl_dir_get_encryption_root_ddobj(target->dd_parent, &tp_rddobj);
+	if (ret != 0)
+		return (ret);
+
+	if (op_rddobj != tp_rddobj)
+		return (SET_ERROR(EACCES));
+
+	return (0);
+}
+
+void
+dsl_dataset_promote_crypt_sync(dsl_dir_t *target, dsl_dir_t *origin,
+    dmu_tx_t *tx)
+{
+	uint64_t rddobj;
+
+	if (dsl_dir_is_clone(origin))
+		return;
+
+	VERIFY0(dsl_dir_get_encryption_root_ddobj(origin, &rddobj));
+
+	/*
+	 * If the target is being promoted to the encyrption root update the
+	 * DSL Crypto Key to reflect that. Otherwise, the check function
+	 * ensured that the encryption root did not change.
+	 */
+	if (rddobj == origin->dd_object) {
+		VERIFY0(zap_update(target->dd_pool->dp_meta_objset,
+		    target->dd_crypto_obj, DSL_CRYPTO_KEY_ROOT_DDOBJ, 8, 1,
+		    &target->dd_object, tx));
+	}
+}
+
 
 /*
  * This is the combined check function for verifying encrypted create and
@@ -1799,9 +1817,8 @@ dsl_crypto_recv_key_check(void *arg, dmu_tx_t *tx)
 	dsl_dataset_t *ds = NULL;
 	uint8_t *buf = NULL;
 	uint_t len;
-	uint64_t intval, nlevels, blksz, ibs, nblkptr;
+	uint64_t intval, guid, nlevels, blksz, ibs, nblkptr;
 	boolean_t is_passphrase = B_FALSE;
-	uint8_t guid[MASTER_KEY_GUID_LEN];
 
 	/*
 	 * Check that the ds exists. Assert that it isn't already encrypted
@@ -1826,8 +1843,8 @@ dsl_crypto_recv_key_check(void *arg, dmu_tx_t *tx)
 		goto error;
 	}
 
-	ret = nvlist_lookup_uint8_array(nvl, DSL_CRYPTO_KEY_GUID, &buf, &len);
-	if (ret != 0 || len != MASTER_KEY_GUID_LEN) {
+	ret = nvlist_lookup_uint64(nvl, DSL_CRYPTO_KEY_GUID, &intval);
+	if (ret != 0) {
 		ret = SET_ERROR(EINVAL);
 		goto error;
 	}
@@ -1838,11 +1855,11 @@ dsl_crypto_recv_key_check(void *arg, dmu_tx_t *tx)
 	 */
 	if (ds->ds_dir->dd_crypto_obj != 0) {
 		ret = zap_lookup(mos, ds->ds_dir->dd_crypto_obj,
-		    DSL_CRYPTO_KEY_GUID, 1, MASTER_KEY_GUID_LEN, guid);
+		    DSL_CRYPTO_KEY_GUID, 8, 1, &guid);
 		if (ret != 0)
 			goto error;
 
-		if (bcmp(buf, guid, MASTER_KEY_GUID_LEN) != 0) {
+		if (intval != guid) {
 			ret = SET_ERROR(EINVAL);
 			goto error;
 		}
@@ -1988,9 +2005,9 @@ dsl_crypto_recv_key_sync(void *arg, dmu_tx_t *tx)
 	dsl_dataset_t *ds;
 	objset_t *os;
 	dnode_t *mdn;
-	uint8_t *guid, *keydata, *hmac_keydata, *iv, *mac, *portable_mac;
+	uint8_t *keydata, *hmac_keydata, *iv, *mac, *portable_mac;
 	uint_t len;
-	uint64_t crypt, keyformat, iters, salt;
+	uint64_t crypt, guid, keyformat, iters, salt;
 	uint64_t compress, checksum, nlevels, blksz, ibs;
 
 	VERIFY0(dsl_dataset_hold_obj(dp, dsobj, FTAG, &ds));
@@ -1999,14 +2016,13 @@ dsl_crypto_recv_key_sync(void *arg, dmu_tx_t *tx)
 
 	/* lookup the values we need to create the DSL Crypto Key and objset */
 	crypt = fnvlist_lookup_uint64(nvl, DSL_CRYPTO_KEY_CRYPTO_SUITE);
+	guid = fnvlist_lookup_uint64(nvl, DSL_CRYPTO_KEY_GUID);
 	keyformat = fnvlist_lookup_uint64(nvl,
 	    zfs_prop_to_name(ZFS_PROP_KEYFORMAT));
 	iters = fnvlist_lookup_uint64(nvl,
 	    zfs_prop_to_name(ZFS_PROP_PBKDF2_ITERS));
 	salt = fnvlist_lookup_uint64(nvl,
 	    zfs_prop_to_name(ZFS_PROP_PBKDF2_SALT));
-	VERIFY0(nvlist_lookup_uint8_array(nvl, DSL_CRYPTO_KEY_GUID,
-	    &guid, &len));
 	VERIFY0(nvlist_lookup_uint8_array(nvl, DSL_CRYPTO_KEY_MASTER_KEY,
 	    &keydata, &len));
 	VERIFY0(nvlist_lookup_uint8_array(nvl, DSL_CRYPTO_KEY_HMAC_KEY,
@@ -2053,8 +2069,11 @@ dsl_crypto_recv_key_sync(void *arg, dmu_tx_t *tx)
 	/* create the DSL Crypto Key on disk and activate the feature */
 	ds->ds_dir->dd_crypto_obj = zap_create(mos,
 	    DMU_OTN_ZAP_METADATA, DMU_OT_NONE, 0, tx);
-	dsl_crypto_key_sync_impl(mos, ds->ds_dir->dd_crypto_obj, crypt, guid,
-	    iv, mac, keydata, hmac_keydata, tx);
+
+	//TODO: need to replace dd_object with the real encryption root ddobj
+	dsl_crypto_key_sync_impl(mos, ds->ds_dir->dd_crypto_obj, crypt,
+	    ds->ds_dir->dd_object, guid, iv, mac, keydata, hmac_keydata, tx);
+
 	dsl_dataset_activate_feature(dsobj, SPA_FEATURE_ENCRYPTION, tx);
 	ds->ds_feature_inuse[SPA_FEATURE_ENCRYPTION] = B_TRUE;
 
@@ -2101,8 +2120,7 @@ dsl_crypto_populate_key_nvlist(dsl_dataset_t *ds, nvlist_t **nvl_out)
 	nvlist_t *nvl = NULL;
 	uint64_t dckobj = ds->ds_dir->dd_crypto_obj;
 	objset_t *mos = ds->ds_dir->dd_pool->dp_meta_objset;
-	uint64_t crypt = 0, format = 0, iters = 0, salt = 0;
-	uint8_t guid[MASTER_KEY_GUID_LEN];
+	uint64_t crypt = 0, guid = 0, format = 0, iters = 0, salt = 0;
 	uint8_t raw_keydata[MASTER_KEY_MAX_LEN];
 	uint8_t raw_hmac_keydata[SHA512_HMAC_KEYLEN];
 	uint8_t iv[WRAPPING_IV_LEN];
@@ -2123,8 +2141,7 @@ dsl_crypto_populate_key_nvlist(dsl_dataset_t *ds, nvlist_t **nvl_out)
 	if (ret != 0)
 		goto error;
 
-	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_GUID, 1,
-	    MASTER_KEY_GUID_LEN, guid);
+	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_GUID, 8, 1, &guid);
 	if (ret != 0)
 		goto error;
 
@@ -2173,8 +2190,7 @@ dsl_crypto_populate_key_nvlist(dsl_dataset_t *ds, nvlist_t **nvl_out)
 	dsl_pool_config_exit(ds->ds_dir->dd_pool, FTAG);
 
 	fnvlist_add_uint64(nvl, DSL_CRYPTO_KEY_CRYPTO_SUITE, crypt);
-	VERIFY0(nvlist_add_uint8_array(nvl, DSL_CRYPTO_KEY_GUID,
-	    guid, MASTER_KEY_GUID_LEN));
+	fnvlist_add_uint64(nvl, DSL_CRYPTO_KEY_GUID, guid);
 	VERIFY0(nvlist_add_uint8_array(nvl, DSL_CRYPTO_KEY_MASTER_KEY,
 	    raw_keydata, MASTER_KEY_MAX_LEN));
 	VERIFY0(nvlist_add_uint8_array(nvl, DSL_CRYPTO_KEY_HMAC_KEY,
@@ -2267,37 +2283,35 @@ dsl_crypto_key_destroy_sync(uint64_t dckobj, dmu_tx_t *tx)
 	}
 }
 
-zfs_keystatus_t
-dsl_dataset_get_keystatus(dsl_dataset_t *ds)
+void
+dsl_dataset_crypt_stats(dsl_dataset_t *ds, nvlist_t *nv)
 {
-	int ret;
-	dsl_wrapping_key_t *wkey;
+	uint64_t intval;
+	dsl_dir_t *dd = ds->ds_dir;
+	dsl_dir_t *enc_root;
+	char buf[ZFS_MAX_DATASET_NAME_LEN];
 
-	/* check if this dataset has a owns a dsl key */
-	if (ds->ds_dir->dd_crypto_obj == 0)
-		return (ZFS_KEYSTATUS_NONE);
+	if (dd->dd_crypto_obj == 0)
+		return;
 
-	/* lookup the wkey. if it doesn't exist the key is unavailable */
-	ret = spa_keystore_wkey_hold_ddobj(ds->ds_dir->dd_pool->dp_spa,
-	    ds->ds_dir->dd_object, FTAG, &wkey);
-	if (ret != 0)
-		return (ZFS_KEYSTATUS_UNAVAILABLE);
+	intval = dsl_dataset_get_keystatus(dd);
+	dsl_prop_nvlist_add_uint64(nv, ZFS_PROP_KEYSTATUS, intval);
 
-	dsl_wrapping_key_rele(wkey, FTAG);
+	if (dsl_dir_get_crypt(dd, &intval) == 0)
+		dsl_prop_nvlist_add_uint64(nv, ZFS_PROP_ENCRYPTION, intval);
 
-	return (ZFS_KEYSTATUS_AVAILABLE);
-}
-
-int
-dsl_dir_get_crypt(dsl_dir_t *dd, uint64_t *crypt)
-{
-	if (dd->dd_crypto_obj == 0) {
-		*crypt = ZIO_CRYPT_OFF;
-		return (0);
+	if (zap_lookup(dd->dd_pool->dp_meta_objset, dd->dd_crypto_obj,
+	    DSL_CRYPTO_KEY_GUID, 8, 1, &intval) == 0) {
+		dsl_prop_nvlist_add_uint64(nv, ZFS_PROP_KEY_GUID, intval);
 	}
 
-	return (zap_lookup(dd->dd_pool->dp_meta_objset, dd->dd_crypto_obj,
-	    DSL_CRYPTO_KEY_CRYPTO_SUITE, 8, 1, crypt));
+	if (dsl_dir_get_encryption_root_ddobj(dd, &intval) == 0) {
+		VERIFY0(dsl_dir_hold_obj(dd->dd_pool, intval, NULL, FTAG,
+		    &enc_root));
+		dsl_dir_name(enc_root, buf);
+		dsl_dir_rele(enc_root, FTAG);
+		dsl_prop_nvlist_add_string(nv, ZFS_PROP_ENCRYPTION_ROOT, buf);
+	}
 }
 
 int

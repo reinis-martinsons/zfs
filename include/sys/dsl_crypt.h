@@ -27,13 +27,14 @@
 #include <sys/dsl_dataset.h>
 
 /* ZAP entry keys for DSL Encryption Keys stored on disk */
-#define	DSL_CRYPTO_KEY_CRYPTO_SUITE "DSL_CRYPTO_SUITE"
-#define	DSL_CRYPTO_KEY_GUID "DSL_CRYPTO_GUID"
-#define	DSL_CRYPTO_KEY_IV "DSL_CRYPTO_IV"
-#define	DSL_CRYPTO_KEY_MAC "DSL_CRYPTO_MAC"
-#define	DSL_CRYPTO_KEY_MASTER_KEY "DSL_CRYPTO_MASTER_KEY_1"
-#define	DSL_CRYPTO_KEY_HMAC_KEY "DSL_CRYPTO_HMAC_KEY_1"
-#define	DSL_CRYPTO_KEY_REFCOUNT "DSL_CRYPTO_REFCOUNT"
+#define	DSL_CRYPTO_KEY_CRYPTO_SUITE	"DSL_CRYPTO_SUITE"
+#define	DSL_CRYPTO_KEY_GUID		"DSL_CRYPTO_GUID"
+#define	DSL_CRYPTO_KEY_IV		"DSL_CRYPTO_IV"
+#define	DSL_CRYPTO_KEY_MAC		"DSL_CRYPTO_MAC"
+#define	DSL_CRYPTO_KEY_MASTER_KEY	"DSL_CRYPTO_MASTER_KEY_1"
+#define	DSL_CRYPTO_KEY_HMAC_KEY		"DSL_CRYPTO_HMAC_KEY_1"
+#define	DSL_CRYPTO_KEY_ROOT_DDOBJ	"DSL_CRYPTO_ROOT_DDOBJ"
+#define	DSL_CRYPTO_KEY_REFCOUNT		"DSL_CRYPTO_REFCOUNT"
 
 /* in memory representation of a wrapping key */
 typedef struct dsl_wrapping_key {
@@ -148,13 +149,12 @@ int dsl_wrapping_key_create(uint8_t *wkeydata, dsl_wrapping_key_t **wkey_out);
 int dsl_crypto_params_create_nvlist(nvlist_t *props, nvlist_t *crypto_args,
     dsl_crypto_params_t **dcp_out);
 void dsl_crypto_params_free(dsl_crypto_params_t *dcp, boolean_t unload);
+void dsl_dataset_crypt_stats(struct dsl_dataset *ds, nvlist_t *nv);
 int dsl_crypto_can_set_keylocation(const char *dsname, zprop_source_t source,
     const char *keylocation);
 
 void spa_keystore_init(spa_keystore_t *sk);
 void spa_keystore_fini(spa_keystore_t *sk);
-zfs_keystatus_t dsl_dataset_get_keystatus(struct dsl_dataset *ds);
-int dsl_dir_get_crypt(struct dsl_dir *dd, uint64_t *crypt);
 
 void spa_keystore_dsl_key_rele(spa_t *spa, dsl_crypto_key_t *dck, void *tag);
 int spa_keystore_load_wkey_impl(spa_t *spa, dsl_wrapping_key_t *wkey);
@@ -176,6 +176,9 @@ int dsl_crypto_recv_key(const char *poolname, uint64_t dsobj,
 
 int spa_keystore_rewrap(const char *dsname, dsl_crypto_params_t *dcp);
 int dsl_dir_rename_crypt_check(dsl_dir_t *dd, dsl_dir_t *newparent);
+int dsl_dataset_promote_crypt_check(dsl_dir_t *target, dsl_dir_t *origin);
+void dsl_dataset_promote_crypt_sync(dsl_dir_t *target, dsl_dir_t *origin,
+    dmu_tx_t *tx);
 int dmu_objset_create_crypt_check(dsl_dir_t *parentdd, dsl_dir_t *origindd,
     dsl_crypto_params_t *dcp);
 void dsl_dataset_create_crypt_sync(uint64_t dsobj, dsl_dir_t *dd,

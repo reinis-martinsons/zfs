@@ -7027,7 +7027,7 @@ load_key_callback(zfs_handle_t *zhp, void *data)
 	 * in the desired end-state.
 	 */
 	if (cb->cb_recursive) {
-		ret = zfs_crypto_is_encryption_root(zhp, &is_encroot);
+		ret = zfs_crypto_get_encryption_root(zhp, &is_encroot, NULL);
 		if (ret != 0)
 			return (ret);
 		if (!is_encroot)

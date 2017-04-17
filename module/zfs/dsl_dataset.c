@@ -1901,7 +1901,7 @@ dsl_dataset_stats(dsl_dataset_t *ds, nvlist_t *nv)
 {
 	int err;
 	dsl_pool_t *dp = ds->ds_dir->dd_pool;
-	uint64_t refd, avail, uobjs, aobjs, ratio, crypt;
+	uint64_t refd, avail, uobjs, aobjs, ratio;
 
 	ASSERT(dsl_pool_config_held(dp));
 
@@ -1950,12 +1950,7 @@ dsl_dataset_stats(dsl_dataset_t *ds, nvlist_t *nv)
 	    ds->ds_userrefs);
 	dsl_prop_nvlist_add_uint64(nv, ZFS_PROP_DEFER_DESTROY,
 	    DS_IS_DEFER_DESTROY(ds) ? 1 : 0);
-	dsl_prop_nvlist_add_uint64(nv, ZFS_PROP_KEYSTATUS,
-	    dsl_dataset_get_keystatus(ds));
-
-	err = dsl_dir_get_crypt(ds->ds_dir, &crypt);
-	if (err == 0)
-		dsl_prop_nvlist_add_uint64(nv, ZFS_PROP_ENCRYPTION, crypt);
+	dsl_dataset_crypt_stats(ds, nv);
 
 	if (dsl_dataset_phys(ds)->ds_prev_snap_obj != 0) {
 		uint64_t written, comp, uncomp;
@@ -2466,6 +2461,23 @@ dsl_dataset_promote_check(void *arg, dmu_tx_t *tx)
 		return (SET_ERROR(EXDEV));
 	}
 
+	snap = list_head(&ddpa->shared_snaps);
+	if (snap == NULL) {
+		err = SET_ERROR(ENOENT);
+		goto out;
+	}
+	origin_ds = snap->ds;
+
+	/*
+	 * Encrypted clones share a DSL Crypto Key with their origin's dsl dir.
+	 * When doing a promote we must make sure the encryption root for
+	 * both the target and the target's origin does not change to avoid
+	 * needing to rewrap encryption keys
+	 */
+	err = dsl_dataset_promote_crypt_check(hds->ds_dir, origin_ds->ds_dir);
+	if (err != 0)
+		goto out;
+
 	/*
 	 * Compute and check the amount of space to transfer.  Since this is
 	 * so expensive, don't do the preliminary check.
@@ -2474,13 +2486,6 @@ dsl_dataset_promote_check(void *arg, dmu_tx_t *tx)
 		promote_rele(ddpa, FTAG);
 		return (0);
 	}
-
-	snap = list_head(&ddpa->shared_snaps);
-	if (snap == NULL) {
-		err = SET_ERROR(ENOENT);
-		goto out;
-	}
-	origin_ds = snap->ds;
 
 	/* compute origin's new unique space */
 	snap = list_tail(&ddpa->clone_snaps);

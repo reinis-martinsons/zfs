@@ -746,35 +746,33 @@ proplist_has_encryption_props(nvlist_t *props)
 }
 
 int
-zfs_crypto_is_encryption_root(zfs_handle_t *zhp, boolean_t *enc_root)
+zfs_crypto_get_encryption_root(zfs_handle_t *zhp, boolean_t *is_encroot,
+    char *buf)
 {
 	int ret;
-	char prop_keylocation[MAXNAMELEN];
-	char keylocation_src[MAXNAMELEN];
-	zprop_source_t keylocation_srctype;
+	char prop_encroot[MAXNAMELEN];
 
 	/* if the dataset isn't encrypted, just return */
 	if (zfs_prop_get_int(zhp, ZFS_PROP_ENCRYPTION) == ZIO_CRYPT_OFF) {
-		*enc_root = B_FALSE;
+		*is_encroot = B_FALSE;
+		if (buf != NULL)
+			buf[0] = '\0';
 		return (0);
 	}
 
-	/* fetch the keylocation and its source */
-	ret = zfs_prop_get(zhp, ZFS_PROP_KEYLOCATION, prop_keylocation,
-	    sizeof (prop_keylocation), &keylocation_srctype, keylocation_src,
-	    sizeof (keylocation_src), B_TRUE);
+	ret = zfs_prop_get(zhp, ZFS_PROP_ENCRYPTION_ROOT, prop_encroot,
+	    sizeof (prop_encroot), NULL, NULL, 0, B_TRUE);
 	if (ret != 0) {
-		*enc_root = B_FALSE;
+		*is_encroot = B_FALSE;
+		if (buf != NULL)
+			buf[0] = '\0';
 		return (ret);
 	}
 
-	/* check if the keylocation was inherited */
-	if (keylocation_srctype == ZPROP_SRC_INHERITED) {
-		*enc_root = B_FALSE;
-		return (0);
-	}
+	*is_encroot = strcmp(prop_encroot, zfs_get_name(zhp)) == 0;
+	if (buf != NULL)
+		strcpy(buf, prop_encroot);
 
-	*enc_root = B_TRUE;
 	return (0);
 }
 
@@ -917,7 +915,7 @@ zfs_crypto_create(libzfs_handle_t *hdl, char *parent_name, nvlist_t *props,
 	}
 
 	/*
-	 * If a local key format is provided, this dataset will be a new
+	 * If a local key is provided, this dataset will be a new
 	 * encryption root. Populate the encryption params.
 	 */
 	if (keylocation != NULL) {
@@ -1016,7 +1014,7 @@ load_keys_cb(zfs_handle_t *zhp, void *arg)
 	uint64_t keystatus = zfs_prop_get_int(zhp, ZFS_PROP_KEYSTATUS);
 
 	/* only attempt to load keys for encryption roots */
-	ret = zfs_crypto_is_encryption_root(zhp, &is_encroot);
+	ret = zfs_crypto_get_encryption_root(zhp, &is_encroot, NULL);
 	if (ret != 0 || !is_encroot)
 		goto out;
 
@@ -1086,12 +1084,11 @@ zfs_crypto_load_key(zfs_handle_t *zhp, boolean_t noop, char *alt_keylocation)
 	uint64_t keystatus, iters = 0, salt = 0;
 	uint64_t keyformat = ZFS_KEYFORMAT_NONE;
 	char prop_keylocation[MAXNAMELEN];
-	char keylocation_src[MAXNAMELEN];
+	char prop_encroot[MAXNAMELEN];
 	char *keylocation = NULL;
 	uint8_t *key_material = NULL, *key_data = NULL;
 	size_t key_material_len;
-	zprop_source_t keylocation_srctype;
-	boolean_t can_retry = B_FALSE, correctible = B_FALSE;
+	boolean_t is_encroot, can_retry = B_FALSE, correctible = B_FALSE;
 
 	(void) snprintf(errbuf, sizeof (errbuf),
 	    dgettext(TEXT_DOMAIN, "Key load error"));
@@ -1117,17 +1114,16 @@ zfs_crypto_load_key(zfs_handle_t *zhp, boolean_t noop, char *alt_keylocation)
 	 * Fetch the key location. Check that we are working with an
 	 * encryption root.
 	 */
-	ret = zfs_prop_get(zhp, ZFS_PROP_KEYLOCATION, prop_keylocation,
-	    sizeof (prop_keylocation), &keylocation_srctype, keylocation_src,
-	    sizeof (keylocation_src), B_TRUE);
+	ret = zfs_crypto_get_encryption_root(zhp, &is_encroot, prop_encroot);
 	if (ret != 0) {
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-		    "Failed to get keylocation for '%s'."), zfs_get_name(zhp));
+		    "Failed to get encryption root for '%s'."),
+		    zfs_get_name(zhp));
 		goto error;
-	} else if (keylocation_srctype == ZPROP_SRC_INHERITED) {
+	} else if (!is_encroot) {
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
 		    "Keys must be loaded for encryption root of '%s' (%s)."),
-		    zfs_get_name(zhp), keylocation_src);
+		    zfs_get_name(zhp), prop_encroot);
 		ret = EINVAL;
 		goto error;
 	}
@@ -1136,10 +1132,20 @@ zfs_crypto_load_key(zfs_handle_t *zhp, boolean_t noop, char *alt_keylocation)
 	 * if the caller has elected to override the keylocation property
 	 * use that instead
 	 */
-	if (alt_keylocation != NULL)
+	if (alt_keylocation != NULL) {
 		keylocation = alt_keylocation;
-	else
+	} else {
+		ret = zfs_prop_get(zhp, ZFS_PROP_KEYLOCATION, prop_keylocation,
+		    sizeof (prop_keylocation), NULL, NULL, 0, B_TRUE);
+		if (ret != 0) {
+			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
+			    "Failed to get keylocation for '%s'."),
+			    zfs_get_name(zhp));
+			goto error;
+		}
+
 		keylocation = prop_keylocation;
+	}
 
 	/* check that the key is unloaded unless this is a noop */
 	if (!noop) {
@@ -1236,10 +1242,9 @@ zfs_crypto_unload_key(zfs_handle_t *zhp)
 {
 	int ret;
 	char errbuf[1024];
-	char prop_keylocation[MAXNAMELEN];
-	char keylocation_src[MAXNAMELEN];
+	char prop_encroot[MAXNAMELEN];
 	uint64_t keystatus, keyformat;
-	zprop_source_t keylocation_srctype;
+	boolean_t is_encroot;
 
 	(void) snprintf(errbuf, sizeof (errbuf),
 	    dgettext(TEXT_DOMAIN, "Key unload error"));
@@ -1265,17 +1270,16 @@ zfs_crypto_unload_key(zfs_handle_t *zhp)
 	 * Fetch the key location. Check that we are working with an
 	 * encryption root.
 	 */
-	ret = zfs_prop_get(zhp, ZFS_PROP_KEYLOCATION, prop_keylocation,
-	    sizeof (prop_keylocation), &keylocation_srctype, keylocation_src,
-	    sizeof (keylocation_src), B_TRUE);
+	ret = zfs_crypto_get_encryption_root(zhp, &is_encroot, prop_encroot);
 	if (ret != 0) {
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-		    "Failed to get keylocation for '%s'."), zfs_get_name(zhp));
+		    "Failed to get encryption root for '%s'."),
+		    zfs_get_name(zhp));
 		goto error;
-	} else if (keylocation_srctype == ZPROP_SRC_INHERITED) {
+	} else if (!is_encroot) {
 		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
 		    "Keys must be unloaded for encryption root of '%s' (%s)."),
-		    zfs_get_name(zhp), keylocation_src);
+		    zfs_get_name(zhp), prop_encroot);
 		ret = EINVAL;
 		goto error;
 	}
@@ -1375,10 +1379,9 @@ zfs_crypto_rewrap(zfs_handle_t *zhp, nvlist_t *raw_props, boolean_t inheritkey)
 	uint64_t crypt, pcrypt, keystatus, pkeystatus;
 	uint64_t keyformat = ZFS_KEYFORMAT_NONE;
 	zfs_handle_t *pzhp = NULL;
-	zprop_source_t keylocation_srctype;
 	char *keylocation = NULL;
+	char origin_name[MAXNAMELEN];
 	char prop_keylocation[MAXNAMELEN];
-	char keylocation_src[MAXNAMELEN];
 	char parent_name[ZFS_MAX_DATASET_NAME_LEN];
 
 	(void) snprintf(errbuf, sizeof (errbuf),
@@ -1401,32 +1404,23 @@ zfs_crypto_rewrap(zfs_handle_t *zhp, nvlist_t *raw_props, boolean_t inheritkey)
 		goto error;
 	}
 
+	/* get the encryption root of the dataset */
+	ret = zfs_crypto_get_encryption_root(zhp, &is_encroot, NULL);
+	if (ret != 0) {
+		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
+		    "Failed to get encryption root for '%s'."),
+		    zfs_get_name(zhp));
+		goto error;
+	}
+
 	/* Clones use their origin's key and cannot rewrap it */
-	ret = zfs_prop_get(zhp, ZFS_PROP_ORIGIN, keylocation_src,
-	    sizeof (keylocation_src), &keylocation_srctype, NULL, 0, B_TRUE);
-	if (ret == 0 && strcmp(keylocation_src, "") != 0) {
-		/*
-		 * When printing an error, it is important that we use the
-		 * setpoint of the keylocation property instead of the origin
-		 * directly so that we can print out the end of a "chain" of
-		 * clones
-		 */
-		ret = zfs_prop_get(zhp, ZFS_PROP_KEYLOCATION, prop_keylocation,
-		    sizeof (prop_keylocation), &keylocation_srctype,
-		    keylocation_src, sizeof (keylocation_src), B_TRUE);
-		if (ret != 0) {
-			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-			    "Failed to get keylocation for '%s'."),
-			    zfs_get_name(zhp));
-			goto error;
-		} else {
-			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-			    "Keys must be unloaded for origin"
-			    "encryption root of '%s' (%s)."),
-			    zfs_get_name(zhp), keylocation_src);
-			ret = EINVAL;
-			goto error;
-		}
+	ret = zfs_prop_get(zhp, ZFS_PROP_ORIGIN, origin_name,
+	    sizeof (origin_name), NULL, NULL, 0, B_TRUE);
+	if (ret == 0 && strcmp(origin_name, "") != 0) {
+		zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
+		    "Keys cannot be changed on clones."));
+		ret = EINVAL;
+		goto error;
 	}
 
 	/*
@@ -1448,15 +1442,6 @@ zfs_crypto_rewrap(zfs_handle_t *zhp, nvlist_t *raw_props, boolean_t inheritkey)
 		    zfs_prop_to_name(ZFS_PROP_KEYFORMAT), &keyformat);
 		(void) nvlist_lookup_string(props,
 		    zfs_prop_to_name(ZFS_PROP_KEYLOCATION), &keylocation);
-
-		/* check whether zhp is an encryption root */
-		ret = zfs_crypto_is_encryption_root(zhp, &is_encroot);
-		if (ret != 0) {
-			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
-			    "Failed to find encryption root."));
-			ret = EINVAL;
-			goto error;
-		}
 
 		if (is_encroot) {
 			/*
@@ -1510,8 +1495,7 @@ zfs_crypto_rewrap(zfs_handle_t *zhp, nvlist_t *raw_props, boolean_t inheritkey)
 			goto error;
 	} else {
 		/* check that zhp is an encryption root */
-		ret = zfs_crypto_is_encryption_root(zhp, &is_encroot);
-		if (ret != 0 || !is_encroot) {
+		if (!is_encroot) {
 			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
 			    "Key inheritting can only be performed on "
 			    "encryption roots."));

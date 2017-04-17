@@ -1117,7 +1117,6 @@ dsl_prop_get_all_ds(dsl_dataset_t *ds, nvlist_t **nvp,
 			goto out;
 	}
 
-	/* search for properties up the chain of parents */
 	for (; dd != NULL; dd = dd->dd_parent) {
 		if (dd != ds->ds_dir || (flags & DSL_PROP_GET_SNAPSHOT)) {
 			if (flags & (DSL_PROP_GET_LOCAL |

@@ -4184,11 +4184,7 @@ extract_delay_props(nvlist_t *props)
 {
 	nvlist_t *delayprops;
 	nvpair_t *nvp, *tmp;
-	static const zfs_prop_t delayable[] = {
-		ZFS_PROP_REFQUOTA,
-		ZFS_PROP_KEYLOCATION,
-		0
-	};
+	static const zfs_prop_t delayable[] = { ZFS_PROP_REFQUOTA, 0 };
 	int i;
 
 	VERIFY(nvlist_alloc(&delayprops, NV_UNIQUE_NAME, KM_SLEEP) == 0);
@@ -4304,14 +4300,6 @@ zfs_ioc_recv_impl(char *tofs, char *tosnap, char *origin,
 			(void) zfs_set_prop_nvlist(tofs, ZPROP_SRC_RECEIVED,
 			    props, *errors);
 		}
-	} else if (drc.drc_raw) {
-		/*
-		 * Raw send streams default to a "prompt" keylocation if
-		 * no properties are given.
-		 */
-		delayprops = fnvlist_alloc();
-		fnvlist_add_string(delayprops,
-		    zfs_prop_to_name(ZFS_PROP_KEYLOCATION), "prompt");
 	}
 
 	off = input_fp->f_offset;
@@ -4352,7 +4340,7 @@ zfs_ioc_recv_impl(char *tofs, char *tosnap, char *origin,
 		}
 	}
 
-	if (delayprops != NULL && props != NULL) {
+	if (delayprops != NULL) {
 		/*
 		 * Merge delayed props back in with initial props, in case
 		 * we're DEBUG and zfs_ioc_recv_inject_err is set (which means

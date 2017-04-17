@@ -326,7 +326,7 @@ zio_crypt_key_init(uint64_t crypt, zio_crypt_key_t *key)
 	keydata_len = zio_crypt_table[crypt].ci_keylen;
 
 	/* fill keydata buffers and salt with random data */
-	ret = random_get_bytes(key->zk_guid, MASTER_KEY_GUID_LEN);
+	ret = random_get_bytes((uint8_t *)&key->zk_guid, sizeof (uint64_t));
 	if (ret != 0)
 		goto error;
 
@@ -563,6 +563,7 @@ zio_crypt_key_wrap(crypto_key_t *cwkey, zio_crypt_key_t *key, uint8_t *iv,
 	uio_t puio, cuio;
 	iovec_t plain_iovecs[2], cipher_iovecs[3];
 	uint64_t crypt = key->zk_crypt;
+	uint64_t le_guid = LE_64(key->zk_guid);
 	uint_t enc_len, keydata_len;
 
 	ASSERT3U(crypt, <, ZIO_CRYPT_FUNCTIONS);
@@ -598,7 +599,7 @@ zio_crypt_key_wrap(crypto_key_t *cwkey, zio_crypt_key_t *key, uint8_t *iv,
 
 	/* encrypt the keys and store the resulting ciphertext and mac */
 	ret = zio_do_crypt_uio(B_TRUE, crypt, cwkey, NULL, iv, enc_len,
-	    &puio, &cuio, key->zk_guid, MASTER_KEY_GUID_LEN);
+	    &puio, &cuio, (uint8_t *)&le_guid, sizeof (uint64_t));
 	if (ret != 0)
 		goto error;
 
@@ -609,7 +610,7 @@ error:
 }
 
 int
-zio_crypt_key_unwrap(crypto_key_t *cwkey, uint64_t crypt, uint8_t *guid,
+zio_crypt_key_unwrap(crypto_key_t *cwkey, uint64_t crypt, uint64_t guid,
     uint8_t *keydata, uint8_t *hmac_keydata, uint8_t *iv, uint8_t *mac,
     zio_crypt_key_t *key)
 {
@@ -618,6 +619,7 @@ zio_crypt_key_unwrap(crypto_key_t *cwkey, uint64_t crypt, uint8_t *guid,
 	uio_t puio, cuio;
 	iovec_t plain_iovecs[2], cipher_iovecs[3];
 	uint_t enc_len, keydata_len;
+	uint64_t le_guid = LE_64(guid);
 
 	ASSERT3U(crypt, <, ZIO_CRYPT_FUNCTIONS);
 	ASSERT3U(cwkey->ck_format, ==, CRYPTO_KEY_RAW);
@@ -647,12 +649,9 @@ zio_crypt_key_unwrap(crypto_key_t *cwkey, uint64_t crypt, uint8_t *guid,
 
 	/* decrypt the keys and store the result in the output buffers */
 	ret = zio_do_crypt_uio(B_FALSE, crypt, cwkey, NULL, iv, enc_len,
-	    &puio, &cuio, guid, MASTER_KEY_GUID_LEN);
+	    &puio, &cuio, (uint8_t *)&le_guid, sizeof (uint64_t));
 	if (ret != 0)
 		goto error;
-
-	/* copy the (now validated) guid over */
-	bcopy(guid, key->zk_guid, MASTER_KEY_GUID_LEN);
 
 	/* generate a fresh salt */
 	ret = random_get_bytes(key->zk_salt, ZIO_DATA_SALT_LEN);
@@ -692,6 +691,7 @@ zio_crypt_key_unwrap(crypto_key_t *cwkey, uint64_t crypt, uint8_t *guid,
 		key->zk_hmac_tmpl = NULL;
 
 	key->zk_crypt = crypt;
+	key->zk_guid = guid;
 	key->zk_salt_count = 0;
 	rw_init(&key->zk_salt_lock, NULL, RW_DEFAULT, NULL);
 

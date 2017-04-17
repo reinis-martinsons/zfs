@@ -818,7 +818,6 @@ send_iterate_fs(zfs_handle_t *zhp, void *arg)
 {
 	send_data_t *sd = arg;
 	nvlist_t *nvfs = NULL, *nv = NULL;
-	char *strval;
 	int rv = 0;
 	uint64_t parent_fromsnap_guid_save = sd->parent_fromsnap_guid;
 	uint64_t fromsnap_txg_save = sd->fromsnap_txg;
@@ -883,44 +882,19 @@ send_iterate_fs(zfs_handle_t *zhp, void *arg)
 	VERIFY(0 == nvlist_alloc(&nv, NV_UNIQUE_NAME, 0));
 	send_iterate_prop(zhp, nv);
 
-	if (zfs_prop_get_int(zhp, ZFS_PROP_ENCRYPTION) != ZIO_CRYPT_OFF) {
-		/*
-		 * If the root dataset of a properties send is encrypted but
-		 * not an encryption root we need to adjust the properties so
-		 * that it appears to be an encryption root. This ensures that
-		 * all received datasets will have a valid keylocation.
-		 */
-		if (strcmp(zfs_get_name(zhp), sd->fsname) == 0 &&
-		    nvlist_lookup_string(nv,
-		    zfs_prop_to_name(ZFS_PROP_KEYLOCATION), &strval) != 0) {
-			char keylocation[MAXNAMELEN];
-
-			rv = zfs_prop_get(zhp, ZFS_PROP_KEYLOCATION,
-			    keylocation, sizeof (keylocation), NULL,
-			    NULL, 0, B_FALSE);
-			if (rv != 0) {
-				rv = -1;
-				goto out;
-			}
-
-			VERIFY(0 == nvlist_add_string(nv,
-			    zfs_prop_to_name(ZFS_PROP_KEYLOCATION),
-			    keylocation));
-		}
-
-		/*
-		 * Encrypted datasets can only be sent with properties if the
-		 * raw flag is specified. Otherwise, the receiving side won't
-		 * have a keyformat to use.
-		 */
-		if (!sd->raw) {
-			(void) fprintf(stderr, dgettext(TEXT_DOMAIN,
-			    "cannot send %s@%s: encrypted dataset %s may not "
-			    "be sent with properties without the raw flag\n"),
-			    sd->fsname, sd->tosnap, zhp->zfs_name);
-			rv = -1;
-			goto out;
-		}
+	/*
+	 * Encrypted datasets can only be sent with properties if the
+	 * raw flag is specified. Otherwise, the receiving side won't
+	 * have a keyformat to use.
+	 */
+	if (zfs_prop_get_int(zhp, ZFS_PROP_ENCRYPTION) != ZIO_CRYPT_OFF &&
+	    !sd->raw) {
+		(void) fprintf(stderr, dgettext(TEXT_DOMAIN,
+		    "cannot send %s@%s: encrypted dataset %s may not "
+		    "be sent with properties without the raw flag\n"),
+		    sd->fsname, sd->tosnap, zhp->zfs_name);
+		rv = -1;
+		goto out;
 	}
 
 	VERIFY(0 == nvlist_add_nvlist(nvfs, "props", nv));
