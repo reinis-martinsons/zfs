@@ -1698,12 +1698,8 @@ dmu_recv_begin_check(void *arg, dmu_tx_t *tx)
 		if (drba->drba_origin != NULL) {
 			dsl_dataset_t *origin;
 
-			/*
-			 * We hold origin with DS_HOLD_FLAG_DECRYPT so that we
-			 * can check that the key is loaded for cloning.
-			 */
 			error = dsl_dataset_hold_flags(dp, drba->drba_origin,
-			    DS_HOLD_FLAG_DECRYPT, FTAG, &origin);
+			    dsflags, FTAG, &origin);
 			if (error != 0) {
 				dsl_dataset_rele_flags(ds, dsflags, FTAG);
 				return (error);

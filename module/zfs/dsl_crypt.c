@@ -404,12 +404,10 @@ error:
 }
 
 static int
-spa_keystore_wkey_hold_ddobj(spa_t *spa, uint64_t ddobj, void *tag,
+spa_keystore_wkey_hold_dd(spa_t *spa, dsl_dir_t *dd, void *tag,
     dsl_wrapping_key_t **wkey_out)
 {
 	int ret;
-	dsl_pool_t *dp = spa_get_dsl(spa);
-	dsl_dir_t *dd = NULL;
 	dsl_wrapping_key_t *wkey;
 	uint64_t rddobj;
 	boolean_t locked = B_FALSE;
@@ -418,11 +416,6 @@ spa_keystore_wkey_hold_ddobj(spa_t *spa, uint64_t ddobj, void *tag,
 		rw_enter(&spa->spa_keystore.sk_wkeys_lock, RW_READER);
 		locked = B_TRUE;
 	}
-
-	/* hold the dsl dir */
-	ret = dsl_dir_hold_obj(dp, ddobj, NULL, FTAG, &dd);
-	if (ret != 0)
-		goto error;
 
 	/* get the ddobj that the keylocation property was inherited from */
 	ret = dsl_dir_get_encryption_root_ddobj(dd, &rddobj);
@@ -438,16 +431,12 @@ spa_keystore_wkey_hold_ddobj(spa_t *spa, uint64_t ddobj, void *tag,
 	if (locked)
 		rw_exit(&spa->spa_keystore.sk_wkeys_lock);
 
-	dsl_dir_rele(dd, FTAG);
-
 	*wkey_out = wkey;
 	return (0);
 
 error:
 	if (locked)
 		rw_exit(&spa->spa_keystore.sk_wkeys_lock);
-	if (dd != NULL)
-		dsl_dir_rele(dd, FTAG);
 
 	*wkey_out = NULL;
 	return (ret);
@@ -677,7 +666,7 @@ spa_keystore_dsl_key_hold_dd(spa_t *spa, dsl_dir_t *dd, void *tag,
 	}
 
 	/* lookup the wrapping key from the keystore */
-	ret = spa_keystore_wkey_hold_ddobj(spa, dd->dd_object, FTAG, &wkey);
+	ret = spa_keystore_wkey_hold_dd(spa, dd, FTAG, &wkey);
 	if (ret != 0) {
 		ret = SET_ERROR(EACCES);
 		goto error_unlock;
@@ -1071,8 +1060,8 @@ dmu_objset_check_wkey_loaded(dsl_dir_t *dd)
 	int ret;
 	dsl_wrapping_key_t *wkey = NULL;
 
-	ret = spa_keystore_wkey_hold_ddobj(dd->dd_pool->dp_spa,
-	    dd->dd_object, FTAG, &wkey);
+	ret = spa_keystore_wkey_hold_dd(dd->dd_pool->dp_spa, dd, FTAG,
+	    &wkey);
 	if (ret != 0)
 		return (SET_ERROR(EACCES));
 
@@ -1149,6 +1138,7 @@ dsl_crypto_key_sync(dsl_crypto_key_t *dck, dmu_tx_t *tx)
 typedef struct spa_keystore_rewrap_args {
 	const char *skra_dsname;
 	dsl_crypto_params_t *skra_cp;
+	boolean_t skra_force;
 } spa_keystore_rewrap_args_t;
 
 static int
@@ -1287,7 +1277,7 @@ error:
 
 static void
 spa_keystore_rewrap_sync_impl(uint64_t root_ddobj, uint64_t ddobj,
-    dsl_wrapping_key_t *wkey, dmu_tx_t *tx)
+    dsl_wrapping_key_t *wkey, boolean_t force, dmu_tx_t *tx)
 {
 	zap_cursor_t *zc;
 	zap_attribute_t *za;
@@ -1318,12 +1308,10 @@ spa_keystore_rewrap_sync_impl(uint64_t root_ddobj, uint64_t ddobj,
 	/* get the dsl_crypt_key_t for the current dsl dir */
 	VERIFY0(spa_keystore_dsl_key_hold_dd(dp->dp_spa, dd, FTAG, &dck));
 
-	/* replace the wrapping key */
+	/* replace the wrapping key and re-sync the dck to disk */
 	dsl_wrapping_key_hold(wkey, dck);
 	dsl_wrapping_key_rele(dck->dck_wkey, dck);
 	dck->dck_wkey = wkey;
-
-	/* sync the dsl key wrapped with the new wrapping key */
 	dsl_crypto_key_sync(dck, tx);
 
 	zc = kmem_alloc(sizeof (zap_cursor_t), KM_SLEEP);
@@ -1339,7 +1327,7 @@ spa_keystore_rewrap_sync_impl(uint64_t root_ddobj, uint64_t ddobj,
 	    zap_cursor_retrieve(zc, za) == 0;
 	    zap_cursor_advance(zc)) {
 		spa_keystore_rewrap_sync_impl(root_ddobj, za->za_first_integer,
-		    wkey, tx);
+		    wkey, force, tx);
 	}
 	zap_cursor_fini(zc);
 
@@ -1358,9 +1346,9 @@ spa_keystore_rewrap_sync(void *arg, dmu_tx_t *tx)
 	dsl_pool_t *dp = dmu_tx_pool(tx);
 	spa_t *spa = dp->dp_spa;
 	spa_keystore_rewrap_args_t *skra = arg;
-	dsl_wrapping_key_t *wkey, *found_wkey;
+	dsl_wrapping_key_t *wkey = NULL, *found_wkey;
 	dsl_wrapping_key_t wkey_search;
-	uint64_t keyformat;
+	uint64_t rddobj, keyformat;
 	const char *keylocation;
 
 	/* create and initialize the wrapping key */
@@ -1404,8 +1392,8 @@ spa_keystore_rewrap_sync(void *arg, dmu_tx_t *tx)
 		 * We are inheritting the parent's wkey. Unset encryption all
 		 * parameters and grab a reference to the wkey.
 		 */
-		VERIFY0(spa_keystore_wkey_hold_ddobj(spa,
-		    ds->ds_dir->dd_parent->dd_object, FTAG, &wkey));
+		VERIFY0(spa_keystore_wkey_hold_dd(spa,
+		    ds->ds_dir->dd_parent, FTAG, &wkey));
 
 		dsl_prop_set_sync_impl(ds,
 		    zfs_prop_to_name(ZFS_PROP_KEYLOCATION), ZPROP_SRC_NONE,
@@ -1424,11 +1412,20 @@ spa_keystore_rewrap_sync(void *arg, dmu_tx_t *tx)
 		    0, 0, NULL, tx);
 	}
 
+	if (wkey == NULL) {
+		ASSERT(skra->skra_force);
+		VERIFY0(dsl_dir_get_encryption_root_ddobj(ds->ds_dir->dd_parent,
+		    &rddobj));
+	} else {
+		rddobj = wkey->wk_ddobj;
+	}
+
 	rw_enter(&spa->spa_keystore.sk_wkeys_lock, RW_WRITER);
 
 	/* recurse through all children and rewrap their keys */
-	spa_keystore_rewrap_sync_impl(wkey->wk_ddobj, ds->ds_dir->dd_object,
-	    wkey, tx);
+	//TODO: implement force flag
+	spa_keystore_rewrap_sync_impl(rddobj, ds->ds_dir->dd_object, wkey,
+	    skra->skra_force && wkey == NULL, tx);
 
 	/*
 	 * All references to the old wkey should be released now (if it
@@ -1445,7 +1442,7 @@ spa_keystore_rewrap_sync(void *arg, dmu_tx_t *tx)
 	if (skra->skra_cp != NULL) {
 		avl_find(&spa->spa_keystore.sk_wkeys, wkey, &where);
 		avl_insert(&spa->spa_keystore.sk_wkeys, wkey, where);
-	} else {
+	} else if (wkey != NULL) {
 		dsl_wrapping_key_rele(wkey, FTAG);
 	}
 
@@ -1455,13 +1452,15 @@ spa_keystore_rewrap_sync(void *arg, dmu_tx_t *tx)
 }
 
 int
-spa_keystore_rewrap(const char *dsname, dsl_crypto_params_t *dcp)
+spa_keystore_rewrap(const char *dsname, dsl_crypto_params_t *dcp,
+    boolean_t force)
 {
 	spa_keystore_rewrap_args_t skra;
 
 	/* initialize the args struct */
 	skra.skra_dsname = dsname;
 	skra.skra_cp = dcp;
+	skra.skra_force = force;
 
 	/* perform the actual work in syncing context */
 	return (dsl_sync_task(dsname, spa_keystore_rewrap_check,
@@ -1774,8 +1773,8 @@ dsl_dataset_create_crypt_sync(uint64_t dsobj, dsl_dir_t *dd,
 
 	/* use the new key if given or inherit from the parent */
 	if (wkey == NULL) {
-		VERIFY0(spa_keystore_wkey_hold_ddobj(dp->dp_spa,
-		    dd->dd_parent->dd_object, FTAG, &wkey));
+		VERIFY0(spa_keystore_wkey_hold_dd(dp->dp_spa,
+		    dd->dd_parent, FTAG, &wkey));
 	} else {
 		wkey->wk_ddobj = dd->dd_object;
 	}
@@ -2007,6 +2006,7 @@ dsl_crypto_recv_key_sync(void *arg, dmu_tx_t *tx)
 	dnode_t *mdn;
 	uint8_t *keydata, *hmac_keydata, *iv, *mac, *portable_mac;
 	uint_t len;
+	uint64_t rddobj;
 	uint64_t crypt, guid, keyformat, iters, salt;
 	uint64_t compress, checksum, nlevels, blksz, ibs;
 
@@ -2062,32 +2062,40 @@ dsl_crypto_recv_key_sync(void *arg, dmu_tx_t *tx)
 	mdn->dn_checksum = checksum;
 	dnode_setdirty(mdn, tx);
 
-	/* zapify the dsl dir so we can add the key object to it */
-	dmu_buf_will_dirty(ds->ds_dir->dd_dbuf, tx);
-	dsl_dir_zapify(ds->ds_dir, tx);
+	/* if this is a new dataset setup the DSL Crypto Key. */
+	if (ds->ds_dir->dd_crypto_obj == 0) {
+		/* zapify the dsl dir so we can add the key object to it */
+		dmu_buf_will_dirty(ds->ds_dir->dd_dbuf, tx);
+		dsl_dir_zapify(ds->ds_dir, tx);
 
-	/* create the DSL Crypto Key on disk and activate the feature */
-	ds->ds_dir->dd_crypto_obj = zap_create(mos,
-	    DMU_OTN_ZAP_METADATA, DMU_OT_NONE, 0, tx);
+		/* create the DSL Crypto Key on disk and activate the feature */
+		ds->ds_dir->dd_crypto_obj = zap_create(mos,
+		    DMU_OTN_ZAP_METADATA, DMU_OT_NONE, 0, tx);
 
-	//TODO: need to replace dd_object with the real encryption root ddobj
+		dsl_dataset_activate_feature(dsobj, SPA_FEATURE_ENCRYPTION, tx);
+		ds->ds_feature_inuse[SPA_FEATURE_ENCRYPTION] = B_TRUE;
+
+		/* save the dd_crypto_obj on disk */
+		VERIFY0(zap_add(mos, ds->ds_dir->dd_object,
+		    DD_FIELD_CRYPTO_KEY_OBJ, sizeof (uint64_t), 1,
+		    &ds->ds_dir->dd_crypto_obj, tx));
+	}
+
+	/* sync the key data to the ZAP object on disk */
 	dsl_crypto_key_sync_impl(mos, ds->ds_dir->dd_crypto_obj, crypt,
 	    ds->ds_dir->dd_object, guid, iv, mac, keydata, hmac_keydata, tx);
 
-	dsl_dataset_activate_feature(dsobj, SPA_FEATURE_ENCRYPTION, tx);
-	ds->ds_feature_inuse[SPA_FEATURE_ENCRYPTION] = B_TRUE;
-
-	/* save the dd_crypto_obj on disk */
-	VERIFY0(zap_add(mos, ds->ds_dir->dd_object, DD_FIELD_CRYPTO_KEY_OBJ,
-	    sizeof (uint64_t), 1, &ds->ds_dir->dd_crypto_obj, tx));
-
-	/* set the encryption properties from the nvlist */
-	dsl_prop_set_sync_impl(ds, zfs_prop_to_name(ZFS_PROP_KEYFORMAT),
-	    ZPROP_SRC_LOCAL, 8, 1, &keyformat, tx);
-	dsl_prop_set_sync_impl(ds, zfs_prop_to_name(ZFS_PROP_PBKDF2_ITERS),
-	    ZPROP_SRC_LOCAL, 8, 1, &iters, tx);
-	dsl_prop_set_sync_impl(ds, zfs_prop_to_name(ZFS_PROP_PBKDF2_SALT),
-	    ZPROP_SRC_LOCAL, 8, 1, &salt, tx);
+	VERIFY0(dsl_dir_get_encryption_root_ddobj(ds->ds_dir, &rddobj));
+	if (rddobj == ds->ds_dir->dd_object) {
+		dsl_prop_set_sync_impl(ds, zfs_prop_to_name(ZFS_PROP_KEYFORMAT),
+		    ZPROP_SRC_LOCAL, 8, 1, &keyformat, tx);
+		dsl_prop_set_sync_impl(ds,
+		    zfs_prop_to_name(ZFS_PROP_PBKDF2_ITERS), ZPROP_SRC_LOCAL,
+		    8, 1, &iters, tx);
+		dsl_prop_set_sync_impl(ds,
+		    zfs_prop_to_name(ZFS_PROP_PBKDF2_SALT), ZPROP_SRC_LOCAL,
+		    8, 1, &salt, tx);
+	}
 
 	dsl_dataset_rele(ds, FTAG);
 }
@@ -2117,10 +2125,12 @@ dsl_crypto_populate_key_nvlist(dsl_dataset_t *ds, nvlist_t **nvl_out)
 	int ret;
 	objset_t *os;
 	dnode_t *mdn;
+	dsl_dir_t *rdd = NULL;
 	nvlist_t *nvl = NULL;
 	uint64_t dckobj = ds->ds_dir->dd_crypto_obj;
 	objset_t *mos = ds->ds_dir->dd_pool->dp_meta_objset;
 	uint64_t crypt = 0, guid = 0, format = 0, iters = 0, salt = 0;
+	uint64_t rddobj;
 	uint8_t raw_keydata[MASTER_KEY_MAX_LEN];
 	uint8_t raw_hmac_keydata[SHA512_HMAC_KEYLEN];
 	uint8_t iv[WRAPPING_IV_LEN];
@@ -2136,6 +2146,10 @@ dsl_crypto_populate_key_nvlist(dsl_dataset_t *ds, nvlist_t **nvl_out)
 		goto error;
 
 	/* lookup values from the DSL Crypto Key */
+	ret = dsl_dir_get_encryption_root_ddobj(ds->ds_dir, &rddobj);
+	if (ret != 0)
+		goto error;
+
 	ret = zap_lookup(mos, dckobj, DSL_CRYPTO_KEY_CRYPTO_SUITE, 8, 1,
 	    &crypt);
 	if (ret != 0)
@@ -2168,25 +2182,30 @@ dsl_crypto_populate_key_nvlist(dsl_dataset_t *ds, nvlist_t **nvl_out)
 	/* lookup values from the properties */
 	dsl_pool_config_enter(ds->ds_dir->dd_pool, FTAG);
 
-	ret = dsl_prop_get_dd(ds->ds_dir, zfs_prop_to_name(ZFS_PROP_KEYFORMAT),
+	ret = dsl_dir_hold_obj(ds->ds_dir->dd_pool, rddobj, NULL, FTAG, &rdd);
+	if (ret != 0)
+		goto error_unlock;
+
+	ret = dsl_prop_get_dd(rdd, zfs_prop_to_name(ZFS_PROP_KEYFORMAT),
 	    8, 1, &format, NULL, B_FALSE);
 	if (ret != 0)
 		goto error_unlock;
 
 	if (format == ZFS_KEYFORMAT_PASSPHRASE) {
-		ret = dsl_prop_get_dd(ds->ds_dir,
+		ret = dsl_prop_get_dd(rdd,
 		    zfs_prop_to_name(ZFS_PROP_PBKDF2_ITERS), 8, 1, &iters,
 		    NULL, B_FALSE);
 		if (ret != 0)
 			goto error_unlock;
 
-		ret = dsl_prop_get_dd(ds->ds_dir,
+		ret = dsl_prop_get_dd(rdd,
 		    zfs_prop_to_name(ZFS_PROP_PBKDF2_SALT), 8, 1, &salt,
 		    NULL, B_FALSE);
 		if (ret != 0)
 			goto error_unlock;
 	}
 
+	dsl_dir_rele(rdd, FTAG);
 	dsl_pool_config_exit(ds->ds_dir->dd_pool, FTAG);
 
 	fnvlist_add_uint64(nvl, DSL_CRYPTO_KEY_CRYPTO_SUITE, crypt);
@@ -2215,6 +2234,8 @@ dsl_crypto_populate_key_nvlist(dsl_dataset_t *ds, nvlist_t **nvl_out)
 	return (0);
 
 error_unlock:
+	if (rdd != NULL)
+		dsl_dir_rele(rdd, FTAG);
 	dsl_pool_config_exit(ds->ds_dir->dd_pool, FTAG);
 error:
 	nvlist_free(nvl);

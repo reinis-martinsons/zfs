@@ -5857,6 +5857,7 @@ static int
 zfs_ioc_change_key(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl)
 {
 	int ret;
+	boolean_t force;
 	dsl_crypto_params_t *dcp = NULL;
 	nvlist_t *args = NULL, *hidden_args = NULL;
 
@@ -5865,6 +5866,7 @@ zfs_ioc_change_key(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl)
 		goto error;
 	}
 
+	force = nvlist_exists(innvl, "force");
 	(void) nvlist_lookup_nvlist(innvl, "props", &args);
 	(void) nvlist_lookup_nvlist(innvl, ZPOOL_HIDDEN_ARGS, &hidden_args);
 
@@ -5872,7 +5874,7 @@ zfs_ioc_change_key(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl)
 	if (ret != 0)
 		goto error;
 
-	ret = spa_keystore_rewrap(dsname, dcp);
+	ret = spa_keystore_rewrap(dsname, dcp, force);
 	if (ret != 0)
 		goto error;
 

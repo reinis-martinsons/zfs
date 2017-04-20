@@ -882,19 +882,22 @@ send_iterate_fs(zfs_handle_t *zhp, void *arg)
 	VERIFY(0 == nvlist_alloc(&nv, NV_UNIQUE_NAME, 0));
 	send_iterate_prop(zhp, nv);
 
-	/*
-	 * Encrypted datasets can only be sent with properties if the
-	 * raw flag is specified. Otherwise, the receiving side won't
-	 * have a keyformat to use.
-	 */
-	if (zfs_prop_get_int(zhp, ZFS_PROP_ENCRYPTION) != ZIO_CRYPT_OFF &&
-	    !sd->raw) {
-		(void) fprintf(stderr, dgettext(TEXT_DOMAIN,
-		    "cannot send %s@%s: encrypted dataset %s may not "
-		    "be sent with properties without the raw flag\n"),
-		    sd->fsname, sd->tosnap, zhp->zfs_name);
-		rv = -1;
-		goto out;
+	if (zfs_prop_get_int(zhp, ZFS_PROP_ENCRYPTION) != ZIO_CRYPT_OFF) {
+		/*
+		 * Encrypted datasets can only be sent with properties if
+		 * the raw flag is specified because the receive side doesn't
+		 * currently have a mechanism for recursively asking the user
+		 * for encryption key parameters.
+		 */
+		if (!sd->raw) {
+			(void) fprintf(stderr, dgettext(TEXT_DOMAIN,
+			    "cannot send %s@%s: encrypted dataset %s may not "
+			    "be sent with properties without the raw flag\n"),
+			    sd->fsname, sd->tosnap, zhp->zfs_name);
+			rv = -1;
+			goto out;
+		}
+
 	}
 
 	VERIFY(0 == nvlist_add_nvlist(nvfs, "props", nv));

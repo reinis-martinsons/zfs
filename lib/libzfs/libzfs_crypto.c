@@ -1550,7 +1550,7 @@ zfs_crypto_rewrap(zfs_handle_t *zhp, nvlist_t *raw_props, boolean_t inheritkey)
 	}
 
 	/* call the ioctl */
-	ret = lzc_change_key(zhp->zfs_name, props, wkeydata, wkeylen);
+	ret = lzc_change_key(zhp->zfs_name, props, wkeydata, wkeylen, B_FALSE);
 	if (ret != 0) {
 		switch (ret) {
 		case EINVAL:
