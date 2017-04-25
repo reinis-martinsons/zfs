@@ -1376,6 +1376,7 @@ zfs_crypto_rewrap(zfs_handle_t *zhp, nvlist_t *raw_props, boolean_t inheritkey)
 	nvlist_t *props = NULL;
 	uint8_t *wkeydata = NULL;
 	uint_t wkeylen = 0;
+	dcp_cmd_t cmd = (inheritkey) ? DCP_CMD_INHERIT : DCP_CMD_NEW_KEY;
 	uint64_t crypt, pcrypt, keystatus, pkeystatus;
 	uint64_t keyformat = ZFS_KEYFORMAT_NONE;
 	zfs_handle_t *pzhp = NULL;
@@ -1446,11 +1447,15 @@ zfs_crypto_rewrap(zfs_handle_t *zhp, nvlist_t *raw_props, boolean_t inheritkey)
 		if (is_encroot) {
 			/*
 			 * If this is already an ecryption root, just keep
-			 * any properties not set by the user
+			 * any properties not set by the user.
 			 */
-			if (keyformat == ZFS_KEYFORMAT_NONE)
+			if (keyformat == ZFS_KEYFORMAT_NONE) {
 				keyformat = zfs_prop_get_int(zhp,
 				    ZFS_PROP_KEYFORMAT);
+				ret = nvlist_add_uint64(props,
+				    zfs_prop_to_name(ZFS_PROP_KEYFORMAT),
+				    keyformat);
+			}
 
 			if (keylocation == NULL) {
 				ret = zfs_prop_get(zhp, ZFS_PROP_KEYLOCATION,
@@ -1550,7 +1555,7 @@ zfs_crypto_rewrap(zfs_handle_t *zhp, nvlist_t *raw_props, boolean_t inheritkey)
 	}
 
 	/* call the ioctl */
-	ret = lzc_change_key(zhp->zfs_name, props, wkeydata, wkeylen, B_FALSE);
+	ret = lzc_change_key(zhp->zfs_name, cmd, props, wkeydata, wkeylen);
 	if (ret != 0) {
 		switch (ret) {
 		case EINVAL:

@@ -26,7 +26,11 @@
 #include <sys/spa.h>
 #include <sys/dsl_dataset.h>
 
-/* ZAP entry keys for DSL Encryption Keys stored on disk */
+/*
+ * ZAP entry keys for DSL Crypto Keys stored on disk. In addition,
+ * ZFS_PROP_KEYFORMAT, ZFS_PROP_PBKDF2_SALT, and ZFS_PROP_PBKDF2_ITERS are
+ * also maintained here using their respective property names.
+ */
 #define	DSL_CRYPTO_KEY_CRYPTO_SUITE	"DSL_CRYPTO_SUITE"
 #define	DSL_CRYPTO_KEY_GUID		"DSL_CRYPTO_GUID"
 #define	DSL_CRYPTO_KEY_IV		"DSL_CRYPTO_IV"
@@ -36,10 +40,20 @@
 #define	DSL_CRYPTO_KEY_ROOT_DDOBJ	"DSL_CRYPTO_ROOT_DDOBJ"
 #define	DSL_CRYPTO_KEY_REFCOUNT		"DSL_CRYPTO_REFCOUNT"
 
+
 /* in memory representation of a wrapping key */
 typedef struct dsl_wrapping_key {
 	/* link on spa_keystore_t:sk_wkeys */
 	avl_node_t wk_avl_link;
+
+	/* keyformat property enum */
+	zfs_keyformat_t wk_keyformat;
+
+	/* the pckdf2 salt, if the keyformat is of type passphrase */
+	uint64_t wk_salt;
+
+	/* the pbkdf2 iterations, if the keyformat is of type passphrase */
+	uint64_t wk_iters;
 
 	/* actual wrapping key */
 	crypto_key_t wk_key;
@@ -51,9 +65,20 @@ typedef struct dsl_wrapping_key {
 	uint64_t wk_ddobj;
 } dsl_wrapping_key_t;
 
-typedef enum dcp_flags {
-	DCP_FLAG_RAW_RECV = (1 << 0) /* dcp represents raw recv */
-} dcp_flags_t;
+/* enum of commands indicating special actions that should be run */
+typedef enum dcp_cmd {
+	/* key creation commands */
+	DCP_CMD_NONE = 0,	/* no specific command */
+	DCP_CMD_RAW_RECV,	/* raw receive */
+
+	/* key changing commands */
+	DCP_CMD_NEW_KEY,	/* rewrap key as an encryption root */
+	DCP_CMD_INHERIT,	/* rewrap key with parent's wrapping key */
+	DCP_CMD_FORCE_NEW_KEY,	/* change to encryption root without rewrap */
+	DCP_CMD_FORCE_INHERIT,	/* inherit parent's key without rewrap */
+
+	DCP_CMD_MAX
+} dcp_cmd_t;
 
 /*
  * This struct is a simple wrapper around all the parameters that are usually
@@ -61,20 +86,11 @@ typedef enum dcp_flags {
  * passed around the kernel together for convenience.
  */
 typedef struct dsl_crypto_params {
+	/* command indicating intended action */
+	dcp_cmd_t cp_cmd;
+
 	/* the encryption algorithm */
 	enum zio_encrypt cp_crypt;
-
-	/* flags for extra info */
-	dcp_flags_t cp_flags;
-
-	/* keyformat property enum */
-	zfs_keyformat_t cp_keyformat;
-
-	/* the pckdf2 salt, if the keyformat is of type passphrase */
-	uint64_t cp_salt;
-
-	/* the pbkdf2 iterations, if the keyformat is of type passphrase */
-	uint64_t cp_iters;
 
 	/* keylocation property string */
 	char *cp_keylocation;
@@ -141,13 +157,8 @@ typedef struct spa_keystore {
 	avl_tree_t sk_wkeys;
 } spa_keystore_t;
 
-void dsl_wrapping_key_hold(dsl_wrapping_key_t *wkey, void *tag);
-void dsl_wrapping_key_rele(dsl_wrapping_key_t *wkey, void *tag);
-void dsl_wrapping_key_free(dsl_wrapping_key_t *wkey);
-int dsl_wrapping_key_create(uint8_t *wkeydata, dsl_wrapping_key_t **wkey_out);
-
-int dsl_crypto_params_create_nvlist(nvlist_t *props, nvlist_t *crypto_args,
-    dsl_crypto_params_t **dcp_out);
+int dsl_crypto_params_create_nvlist(dcp_cmd_t cmd, nvlist_t *props,
+    nvlist_t *crypto_args, dsl_crypto_params_t **dcp_out);
 void dsl_crypto_params_free(dsl_crypto_params_t *dcp, boolean_t unload);
 void dsl_dataset_crypt_stats(struct dsl_dataset *ds, nvlist_t *nv);
 int dsl_crypto_can_set_keylocation(const char *dsname, zprop_source_t source,
@@ -174,18 +185,18 @@ int dsl_crypto_populate_key_nvlist(struct dsl_dataset *ds, nvlist_t **nvl_out);
 int dsl_crypto_recv_key(const char *poolname, uint64_t dsobj,
     dmu_objset_type_t ostype, nvlist_t *nvl);
 
-int spa_keystore_rewrap(const char *dsname, dsl_crypto_params_t *dcp,
-    boolean_t force);
+int spa_keystore_change_key(const char *dsname, dsl_crypto_params_t *dcp);
 int dsl_dir_rename_crypt_check(dsl_dir_t *dd, dsl_dir_t *newparent);
 int dsl_dataset_promote_crypt_check(dsl_dir_t *target, dsl_dir_t *origin);
 void dsl_dataset_promote_crypt_sync(dsl_dir_t *target, dsl_dir_t *origin,
     dmu_tx_t *tx);
-int dmu_objset_create_crypt_check(dsl_dir_t *parentdd, dsl_dir_t *origindd,
+int dmu_objset_create_crypt_check(dsl_dir_t *parentdd,
     dsl_crypto_params_t *dcp);
 void dsl_dataset_create_crypt_sync(uint64_t dsobj, dsl_dir_t *dd,
     struct dsl_dataset *origin, dsl_crypto_params_t *dcp, dmu_tx_t *tx);
 uint64_t dsl_crypto_key_create_sync(uint64_t crypt, dsl_wrapping_key_t *wkey,
     dmu_tx_t *tx);
+int dmu_objset_clone_crypt_check(dsl_dir_t *parentdd, dsl_dir_t *origindd);
 uint64_t dsl_crypto_key_clone_sync(dsl_dir_t *origindd, dmu_tx_t *tx);
 void dsl_crypto_key_destroy_sync(uint64_t dckobj, dmu_tx_t *tx);
 

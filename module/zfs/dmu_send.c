@@ -1740,6 +1740,7 @@ dmu_recv_begin_sync(void *arg, dmu_tx_t *tx)
 	ds_hold_flags_t dsflags = 0;
 	int error;
 	uint64_t crflags = 0;
+	dsl_crypto_params_t *dcpp = NULL;
 	dsl_crypto_params_t dcp = { 0 };
 
 	if (drrb->drr_flags & DRR_FLAG_CI_DATA)
@@ -1747,19 +1748,23 @@ dmu_recv_begin_sync(void *arg, dmu_tx_t *tx)
 	if ((featureflags & DMU_BACKUP_FEATURE_RAW) == 0) {
 		dsflags |= DS_HOLD_FLAG_DECRYPT;
 	} else {
-		dcp.cp_flags |= DCP_FLAG_RAW_RECV;
+		dcp.cp_cmd = DCP_CMD_RAW_RECV;
 	}
 
 	error = dsl_dataset_hold_flags(dp, tofs, dsflags, FTAG, &ds);
 	if (error == 0) {
 		/* create temporary clone */
 		dsl_dataset_t *snap = NULL;
+
 		if (drba->drba_snapobj != 0) {
 			VERIFY0(dsl_dataset_hold_obj(dp,
 			    drba->drba_snapobj, FTAG, &snap));
+		} else {
+			/* we use the dcp whenever we are not making a clone */
+			dcpp = &dcp;
 		}
 		dsobj = dsl_dataset_create_sync(ds->ds_dir, recv_clone_name,
-		    snap, crflags, drba->drba_cred, &dcp, tx);
+		    snap, crflags, drba->drba_cred, dcpp, tx);
 		if (drba->drba_snapobj != 0)
 			dsl_dataset_rele(snap, FTAG);
 		dsl_dataset_rele_flags(ds, dsflags, FTAG);
@@ -1773,12 +1778,14 @@ dmu_recv_begin_sync(void *arg, dmu_tx_t *tx)
 		if (drba->drba_origin != NULL) {
 			VERIFY0(dsl_dataset_hold(dp, drba->drba_origin,
 			    FTAG, &origin));
+		} else {
+			/* we use the dcp whenever we are not making a clone */
+			dcpp = &dcp;
 		}
 
 		/* Create new dataset. */
-		dsobj = dsl_dataset_create_sync(dd,
-		    strrchr(tofs, '/') + 1,
-		    origin, crflags, drba->drba_cred, &dcp, tx);
+		dsobj = dsl_dataset_create_sync(dd, strrchr(tofs, '/') + 1,
+		    origin, crflags, drba->drba_cred, dcpp, tx);
 		if (origin != NULL)
 			dsl_dataset_rele(origin, FTAG);
 		dsl_dir_rele(dd, FTAG);

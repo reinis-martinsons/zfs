@@ -998,12 +998,14 @@ lzc_unload_key(const char *fsname)
 }
 
 int
-lzc_change_key(const char *fsname, nvlist_t *props, uint8_t *wkeydata,
-    uint_t wkeylen, boolean_t force)
+lzc_change_key(const char *fsname, uint64_t crypt_cmd, nvlist_t *props,
+    uint8_t *wkeydata, uint_t wkeylen)
 {
 	int error;
 	nvlist_t *ioc_args = fnvlist_alloc();
 	nvlist_t *hidden_args = NULL;
+
+	fnvlist_add_uint64(ioc_args, "crypt_cmd", crypt_cmd);
 
 	if (wkeydata != NULL) {
 		hidden_args = fnvlist_alloc();
@@ -1014,8 +1016,6 @@ lzc_change_key(const char *fsname, nvlist_t *props, uint8_t *wkeydata,
 
 	if (props != NULL)
 		fnvlist_add_nvlist(ioc_args, "props", props);
-	if (force)
-		fnvlist_add_boolean(ioc_args, "force");
 
 	error = lzc_ioctl(ZFS_IOC_CHANGE_KEY, fsname, ioc_args, NULL);
 	nvlist_free(hidden_args);

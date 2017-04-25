@@ -3754,32 +3754,19 @@ spa_l2cache_drop(spa_t *spa)
 }
 
 /*
- * Verify encryption parameters for spa creation. If we have specified a crypt,
- * we must have a fully specified key, with the encryption feature enabled.
- * Otherwise, we should not have any specified encryption parameters.
+ * Verify encryption parameters for spa creation. If we are encrypting, we must
+ * have the encryption feature flag enabled.
  */
 static int
 spa_create_check_encryption_params(dsl_crypto_params_t *dcp,
     boolean_t has_encryption)
 {
 	if (dcp->cp_crypt != ZIO_CRYPT_OFF &&
-	    dcp->cp_crypt != ZIO_CRYPT_INHERIT) {
-		if (!has_encryption || dcp->cp_wkey == NULL ||
-		    dcp->cp_keylocation == NULL ||
-		    dcp->cp_keyformat == ZFS_KEYFORMAT_NONE)
-			return (SET_ERROR(EINVAL));
+	    dcp->cp_crypt != ZIO_CRYPT_INHERIT &&
+	    !has_encryption)
+		return (SET_ERROR(ENOTSUP));
 
-		if (dcp->cp_keyformat == ZFS_KEYFORMAT_PASSPHRASE &&
-		    (dcp->cp_salt == 0 || dcp->cp_iters == 0))
-			return (SET_ERROR(EINVAL));
-	} else {
-		if (dcp->cp_wkey != NULL || dcp->cp_keylocation != NULL ||
-		    dcp->cp_keyformat != ZFS_KEYFORMAT_NONE ||
-		    dcp->cp_salt != 0 || dcp->cp_iters != 0)
-			return (SET_ERROR(EINVAL));
-	}
-
-	return (0);
+	return (dmu_objset_create_crypt_check(NULL, dcp));
 }
 
 /*

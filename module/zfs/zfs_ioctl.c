@@ -1499,7 +1499,7 @@ zfs_ioc_pool_create(zfs_cmd_t *zc)
 
 	if (props) {
 		nvlist_t *nvl = NULL;
-		nvlist_t *ha = NULL;
+		nvlist_t *hidden_args = NULL;
 		uint64_t version = SPA_VERSION;
 
 		(void) nvlist_lookup_uint64(props,
@@ -1519,8 +1519,10 @@ zfs_ioc_pool_create(zfs_cmd_t *zc)
 			(void) nvlist_remove_all(props, ZPOOL_ROOTFS_PROPS);
 		}
 
-		(void) nvlist_lookup_nvlist(props, ZPOOL_HIDDEN_ARGS, &ha);
-		error = dsl_crypto_params_create_nvlist(rootprops, ha, &dcp);
+		(void) nvlist_lookup_nvlist(props, ZPOOL_HIDDEN_ARGS,
+		    &hidden_args);
+		error = dsl_crypto_params_create_nvlist(DCP_CMD_NONE,
+		    rootprops, hidden_args, &dcp);
 		if (error != 0) {
 			nvlist_free(config);
 			nvlist_free(props);
@@ -2403,7 +2405,7 @@ zfs_prop_set_special(const char *dsname, zprop_source_t source,
 {
 	const char *propname = nvpair_name(pair);
 	zfs_prop_t prop = zfs_name_to_prop(propname);
-	uint64_t intval;
+	uint64_t intval = 0;
 	char *strval = NULL;
 	int err = -1;
 
@@ -2422,9 +2424,6 @@ zfs_prop_set_special(const char *dsname, zprop_source_t source,
 
 	/* all special properties are numeric except for keylocation */
 	if (zfs_prop_get_type(prop) == PROP_TYPE_STRING) {
-		if (prop != ZFS_PROP_KEYLOCATION)
-			return (-1);
-
 		strval = fnvpair_value_string(pair);
 	} else {
 		intval = fnvpair_value_uint64(pair);
@@ -3263,7 +3262,8 @@ zfs_ioc_create(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 		}
 	}
 
-	error = dsl_crypto_params_create_nvlist(nvprops, hidden_args, &dcp);
+	error = dsl_crypto_params_create_nvlist(DCP_CMD_NONE, nvprops,
+	    hidden_args, &dcp);
 	if (error != 0) {
 		nvlist_free(zct.zct_zplprops);
 		return (error);
@@ -5799,7 +5799,8 @@ zfs_ioc_load_key(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl)
 		goto error;
 	}
 
-	ret = dsl_crypto_params_create_nvlist(NULL, hidden_args, &dcp);
+	ret = dsl_crypto_params_create_nvlist(DCP_CMD_NONE, NULL,
+	    hidden_args, &dcp);
 	if (ret != 0)
 		goto error;
 
@@ -5857,7 +5858,7 @@ static int
 zfs_ioc_change_key(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl)
 {
 	int ret;
-	boolean_t force;
+	uint64_t cmd = DCP_CMD_NONE;
 	dsl_crypto_params_t *dcp = NULL;
 	nvlist_t *args = NULL, *hidden_args = NULL;
 
@@ -5866,15 +5867,15 @@ zfs_ioc_change_key(const char *dsname, nvlist_t *innvl, nvlist_t *outnvl)
 		goto error;
 	}
 
-	force = nvlist_exists(innvl, "force");
+	(void) nvlist_lookup_uint64(innvl, "crypt_cmd", &cmd);
 	(void) nvlist_lookup_nvlist(innvl, "props", &args);
 	(void) nvlist_lookup_nvlist(innvl, ZPOOL_HIDDEN_ARGS, &hidden_args);
 
-	ret = dsl_crypto_params_create_nvlist(args, hidden_args, &dcp);
+	ret = dsl_crypto_params_create_nvlist(cmd, args, hidden_args, &dcp);
 	if (ret != 0)
 		goto error;
 
-	ret = spa_keystore_rewrap(dsname, dcp, force);
+	ret = spa_keystore_change_key(dsname, dcp);
 	if (ret != 0)
 		goto error;
 

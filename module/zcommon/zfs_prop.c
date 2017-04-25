@@ -441,7 +441,7 @@ zfs_prop_init(void)
 	    PROP_READONLY, ZFS_TYPE_DATASET, "<filesystem | volume>",
 	    "ENCROOT");
 	zprop_register_string(ZFS_PROP_KEYLOCATION, "keylocation",
-	    NULL, PROP_DEFAULT, ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME,
+	    "none", PROP_DEFAULT, ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME,
 	    "prompt | <file URI>", "KEYLOCATION");
 
 	/* readonly number properties */
