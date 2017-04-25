@@ -1396,13 +1396,15 @@ spa_keystore_change_key_sync(void *arg, dmu_tx_t *tx)
 	dsl_crypto_params_t *dcp = skcka->skcka_cp;
 	dsl_wrapping_key_t *wkey = NULL, *found_wkey;
 	dsl_wrapping_key_t wkey_search;
+	char *keylocation = dcp->cp_keylocation;
 	uint64_t rddobj;
 
 	/* create and initialize the wrapping key */
 	VERIFY0(dsl_dataset_hold(dp, skcka->skcka_dsname, FTAG, &ds));
 	ASSERT(!ds->ds_is_snapshot);
 
-	if (dcp->cp_cmd == DCP_CMD_NEW_KEY) {
+	if (dcp->cp_cmd == DCP_CMD_NEW_KEY ||
+	    dcp->cp_cmd == DCP_CMD_FORCE_NEW_KEY) {
 		/*
 		 * We are changing to a new wkey. Set additional properties
 		 * which can be sent along with this ioctl. Note that this
@@ -1413,11 +1415,14 @@ spa_keystore_change_key_sync(void *arg, dmu_tx_t *tx)
 		wkey->wk_ddobj = ds->ds_dir->dd_object;
 		VERIFY0(dsl_dir_get_encryption_root_ddobj(ds->ds_dir, &rddobj));
 
-		if (dcp->cp_keylocation != NULL) {
+		if (dcp->cp_cmd == DCP_CMD_FORCE_NEW_KEY)
+			keylocation = "none";
+
+		if (keylocation != NULL) {
 			dsl_prop_set_sync_impl(ds,
 			    zfs_prop_to_name(ZFS_PROP_KEYLOCATION),
-			    ZPROP_SRC_LOCAL, 1, strlen(dcp->cp_keylocation) + 1,
-			    dcp->cp_keylocation, tx);
+			    ZPROP_SRC_LOCAL, 1, strlen(keylocation) + 1,
+			    keylocation, tx);
 		}
 	} else {
 		/*
