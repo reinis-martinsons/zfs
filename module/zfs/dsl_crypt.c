@@ -1901,6 +1901,7 @@ dsl_crypto_recv_key_check(void *arg, dmu_tx_t *tx)
 		goto error;
 	}
 
+
 	ret = nvlist_lookup_uint8_array(nvl, "portable_mac", &buf, &len);
 	if (ret != 0 || len != ZIO_OBJSET_MAC_LEN) {
 		ret = SET_ERROR(EINVAL);
@@ -1910,7 +1911,7 @@ dsl_crypto_recv_key_check(void *arg, dmu_tx_t *tx)
 	ret = nvlist_lookup_uint64(nvl, zfs_prop_to_name(ZFS_PROP_KEYFORMAT),
 	    &intval);
 	if (ret != 0 || intval >= ZFS_KEYFORMAT_FORMATS ||
-	    intval <= ZFS_KEYFORMAT_NONE) {
+	    intval == ZFS_KEYFORMAT_NONE) {
 		ret = SET_ERROR(EINVAL);
 		goto error;
 	}
@@ -2129,12 +2130,12 @@ dsl_crypto_populate_key_nvlist(dsl_dataset_t *ds, nvlist_t **nvl_out)
 	int ret;
 	objset_t *os;
 	dnode_t *mdn;
-	dsl_dir_t *rdd = NULL;
+	uint64_t rddobj;
 	nvlist_t *nvl = NULL;
 	uint64_t dckobj = ds->ds_dir->dd_crypto_obj;
-	objset_t *mos = ds->ds_dir->dd_pool->dp_meta_objset;
+	dsl_pool_t *dp = ds->ds_dir->dd_pool;
+	objset_t *mos = dp->dp_meta_objset;
 	uint64_t crypt = 0, guid = 0, format = 0, iters = 0, salt = 0;
-	uint64_t rddobj;
 	uint8_t raw_keydata[MASTER_KEY_MAX_LEN];
 	uint8_t raw_hmac_keydata[SHA512_HMAC_KEYLEN];
 	uint8_t iv[WRAPPING_IV_LEN];
@@ -2183,34 +2184,23 @@ dsl_crypto_populate_key_nvlist(dsl_dataset_t *ds, nvlist_t **nvl_out)
 	if (ret != 0)
 		goto error;
 
-	/* lookup values from the properties */
-	dsl_pool_config_enter(ds->ds_dir->dd_pool, FTAG);
-
-	ret = dsl_dir_hold_obj(ds->ds_dir->dd_pool, rddobj, NULL, FTAG, &rdd);
+	/* lookup wrapping key properties */
+	ret = zap_lookup(dp->dp_meta_objset, dckobj,
+	    zfs_prop_to_name(ZFS_PROP_KEYFORMAT), 8, 1, &format);
 	if (ret != 0)
-		goto error_unlock;
-
-	ret = dsl_prop_get_dd(rdd, zfs_prop_to_name(ZFS_PROP_KEYFORMAT),
-	    8, 1, &format, NULL, B_FALSE);
-	if (ret != 0)
-		goto error_unlock;
+		goto error;
 
 	if (format == ZFS_KEYFORMAT_PASSPHRASE) {
-		ret = dsl_prop_get_dd(rdd,
-		    zfs_prop_to_name(ZFS_PROP_PBKDF2_ITERS), 8, 1, &iters,
-		    NULL, B_FALSE);
+		ret = zap_lookup(dp->dp_meta_objset, dckobj,
+		    zfs_prop_to_name(ZFS_PROP_PBKDF2_ITERS), 8, 1, &iters);
 		if (ret != 0)
-			goto error_unlock;
+			goto error;
 
-		ret = dsl_prop_get_dd(rdd,
-		    zfs_prop_to_name(ZFS_PROP_PBKDF2_SALT), 8, 1, &salt,
-		    NULL, B_FALSE);
+		ret = zap_lookup(dp->dp_meta_objset, dckobj,
+		    zfs_prop_to_name(ZFS_PROP_PBKDF2_SALT), 8, 1, &salt);
 		if (ret != 0)
-			goto error_unlock;
+			goto error;
 	}
-
-	dsl_dir_rele(rdd, FTAG);
-	dsl_pool_config_exit(ds->ds_dir->dd_pool, FTAG);
 
 	fnvlist_add_uint64(nvl, DSL_CRYPTO_KEY_CRYPTO_SUITE, crypt);
 	fnvlist_add_uint64(nvl, DSL_CRYPTO_KEY_GUID, guid);
@@ -2237,10 +2227,6 @@ dsl_crypto_populate_key_nvlist(dsl_dataset_t *ds, nvlist_t **nvl_out)
 	*nvl_out = nvl;
 	return (0);
 
-error_unlock:
-	if (rdd != NULL)
-		dsl_dir_rele(rdd, FTAG);
-	dsl_pool_config_exit(ds->ds_dir->dd_pool, FTAG);
 error:
 	nvlist_free(nvl);
 
