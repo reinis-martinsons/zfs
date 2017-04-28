@@ -1718,7 +1718,7 @@ dmu_recv_begin_check(void *arg, dmu_tx_t *tx)
 				return (SET_ERROR(ENODEV));
 			}
 			dsl_dataset_rele_flags(origin,
-			    DS_HOLD_FLAG_DECRYPT, FTAG);
+			    dsflags, FTAG);
 		}
 		dsl_dataset_rele_flags(ds, dsflags, FTAG);
 		error = 0;

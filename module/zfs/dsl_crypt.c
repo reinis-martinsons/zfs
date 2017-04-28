@@ -1870,7 +1870,7 @@ dsl_crypto_recv_key_check(void *arg, dmu_tx_t *tx)
 			goto error;
 
 		if (intval != guid) {
-			ret = SET_ERROR(EINVAL);
+			ret = SET_ERROR(EACCES);
 			goto error;
 		}
 	}
@@ -2017,6 +2017,7 @@ dsl_crypto_recv_key_sync(void *arg, dmu_tx_t *tx)
 	dnode_t *mdn;
 	uint8_t *keydata, *hmac_keydata, *iv, *mac, *portable_mac;
 	uint_t len;
+	uint64_t rddobj;
 	uint64_t crypt, guid, keyformat, iters, salt;
 	uint64_t compress, checksum, nlevels, blksz, ibs;
 
@@ -2089,12 +2090,16 @@ dsl_crypto_recv_key_sync(void *arg, dmu_tx_t *tx)
 		VERIFY0(zap_add(mos, ds->ds_dir->dd_object,
 		    DD_FIELD_CRYPTO_KEY_OBJ, sizeof (uint64_t), 1,
 		    &ds->ds_dir->dd_crypto_obj, tx));
+
+		rddobj = ds->ds_dir->dd_object;
+	} else {
+		VERIFY0(dsl_dir_get_encryption_root_ddobj(ds->ds_dir, &rddobj));
 	}
 
 	/* sync the key data to the ZAP object on disk */
 	dsl_crypto_key_sync_impl(mos, ds->ds_dir->dd_crypto_obj, crypt,
-	    ds->ds_dir->dd_object, guid, iv, mac, keydata, hmac_keydata,
-	    keyformat, salt, iters, tx);
+	    rddobj, guid, iv, mac, keydata, hmac_keydata, keyformat, salt,
+	    iters, tx);
 
 	dsl_dataset_rele(ds, FTAG);
 }

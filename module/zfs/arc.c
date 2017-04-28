@@ -5677,7 +5677,7 @@ arc_read_done(zio_t *zio)
 	hdr->b_l1hdr.b_acb = NULL;
 	arc_hdr_clear_flags(hdr, ARC_FLAG_IO_IN_PROGRESS);
 	if (callback_cnt == 0) {
-		ASSERT(HDR_PREFETCH(hdr));
+		ASSERT(HDR_PREFETCH(hdr) || HDR_HAS_RABD(hdr));
 		ASSERT(hdr->b_l1hdr.b_pabd != NULL || HDR_HAS_RABD(hdr));
 	}
 
@@ -6009,7 +6009,8 @@ top:
 				zio_flags |= ZIO_FLAG_RAW_ENCRYPT;
 		}
 
-		if (*arc_flags & ARC_FLAG_PREFETCH)
+		if (*arc_flags & ARC_FLAG_PREFETCH &&
+		    refcount_is_zero(&hdr->b_l1hdr.b_refcnt))
 			arc_hdr_set_flags(hdr, ARC_FLAG_PREFETCH);
 		if (*arc_flags & ARC_FLAG_L2CACHE)
 			arc_hdr_set_flags(hdr, ARC_FLAG_L2CACHE);
